@@ -64,7 +64,7 @@ class _StoreConfigScreenState extends State<StoreConfigScreen> {
                 final store = stores[i];
                 return ListTile(
                   title: Text(store.name),
-                  subtitle: Text(store.useEpicerieVariant ? '${store.slug} (epicerie)' : store.slug),
+                  subtitle: Text(store.flyerUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
                   onTap: () => _openEditor(existing: store),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
@@ -93,21 +93,19 @@ class _StoreEditorDialog extends StatefulWidget {
 class _StoreEditorDialogState extends State<_StoreEditorDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
-  late final TextEditingController _slugController;
-  late bool _useEpicerieVariant;
+  late final TextEditingController _urlController;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.existing?.name ?? '');
-    _slugController = TextEditingController(text: widget.existing?.slug ?? '');
-    _useEpicerieVariant = widget.existing?.useEpicerieVariant ?? false;
+    _urlController = TextEditingController(text: widget.existing?.flyerUrl ?? '');
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _slugController.dispose();
+    _urlController.dispose();
     super.dispose();
   }
 
@@ -127,15 +125,16 @@ class _StoreEditorDialogState extends State<_StoreEditorDialog> {
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
             TextFormField(
-              controller: _slugController,
-              decoration: const InputDecoration(labelText: 'URL slug'),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _useEpicerieVariant,
-              onChanged: (v) => setState(() => _useEpicerieVariant = v ?? false),
-              title: const Text('Use -epicerie URL variant'),
+              controller: _urlController,
+              decoration: const InputDecoration(labelText: 'Flyer URL', hintText: 'https://...'),
+              keyboardType: TextInputType.url,
+              validator: (v) {
+                final value = v?.trim() ?? '';
+                if (value.isEmpty) return 'Required';
+                final uri = Uri.tryParse(value);
+                if (uri == null || !uri.isAbsolute) return 'Enter a valid URL';
+                return null;
+              },
             ),
           ],
         ),
@@ -145,16 +144,9 @@ class _StoreEditorDialogState extends State<_StoreEditorDialog> {
         FilledButton(
           onPressed: () {
             if (!_formKey.currentState!.validate()) return;
-            final id =
-                widget.existing?.id ??
-                '${_slugController.text.trim().toLowerCase()}_${DateTime.now().millisecondsSinceEpoch}';
+            final id = widget.existing?.id ?? '${DateTime.now().millisecondsSinceEpoch}';
             Navigator.of(context).pop(
-              StoreConfig(
-                id: id,
-                name: _nameController.text.trim(),
-                slug: _slugController.text.trim(),
-                useEpicerieVariant: _useEpicerieVariant,
-              ),
+              StoreConfig(id: id, name: _nameController.text.trim(), flyerUrl: _urlController.text.trim()),
             );
           },
           child: const Text('Save'),

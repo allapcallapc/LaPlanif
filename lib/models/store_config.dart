@@ -1,33 +1,22 @@
 class StoreConfig {
-  const StoreConfig({
-    required this.id,
-    required this.name,
-    required this.slug,
-    this.useEpicerieVariant = false,
-  });
+  const StoreConfig({required this.id, required this.name, required this.flyerUrl});
 
   final String id;
   final String name;
-  final String slug;
-  final bool useEpicerieVariant;
 
   /// The store's weekly-deals page on circulaire-en-ligne.ca.
-  String get flyerUrl {
-    final path = useEpicerieVariant ? 'circulaire-$slug-epicerie' : 'circulaire-$slug';
-    return 'https://www.circulaire-en-ligne.ca/$path/speciaux-promotions-rabais-semaine';
-  }
+  ///
+  /// Stored verbatim rather than assembled from a slug: the final path
+  /// segment isn't actually consistent across stores (e.g. Metro's is
+  /// "circulaire-metro-speciaux-promotions-et-rabais-de-cette-semaine",
+  /// not the generic "speciaux-promotions-rabais-semaine" other stores use).
+  final String flyerUrl;
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'slug': slug,
-    'useEpicerieVariant': useEpicerieVariant,
-  };
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'flyerUrl': flyerUrl};
 
   factory StoreConfig.fromJson(Map<String, dynamic> json) => StoreConfig(
     id: json['id'] as String,
     name: json['name'] as String,
-    slug: json['slug'] as String,
-    useEpicerieVariant: json['useEpicerieVariant'] as bool? ?? false,
+    flyerUrl: json['flyerUrl'] as String,
   );
 }

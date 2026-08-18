@@ -20,12 +20,13 @@ void main() {
     await pumpScreen(tester, repo);
 
     expect(find.text('IGA'), findsOneWidget);
-    expect(find.text('iga (epicerie)'), findsOneWidget);
+    expect(find.textContaining('circulaire-iga-epicerie'), findsOneWidget);
     expect(find.text('Metro'), findsOneWidget);
-    expect(find.text('metro'), findsOneWidget);
+    expect(find.textContaining('circulaire-metro-speciaux'), findsOneWidget);
+    expect(find.text('Maxi'), findsOneWidget);
   });
 
-  testWidgets('adding a store requires both fields and persists it', (tester) async {
+  testWidgets('adding a store requires both fields and rejects a bad URL', (tester) async {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);
 
@@ -37,16 +38,20 @@ void main() {
     expect(find.text('Required'), findsNWidgets(2));
 
     await tester.enterText(find.widgetWithText(TextFormField, 'Display name'), 'Super C');
-    await tester.enterText(find.widgetWithText(TextFormField, 'URL slug'), 'super-c');
-    await tester.tap(find.widgetWithText(CheckboxListTile, 'Use -epicerie URL variant'));
+    await tester.enterText(find.widgetWithText(TextFormField, 'Flyer URL'), 'not a url');
+    await tester.tap(find.text('Save'));
+    await tester.pump();
+    expect(find.text('Enter a valid URL'), findsOneWidget);
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Flyer URL'), 'https://example.com/super-c');
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
     expect(find.text('Super C'), findsOneWidget);
-    expect(find.text('super-c (epicerie)'), findsOneWidget);
+    expect(find.textContaining('example.com/super-c'), findsOneWidget);
 
     final saved = await repo.load();
-    expect(saved.any((s) => s.name == 'Super C' && s.useEpicerieVariant), isTrue);
+    expect(saved.any((s) => s.name == 'Super C' && s.flyerUrl == 'https://example.com/super-c'), isTrue);
   });
 
   testWidgets('editing a store updates it in place', (tester) async {

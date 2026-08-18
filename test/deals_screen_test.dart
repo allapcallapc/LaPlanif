@@ -31,8 +31,8 @@ void main() {
   testWidgets('shows live per-store status and the combined item list', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [
-      StoreConfig(id: 'iga', name: 'IGA', slug: 'iga', useEpicerieVariant: true),
-      StoreConfig(id: 'metro', name: 'Metro', slug: 'metro'),
+      StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
+      StoreConfig(id: 'metro', name: 'Metro', flyerUrl: 'https://example.com/metro'),
     ]);
 
     final scraper = _FakeScraperService({
@@ -57,7 +57,7 @@ void main() {
 
   testWidgets('shows an empty state when nothing could be parsed', (tester) async {
     final repository = StoreConfigRepository();
-    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', slug: 'iga', useEpicerieVariant: true)]);
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
     final scraper = _FakeScraperService({'iga': () async => throw Exception('boom')});
 

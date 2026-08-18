@@ -6,7 +6,7 @@ import 'package:laplanif/models/store_config.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
 
 void main() {
-  const store = StoreConfig(id: 'iga', name: 'IGA', slug: 'iga', useEpicerieVariant: true);
+  const store = StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga');
 
   test('parses items out of every img alt attribute on the page', () async {
     final client = MockClient((request) async {

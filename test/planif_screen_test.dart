@@ -66,7 +66,7 @@ void main() {
 
     expect(find.textContaining('Press "Fetch'), findsOneWidget);
 
-    await tester.tap(find.text("Fetch this week's deals"));
+    await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
 
     // Once loaded, the per-store status collapses to a compact summary
@@ -113,7 +113,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository, scraper: scraper)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text("Fetch this week's deals"));
+    await tester.tap(find.text('Fetch deals'));
     await tester.pump();
     await tester.pump();
     await tester.pump();
@@ -141,7 +141,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository, scraper: scraper)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text("Fetch this week's deals"));
+    await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
 
     expect(find.text('No items found.'), findsOneWidget);

@@ -102,22 +102,21 @@ class _PlanifScreenState extends State<PlanifScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text("Step 1 · This week's deals", style: Theme.of(context).textTheme.titleSmall),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-            child: FilledButton.icon(
-              onPressed: _isRunning ? null : _fetchAll,
-              icon: const Icon(Icons.refresh, size: 18),
-              label: Text(_isRunning ? 'Fetching…' : "Fetch this week's deals"),
-              style: FilledButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              ),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            child: Row(
+              children: [
+                Text('Step 1', style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                FilledButton.icon(
+                  onPressed: _isRunning ? null : _fetchAll,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: Text(_isRunning ? 'Fetching…' : 'Fetch deals'),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                ),
+              ],
             ),
           ),
           if (_states.isNotEmpty) ...[
@@ -186,7 +185,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   Widget _buildResults() {
     if (!_hasRun) {
-      return const Center(child: Text('Press "Fetch this week\'s deals" to load flyer items.'));
+      return const Center(child: Text('Press "Fetch deals" to load flyer items.'));
     }
     if (_items.isEmpty) {
       return const Center(child: Text('No items found.'));

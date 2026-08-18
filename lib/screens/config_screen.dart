@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../models/store_config.dart';
+import '../services/ai_config_repository.dart';
 import '../services/store_config_repository.dart';
+import 'ai_usage_screen.dart';
 
 class ConfigScreen extends StatefulWidget {
-  const ConfigScreen({super.key, required this.repository});
+  ConfigScreen({super.key, required this.repository, AiConfigRepository? aiConfigRepository})
+    : aiConfigRepository = aiConfigRepository ?? AiConfigRepository();
 
   final StoreConfigRepository repository;
+  final AiConfigRepository aiConfigRepository;
 
   @override
   State<ConfigScreen> createState() => _ConfigScreenState();
@@ -14,17 +18,32 @@ class ConfigScreen extends StatefulWidget {
 
 class _ConfigScreenState extends State<ConfigScreen> {
   List<StoreConfig>? _stores;
+  final _apiKeyController = TextEditingController();
+  bool _obscureApiKey = true;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadApiKey();
+  }
+
+  @override
+  void dispose() {
+    _apiKeyController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
     final stores = await widget.repository.load();
     if (!mounted) return;
     setState(() => _stores = stores);
+  }
+
+  Future<void> _loadApiKey() async {
+    final apiKey = await widget.aiConfigRepository.loadApiKey();
+    if (!mounted) return;
+    _apiKeyController.text = apiKey;
   }
 
   Future<void> _openEditor({StoreConfig? existing}) async {
@@ -86,6 +105,36 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       );
                     },
                   ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text('AI', style: Theme.of(context).textTheme.titleMedium),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _apiKeyController,
+              obscureText: _obscureApiKey,
+              decoration: InputDecoration(
+                labelText: 'Anthropic API key',
+                helperText: 'Stored on this device only.',
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureApiKey ? Icons.visibility : Icons.visibility_off),
+                  tooltip: _obscureApiKey ? 'Show key' : 'Hide key',
+                  onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
+                ),
+              ),
+              onChanged: (value) => widget.aiConfigRepository.saveApiKey(value),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.receipt_long_outlined),
+            title: const Text('AI usage log'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => AiUsageScreen()));
+            },
           ),
         ],
       ),

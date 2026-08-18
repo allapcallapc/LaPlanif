@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:laplanif/screens/config_screen.dart';
+import 'package:laplanif/services/ai_config_repository.dart';
 import 'package:laplanif/services/store_config_repository.dart';
 
 void main() {
@@ -105,5 +106,51 @@ void main() {
     }
 
     expect(find.text('No stores configured yet.'), findsOneWidget);
+  });
+
+  testWidgets('saves the API key as it is typed and reloads it on next open', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+
+    await tester.pumpWidget(
+      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.widgetWithText(TextField, 'Anthropic API key'), 'sk-ant-test');
+    await tester.pump();
+
+    expect(await aiConfigRepo.loadApiKey(), 'sk-ant-test');
+
+    await tester.pumpWidget(
+      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('sk-ant-test'), findsOneWidget);
+  });
+
+  testWidgets('toggles the API key visibility icon', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo);
+
+    expect(find.byIcon(Icons.visibility), findsOneWidget);
+    expect(find.byIcon(Icons.visibility_off), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.visibility));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.visibility_off), findsOneWidget);
+  });
+
+  testWidgets('navigates to the AI usage log', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo);
+
+    await tester.tap(find.text('AI usage log'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI Usage Log'), findsOneWidget);
+    expect(find.text('No AI calls yet.'), findsOneWidget);
   });
 }

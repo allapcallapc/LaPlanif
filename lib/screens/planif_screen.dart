@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../models/deal_item.dart';
 import '../models/store_config.dart';
+import '../services/ai_config_repository.dart';
+import '../services/ai_deal_extraction_service.dart';
 import '../services/flyer_scraper_service.dart';
-import '../services/item_categorizer.dart';
 import '../services/store_config_repository.dart';
 
 const _sectionOrder = [
@@ -12,13 +13,6 @@ const _sectionOrder = [
   DealCategory.carbs,
   DealCategory.uncategorized,
 ];
-
-String _sectionLabel(DealCategory category) => switch (category) {
-  DealCategory.protein => 'Protein',
-  DealCategory.vegetables => 'Vegetables',
-  DealCategory.carbs => 'Carbs',
-  DealCategory.uncategorized => 'Uncategorized',
-};
 
 enum StoreFetchStatus { waiting, inProgress, done, failed }
 
@@ -32,11 +26,20 @@ class StoreFetchState {
 }
 
 class PlanifScreen extends StatefulWidget {
-  PlanifScreen({super.key, required this.repository, FlyerScraperService? scraper})
-    : scraper = scraper ?? FlyerScraperService();
+  PlanifScreen({
+    super.key,
+    required this.repository,
+    FlyerScraperService? scraperService,
+    AiDealExtractionService? extractionService,
+    AiConfigRepository? aiConfigRepository,
+  }) : scraperService = scraperService ?? FlyerScraperService(),
+       extractionService = extractionService ?? AiDealExtractionService(),
+       aiConfigRepository = aiConfigRepository ?? AiConfigRepository();
 
   final StoreConfigRepository repository;
-  final FlyerScraperService scraper;
+  final FlyerScraperService scraperService;
+  final AiDealExtractionService extractionService;
+  final AiConfigRepository aiConfigRepository;
 
   @override
   State<PlanifScreen> createState() => _PlanifScreenState();
@@ -50,6 +53,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
   String? _storeFilter;
 
   Future<void> _fetchAll() async {
+    final apiKey = await widget.aiConfigRepository.loadApiKey();
+    if (apiKey.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Set your Anthropic API key in Config first.')));
+      return;
+    }
+
     final stores = await widget.repository.load();
     if (!mounted) return;
     setState(() {
@@ -60,7 +72,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _storeFilter = null;
     });
 
-    final results = await Future.wait(_states.map(_fetchStore));
+    final results = await Future.wait(_states.map((state) => _fetchStore(state, apiKey)));
 
     if (!mounted) return;
     setState(() {
@@ -70,10 +82,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
     });
   }
 
-  Future<List<DealItem>> _fetchStore(StoreFetchState state) async {
+  Future<List<DealItem>> _fetchStore(StoreFetchState state, String apiKey) async {
     setState(() => state.status = StoreFetchStatus.inProgress);
     try {
-      final items = await widget.scraper.fetchDeals(state.store);
+      final pages = await widget.scraperService.fetchPages(state.store);
+      final items = await widget.extractionService.extractItems(
+        apiKey: apiKey,
+        storeName: state.store.name,
+        pages: pages,
+      );
       if (mounted) {
         setState(() {
           state.status = StoreFetchStatus.done;
@@ -200,7 +217,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
     final grouped = <DealCategory, List<DealItem>>{};
     for (final item in filtered) {
-      grouped.putIfAbsent(ItemCategorizer.categorize(item.name), () => []).add(item);
+      grouped.putIfAbsent(item.category, () => []).add(item);
     }
 
     // filtered can't be empty here: _storeFilter is only ever set to a name
@@ -214,7 +231,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
             children: [
               for (final category in _sectionOrder)
                 if ((grouped[category] ?? const []).isNotEmpty) ...[
-                  _buildSectionHeader(_sectionLabel(category)),
+                  _buildSectionHeader(category.label),
                   ..._coverFirst(grouped[category]!).map(_buildItemTile),
                 ],
             ],
@@ -267,6 +284,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Widget _buildItemTile(DealItem item) {
+    final priceText = item.unit.isEmpty ? item.price : '${item.price}/${item.unit}';
     return ListTile(
       title: Row(
         children: [
@@ -275,14 +293,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
         ],
       ),
       subtitle: Text('${item.storeName} · page ${item.pageIndex}'),
-      trailing: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(item.price, style: const TextStyle(fontWeight: FontWeight.bold)),
-          if (item.unitPrice != null) Text(item.unitPrice!, style: Theme.of(context).textTheme.bodySmall),
-        ],
-      ),
+      trailing: Text(priceText, style: const TextStyle(fontWeight: FontWeight.bold)),
     );
   }
 

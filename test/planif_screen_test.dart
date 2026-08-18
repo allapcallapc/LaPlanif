@@ -83,6 +83,29 @@ class _FakeChunkAwareExtractionService extends AiDealExtractionService {
   }
 }
 
+/// Like _FakeChunkAwareExtractionService, but keyed per store so one store's
+/// chunked behavior can be exercised while another store is held open.
+class _FakeMultiStoreChunkAwareExtractionService extends AiDealExtractionService {
+  _FakeMultiStoreChunkAwareExtractionService(this._handlers);
+
+  final Map<String, Future<List<DealItem>> Function(List<FlyerPage> pages, int callNumber)> _handlers;
+  final Map<String, int> _callCounts = {};
+
+  @override
+  Future<List<DealItem>> extractItems({
+    required String apiKey,
+    required String storeName,
+    required List<FlyerPage> pages,
+    String? model,
+  }) {
+    final handler = _handlers[storeName];
+    if (handler == null) throw Exception('no handler for $storeName');
+    final callNumber = (_callCounts[storeName] ?? 0) + 1;
+    _callCounts[storeName] = callNumber;
+    return handler(pages, callNumber);
+  }
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -783,6 +806,70 @@ void main() {
     // says so rather than reading as if nothing came of it.
     expect(find.text('IGA · 1 kept, failed, tap to retry'), findsOneWidget);
     expect(find.text('Poulet'), findsOneWidget);
+  });
+
+  testWidgets('shows the partial item count on a failed row while another store is still fetching', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [
+      StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
+      StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi'),
+    ]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final pageCount = AiDealExtractionService.maxPagesPerCall + 2;
+    final scraper = _FakePagesScraper({
+      'iga': List.generate(pageCount, (i) => FlyerPage(pageNumber: i + 1, altText: 'Item $i')),
+      'maxi': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+
+    // Holding Maxi open (same technique as the test above) keeps _hasRun
+    // false, so the full per-store list (_buildStatusRow), not the
+    // collapsed summary chips, is what's on screen once IGA fails.
+    final maxiCompleter = Completer<List<DealItem>>();
+    final extraction = _FakeMultiStoreChunkAwareExtractionService({
+      'IGA': (pages, callNumber) async {
+        if (callNumber == 1) {
+          return [
+            DealItem(
+              name: 'Poulet',
+              price: '3.99\$',
+              unit: '',
+              category: DealCategory.protein,
+              storeName: 'IGA',
+              pageIndex: pages.first.pageNumber,
+            ),
+          ];
+        }
+        throw Exception('boom');
+      },
+      'Maxi': (pages, callNumber) => maxiCompleter.future,
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('1 items kept, then failed: boom'), findsOneWidget);
   });
 
   testWidgets('does not resend an earlier chunk when a later chunk needs a rate-limit retry', (tester) async {

@@ -15,8 +15,6 @@ class AiInFlightCall {
 /// persisted history. Never written to disk - a page refresh clears it, same
 /// as the in-flight calls themselves.
 class AiCallActivity {
-  AiCallActivity._();
-
   static final ValueNotifier<List<AiInFlightCall>> inFlight = ValueNotifier(const []);
 
   static int _nextId = 0;

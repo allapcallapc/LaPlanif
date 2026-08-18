@@ -177,6 +177,55 @@ void main() {
     expect(log.outputTokens, 5);
   });
 
+  test('throws and logs a failure when no candidates are returned', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({
+          'candidates': <dynamic>[],
+          'promptFeedback': {'blockReason': 'SAFETY'},
+          'usageMetadata': {'promptTokenCount': 8, 'candidatesTokenCount': 0},
+        }),
+        200,
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = AiDealExtractionService(client: client, logRepository: logRepository);
+
+    await expectLater(
+      service.extractItems(apiKey: 'test-key', storeName: 'Metro', pages: pages),
+      throwsA(anything),
+    );
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('no candidates returned (blockReason: SAFETY)'));
+  });
+
+  test('throws and logs a failure when a candidate has no content', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({
+          'candidates': [
+            {'finishReason': 'MAX_TOKENS'},
+          ],
+          'usageMetadata': {'promptTokenCount': 8, 'candidatesTokenCount': 0},
+        }),
+        200,
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = AiDealExtractionService(client: client, logRepository: logRepository);
+
+    await expectLater(
+      service.extractItems(apiKey: 'test-key', storeName: 'Metro', pages: pages),
+      throwsA(anything),
+    );
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('no content in response (finishReason: MAX_TOKENS)'));
+  });
+
   test('retries once on HTTP 503 and succeeds on the second attempt', () async {
     var callCount = 0;
     final client = MockClient((request) async {

@@ -8,8 +8,8 @@ class AiConfigRepository {
   static const _modelsPrefsKey = 'ai_models';
 
   /// Used whenever no model list has been configured yet. Tried in order -
-  /// gemini-3.5-flash-lite first for now, then newest to oldest major/minor
-  /// version.
+  /// gemini-3.5-flash-lite first, then a specific hand-picked fallback
+  /// order (not a strict newest-to-oldest sort).
   static const defaultModels = [
     'gemini-3.5-flash-lite',
     'gemini-3.5-flash',

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'screens/config_screen.dart';
 import 'screens/planif_screen.dart';
+import 'services/ai_config_repository.dart';
+import 'services/ai_deal_extraction_service.dart';
+import 'services/flyer_scraper_service.dart';
 import 'services/store_config_repository.dart';
 
 void main() {
@@ -29,12 +32,27 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
+  // Constructed once for the app's lifetime rather than in build(), which
+  // IndexedStack calls on every rebuild (not just tab switches) - each of
+  // these owns an http.Client, and building fresh ones every rebuild would
+  // leak the previous client without ever calling .close() on it.
   final StoreConfigRepository _storeRepository = StoreConfigRepository();
+  final AiConfigRepository _aiConfigRepository = AiConfigRepository();
+  final FlyerScraperService _scraperService = FlyerScraperService();
+  final AiDealExtractionService _extractionService = AiDealExtractionService();
   int _tabIndex = 0;
 
   @override
   Widget build(BuildContext context) {
-    final screens = [PlanifScreen(repository: _storeRepository), ConfigScreen(repository: _storeRepository)];
+    final screens = [
+      PlanifScreen(
+        repository: _storeRepository,
+        scraperService: _scraperService,
+        extractionService: _extractionService,
+        aiConfigRepository: _aiConfigRepository,
+      ),
+      ConfigScreen(repository: _storeRepository, aiConfigRepository: _aiConfigRepository),
+    ];
     return Scaffold(
       body: IndexedStack(index: _tabIndex, children: screens),
       bottomNavigationBar: NavigationBar(

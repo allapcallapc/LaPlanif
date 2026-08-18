@@ -8,6 +8,7 @@ import '../models/flyer_page.dart';
 import '../utils/error_formatting.dart';
 import 'ai_call_activity.dart';
 import 'ai_call_log_repository.dart';
+import 'ai_config_repository.dart';
 import 'model_fallback_controller.dart';
 
 /// Turns raw per-page flyer alt text into structured deal items using the
@@ -23,7 +24,7 @@ class AiDealExtractionService {
   }) : _client = client ?? http.Client(),
        _logRepository = logRepository ?? AiCallLogRepository();
 
-  static const _defaultModel = 'gemini-3.5-flash-lite';
+  static const _defaultModel = AiConfigRepository.defaultModels[0];
   static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
 
   /// Flyers can run to dozens of pages; callers should split a store's pages

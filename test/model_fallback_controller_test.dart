@@ -3,6 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:laplanif/services/model_fallback_controller.dart';
 
 void main() {
+  test('RateLimitedException.toString names the rate-limited model', () {
+    final error = RateLimitedException('gemini-x');
+    expect(error.toString(), contains('gemini-x'));
+  });
+
   test('returns the result on first successful attempt with the first model', () async {
     final controller = ModelFallbackController(models: const ['model-a', 'model-b'], waitBeforeRetry: Duration.zero);
     final calledModels = <String>[];

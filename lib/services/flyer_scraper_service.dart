@@ -41,6 +41,7 @@ class FlyerScraperService {
             storeName: store.name,
             pageIndex: pageIndex,
             isCoverPage: pageIndex == coverPageIndex,
+            unitPrice: entry.unitPrice,
           ),
         );
       }

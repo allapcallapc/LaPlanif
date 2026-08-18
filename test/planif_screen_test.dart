@@ -44,7 +44,14 @@ void main() {
 
     final scraper = _FakeScraperService({
       'iga': () async => const [
-        DealItem(name: 'Poulet rôti', price: '3.99\$', storeName: 'IGA', pageIndex: 1, isCoverPage: true),
+        DealItem(
+          name: 'Poulet rôti',
+          price: '3.99\$',
+          storeName: 'IGA',
+          pageIndex: 1,
+          isCoverPage: true,
+          unitPrice: '1.33\$/kg',
+        ),
         DealItem(name: 'Brocoli frais', price: '2.49\$', storeName: 'IGA', pageIndex: 2),
         DealItem(name: 'Pain baguette', price: '1.99\$', storeName: 'IGA', pageIndex: 2),
         DealItem(name: 'Papier essuie-tout', price: '4.99\$', storeName: 'IGA', pageIndex: 2),
@@ -74,6 +81,7 @@ void main() {
     expect(find.text('Papier essuie-tout'), findsOneWidget);
 
     expect(find.byIcon(Icons.star), findsOneWidget);
+    expect(find.text('1.33\$/kg'), findsOneWidget);
   });
 
   testWidgets('shows an empty state when nothing could be parsed', (tester) async {

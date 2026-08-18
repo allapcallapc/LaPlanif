@@ -50,6 +50,22 @@ void main() {
     expect(items[0].isCoverPage, isTrue);
   });
 
+  test('threads a parsed unit price through onto the deal item', () async {
+    final client = MockClient((request) async {
+      return http.Response('''
+        <html><body>
+          <img alt="En vedette, une caisse de fraises pour 25,00 \$. Ce qui revient à 2,50 \$ le panier.">
+        </body></html>
+      ''', 200);
+    });
+
+    final items = await FlyerScraperService(client: client).fetchDeals(store);
+
+    expect(items.length, 1);
+    expect(items[0].price, '25,00 \$');
+    expect(items[0].unitPrice, '2,50 \$');
+  });
+
   test('throws when the request fails', () async {
     final client = MockClient((request) async => http.Response('nope', 500));
 

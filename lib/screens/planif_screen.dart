@@ -191,7 +191,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
       leading: item.isCoverPage ? const Icon(Icons.star, color: Colors.amber) : null,
       title: Text(item.name),
       subtitle: Text('${item.storeName} · page ${item.pageIndex}'),
-      trailing: Text(item.price, style: const TextStyle(fontWeight: FontWeight.bold)),
+      trailing: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(item.price, style: const TextStyle(fontWeight: FontWeight.bold)),
+          if (item.unitPrice != null) Text(item.unitPrice!, style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
     );
   }
 }

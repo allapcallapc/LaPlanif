@@ -25,4 +25,15 @@ void main() {
     expect(find.text('Metro'), findsOneWidget);
     expect(find.text('Maxi'), findsOneWidget);
   });
+
+  testWidgets('tapping the Deals destination switches tabs', (WidgetTester tester) async {
+    await tester.pumpWidget(const LaPlanifApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Deals'));
+    await tester.pumpAndSettle();
+
+    final stack = tester.widget<IndexedStack>(find.byType(IndexedStack));
+    expect(stack.index, 1);
+  });
 }

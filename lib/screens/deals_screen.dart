@@ -17,17 +17,17 @@ class StoreFetchState {
 }
 
 class DealsScreen extends StatefulWidget {
-  const DealsScreen({super.key, required this.repository});
+  DealsScreen({super.key, required this.repository, FlyerScraperService? scraper})
+    : scraper = scraper ?? FlyerScraperService();
 
   final StoreConfigRepository repository;
+  final FlyerScraperService scraper;
 
   @override
   State<DealsScreen> createState() => _DealsScreenState();
 }
 
 class _DealsScreenState extends State<DealsScreen> {
-  final FlyerScraperService _scraper = FlyerScraperService();
-
   List<StoreFetchState> _states = [];
   List<DealItem> _items = [];
   bool _isRunning = false;
@@ -56,7 +56,7 @@ class _DealsScreenState extends State<DealsScreen> {
   Future<List<DealItem>> _fetchStore(StoreFetchState state) async {
     setState(() => state.status = StoreFetchStatus.inProgress);
     try {
-      final items = await _scraper.fetchDeals(state.store);
+      final items = await widget.scraper.fetchDeals(state.store);
       if (mounted) {
         setState(() {
           state.status = StoreFetchStatus.done;

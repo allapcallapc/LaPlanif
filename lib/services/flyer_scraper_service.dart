@@ -6,10 +6,14 @@ import '../models/store_config.dart';
 import 'flyer_alt_text_parser.dart';
 
 class FlyerScraperService {
+  FlyerScraperService({http.Client? client}) : _client = client ?? http.Client();
+
+  final http.Client _client;
+
   Future<List<DealItem>> fetchDeals(StoreConfig store) async {
     final http.Response response;
     try {
-      response = await http.get(Uri.parse(store.flyerUrl));
+      response = await _client.get(Uri.parse(store.flyerUrl));
     } catch (_) {
       throw Exception('Could not reach the page');
     }

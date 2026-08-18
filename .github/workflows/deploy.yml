@@ -1,0 +1,66 @@
+name: Deploy to GitHub Pages
+
+# Triggered by a release being published. Unlike SplitBalance (where
+# release-apk.yml publishes the release after attaching an APK),
+# release-please.yml here publishes releases directly (draft: false), so
+# this fires right after the Release PR is merged.
+#
+# Deploys to the root of gh-pages (branch-based Pages source), alongside
+# /main/ and /pr-<n>/ published by deploy-main.yml and
+# deploy-pr-preview.yml - see those for the preview-environment setup.
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: gh-pages-publish
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment:
+      name: github-pages
+      url: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Determine version from tag
+        id: version
+        uses: ./.github/actions/version-from-tag
+        with:
+          tag: ${{ github.event.release.tag_name }}
+
+      - name: Build web app
+        run: |
+          flutter build web --base-href "/${{ github.event.repository.name }}/" \
+            --build-name=${{ steps.version.outputs.name }}
+
+      # Production lives at the root of gh-pages, alongside /main/ (latest
+      # main branch) and /pr-<n>/ (per-PR previews) published by the other
+      # deploy workflows - keep_files so this push doesn't wipe them out.
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+          keep_files: true
+          commit_message: 'deploy: release ${{ github.event.release.tag_name }}'

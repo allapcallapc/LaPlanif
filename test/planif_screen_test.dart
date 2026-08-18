@@ -590,12 +590,12 @@ void main() {
     await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
 
-    expect(find.text('IGA · failed'), findsOneWidget);
+    expect(find.text('IGA · failed, tap to retry'), findsOneWidget);
     expect(find.text('Metro · 1'), findsOneWidget);
     expect(find.text('Fromage'), findsOneWidget);
     expect(find.text('Poulet'), findsNothing);
 
-    await tester.tap(find.text('IGA · failed'));
+    await tester.tap(find.text('IGA · failed, tap to retry'));
     await tester.pumpAndSettle();
 
     expect(igaAttempts, 2);
@@ -640,9 +640,9 @@ void main() {
 
     await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
-    expect(find.text('IGA · failed'), findsOneWidget);
+    expect(find.text('IGA · failed, tap to retry'), findsOneWidget);
 
-    await tester.tap(find.text('IGA · failed'));
+    await tester.tap(find.text('IGA · failed, tap to retry'));
     await tester.pump();
     await tester.pump();
     await tester.pump();

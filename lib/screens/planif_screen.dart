@@ -233,13 +233,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
   Widget _buildStatusChip(StoreFetchState state) {
     if (state.status == StoreFetchStatus.failed) {
       return ActionChip(
-        avatar: const Icon(Icons.error, size: 16, color: Colors.red),
-        label: Text('${state.store.name} · failed', style: const TextStyle(fontSize: 12)),
+        avatar: const Icon(Icons.refresh, size: 16, color: Colors.red),
+        label: Text('${state.store.name} · failed, tap to retry', style: const TextStyle(fontSize: 12)),
         tooltip: 'Retry ${state.store.name}',
         onPressed: _isRunning ? null : () => _retryStore(state),
         visualDensity: VisualDensity.compact,
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         padding: const EdgeInsets.symmetric(horizontal: 4),
+        side: const BorderSide(color: Colors.red),
       );
     }
     if (state.status == StoreFetchStatus.done) {

@@ -160,6 +160,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
         setState(() {
           state.status = StoreFetchStatus.failed;
           state.errorMessage = _shortReason(e);
+          // items already extracted from earlier chunks are still returned
+          // and merged into the results below, so the status needs to say
+          // so - otherwise "failed" would read as "nothing came of this"
+          // when some items actually did.
+          state.itemCount = items.length;
         });
       }
       return items;
@@ -221,7 +226,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
       ),
       StoreFetchStatus.failed => (
         const Icon(Icons.error, color: Colors.red),
-        state.errorMessage ?? 'Failed',
+        state.itemCount > 0
+            ? '${state.itemCount} items kept, then failed: ${state.errorMessage ?? "Failed"}'
+            : state.errorMessage ?? 'Failed',
       ),
     };
     return ListTile(leading: icon, title: Text(state.store.name), trailing: Text(trailingText));
@@ -243,9 +250,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
   // as inProgress.
   Widget _buildStatusChip(StoreFetchState state) {
     if (state.status == StoreFetchStatus.failed) {
+      final label = state.itemCount > 0
+          ? '${state.store.name} · ${state.itemCount} kept, failed, tap to retry'
+          : '${state.store.name} · failed, tap to retry';
       return ActionChip(
         avatar: const Icon(Icons.refresh, size: 16, color: Colors.red),
-        label: Text('${state.store.name} · failed, tap to retry', style: const TextStyle(fontSize: 12)),
+        label: Text(label, style: const TextStyle(fontSize: 12)),
         tooltip: 'Retry ${state.store.name}',
         onPressed: _isRunning ? null : () => _retryStore(state),
         visualDensity: VisualDensity.compact,

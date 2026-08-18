@@ -19,11 +19,31 @@ class AiUsageScreen extends StatefulWidget {
 
 class _AiUsageScreenState extends State<AiUsageScreen> {
   List<AiCallLog>? _logs;
+  late int _lastInFlightCount;
 
   @override
   void initState() {
     super.initState();
+    _lastInFlightCount = widget.activity.value.length;
+    widget.activity.addListener(_onActivityChanged);
     _load();
+  }
+
+  @override
+  void dispose() {
+    widget.activity.removeListener(_onActivityChanged);
+    super.dispose();
+  }
+
+  // The in-flight notifier only tracks calls that are still running; a call
+  // that just finished drops out of it without saying whether it succeeded
+  // or failed. Reload the persisted log whenever the in-flight count shrinks
+  // so that finished call shows up here instead of just vanishing from
+  // "Running now".
+  void _onActivityChanged() {
+    final count = widget.activity.value.length;
+    if (count < _lastInFlightCount) _load();
+    _lastInFlightCount = count;
   }
 
   Future<void> _load() async {

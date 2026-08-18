@@ -35,6 +35,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
   @override
   void dispose() {
+    // A pending debounce timer means the last-typed key was never written -
+    // flush it instead of just cancelling, or that edit is silently lost.
+    if (_apiKeySaveDebounce?.isActive ?? false) {
+      widget.aiConfigRepository.saveApiKey(_apiKeyController.text);
+    }
     _apiKeySaveDebounce?.cancel();
     _apiKeyController.dispose();
     super.dispose();
@@ -140,7 +145,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
               child: Row(
                 children: [
                   Expanded(child: Text('Stores', style: Theme.of(context).textTheme.titleMedium)),
-                  IconButton(icon: const Icon(Icons.add), tooltip: 'Add store', onPressed: () => _openEditor()),
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Add store',
+                    onPressed: stores == null ? null : () => _openEditor(),
+                  ),
                 ],
               ),
             ),
@@ -199,7 +208,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   Expanded(
                     child: Text('Models (tried in order)', style: Theme.of(context).textTheme.titleSmall),
                   ),
-                  IconButton(icon: const Icon(Icons.add), tooltip: 'Add model', onPressed: () => _openModelEditor()),
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Add model',
+                    onPressed: models == null ? null : () => _openModelEditor(),
+                  ),
                 ],
               ),
             ),

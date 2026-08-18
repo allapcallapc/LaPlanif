@@ -779,8 +779,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // The whole store is still reported as failed (chunk 2 never completed)
-    // but chunk 1's already-extracted item isn't thrown away.
-    expect(find.text('IGA · failed, tap to retry'), findsOneWidget);
+    // but chunk 1's already-extracted item isn't thrown away, and the chip
+    // says so rather than reading as if nothing came of it.
+    expect(find.text('IGA · 1 kept, failed, tap to retry'), findsOneWidget);
     expect(find.text('Poulet'), findsOneWidget);
   });
 

@@ -88,4 +88,39 @@ void main() {
     expect(find.text('Running now'), findsNothing);
     expect(find.text('No AI calls yet.'), findsOneWidget);
   });
+
+  testWidgets('reloads the persisted log when a running call finishes', (tester) async {
+    final repository = AiCallLogRepository();
+    final activity = ValueNotifier<List<AiInFlightCall>>([
+      AiInFlightCall(id: 1, storeName: 'IGA', model: 'gemini-3.6-flash', startedAt: DateTime(2026, 1, 1, 9, 0)),
+    ]);
+
+    await tester.pumpWidget(
+      MaterialApp(home: AiUsageScreen(repository: repository, activity: activity)),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Running now'), findsOneWidget);
+
+    // The call finishes: AiDealExtractionService persists the outcome and
+    // then the in-flight notifier shrinks, same order as the real flow.
+    await repository.add(
+      AiCallLog(
+        timestamp: DateTime(2026, 1, 1, 9, 1),
+        storeName: 'IGA',
+        model: 'gemini-3.6-flash',
+        success: true,
+        inputTokens: 500,
+        outputTokens: 50,
+      ),
+    );
+    activity.value = const [];
+    await tester.pump();
+    await tester.pump();
+
+    // The finished call shows up here without leaving and reopening the
+    // screen - _logs isn't stuck with whatever initState fetched.
+    expect(find.text('Running now'), findsNothing);
+    expect(find.textContaining('500 in / 50 out tokens'), findsOneWidget);
+  });
 }

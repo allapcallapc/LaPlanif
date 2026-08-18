@@ -1,10 +1,34 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:laplanif/models/store_config.dart';
 import 'package:laplanif/screens/config_screen.dart';
 import 'package:laplanif/services/ai_config_repository.dart';
 import 'package:laplanif/services/store_config_repository.dart';
+
+class _SlowStoreConfigRepository extends StoreConfigRepository {
+  _SlowStoreConfigRepository(this._future);
+
+  final Future<List<StoreConfig>> _future;
+
+  @override
+  Future<List<StoreConfig>> load() => _future;
+}
+
+class _SlowAiConfigRepository extends AiConfigRepository {
+  _SlowAiConfigRepository(this._modelsFuture);
+
+  final Future<List<String>> _modelsFuture;
+
+  @override
+  Future<String> loadApiKey() async => '';
+
+  @override
+  Future<List<String>> loadModels() => _modelsFuture;
+}
 
 void main() {
   setUp(() {
@@ -163,6 +187,55 @@ void main() {
 
     // One coalesced write of the final value once typing settles.
     expect(await aiConfigRepo.loadApiKey(), 'test-key');
+  });
+
+  testWidgets('flushes a pending API key save when disposed before the debounce fires', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    await tester.enterText(find.widgetWithText(TextField, 'Google AI API key'), 'unsaved-key');
+    // Still inside the debounce window - nothing written yet.
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(await aiConfigRepo.loadApiKey(), isEmpty);
+
+    // Navigate away before the debounce fires, disposing the ConfigScreen.
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await tester.pump();
+
+    // The pending save was flushed rather than dropped.
+    expect(await aiConfigRepo.loadApiKey(), 'unsaved-key');
+  });
+
+  testWidgets('disables Add store and Add model until their lists have loaded', (tester) async {
+    final storesCompleter = Completer<List<StoreConfig>>();
+    final modelsCompleter = Completer<List<String>>();
+    final repo = _SlowStoreConfigRepository(storesCompleter.future);
+    final aiConfigRepo = _SlowAiConfigRepository(modelsCompleter.future);
+
+    tester.view.physicalSize = const Size(800, 2200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(home: ConfigScreen(repository: repo, aiConfigRepository: aiConfigRepo)));
+    await tester.pump();
+
+    IconButton addStoreButton() =>
+        tester.widget<IconButton>(find.ancestor(of: find.byTooltip('Add store'), matching: find.byType(IconButton)));
+    IconButton addModelButton() =>
+        tester.widget<IconButton>(find.ancestor(of: find.byTooltip('Add model'), matching: find.byType(IconButton)));
+
+    expect(addStoreButton().onPressed, isNull);
+    expect(addModelButton().onPressed, isNull);
+
+    storesCompleter.complete(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    modelsCompleter.complete(['model-a']);
+    await tester.pumpAndSettle();
+
+    expect(addStoreButton().onPressed, isNotNull);
+    expect(addModelButton().onPressed, isNotNull);
   });
 
   testWidgets('toggles the API key visibility icon', (tester) async {

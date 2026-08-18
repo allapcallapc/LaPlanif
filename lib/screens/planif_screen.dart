@@ -157,20 +157,20 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
+  // Only called once _hasRun is true, by which point every store has
+  // settled to done or failed - waiting/inProgress can't occur here.
   Widget _buildStatusChip(StoreFetchState state) {
-    final (icon, color, label) = switch (state.status) {
-      StoreFetchStatus.waiting => (Icons.hourglass_empty, Colors.grey, state.store.name),
-      StoreFetchStatus.inProgress => (Icons.sync, Colors.grey, state.store.name),
-      StoreFetchStatus.done => (
-        Icons.check_circle,
-        Colors.green,
-        '${state.store.name} · ${state.itemCount}',
-      ),
-      StoreFetchStatus.failed => (Icons.error, Colors.red, '${state.store.name} · failed'),
-    };
+    final failed = state.status == StoreFetchStatus.failed;
     return Chip(
-      avatar: Icon(icon, size: 16, color: color),
-      label: Text(label, style: const TextStyle(fontSize: 12)),
+      avatar: Icon(
+        failed ? Icons.error : Icons.check_circle,
+        size: 16,
+        color: failed ? Colors.red : Colors.green,
+      ),
+      label: Text(
+        failed ? '${state.store.name} · failed' : '${state.store.name} · ${state.itemCount}',
+        style: const TextStyle(fontSize: 12),
+      ),
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       padding: const EdgeInsets.symmetric(horizontal: 4),

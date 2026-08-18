@@ -18,13 +18,13 @@ import 'model_fallback_controller.dart';
 class AiDealExtractionService {
   AiDealExtractionService({
     http.Client? client,
-    this.model = _defaultModel,
+    String? model,
     AiCallLogRepository? logRepository,
     this.retryDelay = const Duration(seconds: 2),
-  }) : _client = client ?? http.Client(),
+  }) : model = model ?? AiConfigRepository.defaultModels.first,
+       _client = client ?? http.Client(),
        _logRepository = logRepository ?? AiCallLogRepository();
 
-  static const _defaultModel = AiConfigRepository.defaultModels[0];
   static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
 
   /// Flyers can run to dozens of pages; callers should split a store's pages

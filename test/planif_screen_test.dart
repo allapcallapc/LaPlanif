@@ -132,6 +132,62 @@ void main() {
     expect(find.text('Maxi · 1'), findsOneWidget);
   });
 
+  testWidgets('filters the results list down to a single retailer', (tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = StoreConfigRepository();
+    await repository.save(const [
+      StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
+      StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi'),
+    ]);
+
+    final scraper = _FakeScraperService({
+      'iga': () async => const [DealItem(name: 'Poulet', price: '3.99\$', storeName: 'IGA', pageIndex: 1)],
+      'maxi': () async => const [DealItem(name: 'Fromage', price: '6.99\$', storeName: 'Maxi', pageIndex: 1)],
+    });
+
+    await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository, scraper: scraper)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Poulet'), findsOneWidget);
+    expect(find.text('Fromage'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'IGA'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Poulet'), findsOneWidget);
+    expect(find.text('Fromage'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'All'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Poulet'), findsOneWidget);
+    expect(find.text('Fromage'), findsOneWidget);
+  });
+
+  testWidgets('does not show a filter row when only one retailer has results', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final scraper = _FakeScraperService({
+      'iga': () async => const [DealItem(name: 'Poulet', price: '3.99\$', storeName: 'IGA', pageIndex: 1)],
+    });
+
+    await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository, scraper: scraper)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChoiceChip), findsNothing);
+  });
+
   testWidgets('shows an empty state when nothing could be parsed', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);

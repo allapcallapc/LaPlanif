@@ -47,6 +47,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   List<DealItem> _items = [];
   bool _isRunning = false;
   bool _hasRun = false;
+  String? _storeFilter;
 
   Future<void> _fetchAll() async {
     final stores = await widget.repository.load();
@@ -56,6 +57,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _items = [];
       _isRunning = true;
       _hasRun = false;
+      _storeFilter = null;
     });
 
     final results = await Future.wait(_states.map(_fetchStore));
@@ -191,19 +193,60 @@ class _PlanifScreenState extends State<PlanifScreen> {
       return const Center(child: Text('No items found.'));
     }
 
+    final storeNames = _items.map((item) => item.storeName).toSet().toList()..sort();
+    final filtered = _storeFilter == null
+        ? _items
+        : _items.where((item) => item.storeName == _storeFilter).toList();
+
     final grouped = <DealCategory, List<DealItem>>{};
-    for (final item in _items) {
+    for (final item in filtered) {
       grouped.putIfAbsent(ItemCategorizer.categorize(item.name), () => []).add(item);
     }
 
-    return ListView(
+    // filtered can't be empty here: _storeFilter is only ever set to a name
+    // drawn from storeNames, which is itself derived from _items, so at
+    // least one item always matches.
+    return Column(
       children: [
-        for (final category in _sectionOrder)
-          if ((grouped[category] ?? const []).isNotEmpty) ...[
-            _buildSectionHeader(_sectionLabel(category)),
-            ..._coverFirst(grouped[category]!).map(_buildItemTile),
-          ],
+        if (storeNames.length > 1) _buildStoreFilterRow(storeNames),
+        Expanded(
+          child: ListView(
+            children: [
+              for (final category in _sectionOrder)
+                if ((grouped[category] ?? const []).isNotEmpty) ...[
+                  _buildSectionHeader(_sectionLabel(category)),
+                  ..._coverFirst(grouped[category]!).map(_buildItemTile),
+                ],
+            ],
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _buildStoreFilterRow(List<String> storeNames) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            ChoiceChip(
+              label: const Text('All'),
+              selected: _storeFilter == null,
+              onSelected: (_) => setState(() => _storeFilter = null),
+            ),
+            for (final name in storeNames) ...[
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: Text(name),
+                selected: _storeFilter == name,
+                onSelected: (_) => setState(() => _storeFilter = name),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 

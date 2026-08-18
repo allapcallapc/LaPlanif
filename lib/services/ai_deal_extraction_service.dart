@@ -128,14 +128,16 @@ class AiDealExtractionService {
   }
 
   /// Sends the request, retrying once after [retryDelay] if the API returns
-  /// HTTP 503 - Google's documented "model overloaded, try again" signal.
+  /// HTTP 503 ("model overloaded") or HTTP 429 ("rate limited") - Google's
+  /// documented transient, try-again signals. 429s are common here since
+  /// every configured store's request fires around the same moment.
   Future<http.Response> _postWithRetry({required String apiKey, required List<FlyerPage> pages}) async {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
     final body = jsonEncode(_buildRequestBody(pages));
 
     final response = await _client.post(uri, headers: headers, body: body);
-    if (response.statusCode != 503) {
+    if (response.statusCode != 503 && response.statusCode != 429) {
       return response;
     }
     await Future<void>.delayed(retryDelay);

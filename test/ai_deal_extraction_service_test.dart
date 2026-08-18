@@ -351,6 +351,60 @@ void main() {
     expect(log.errorMessage, contains('HTTP 503'));
   });
 
+  test('retries once on HTTP 429 and succeeds on the second attempt', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) {
+        return http.Response('rate limited', 429);
+      }
+      return _successResponse(
+        items: [
+          {'name': 'Poulet entier', 'price': '3.99\$', 'unit': 'lb', 'category': 'Protein', 'page': 1},
+        ],
+      );
+    });
+
+    final logRepository = AiCallLogRepository();
+    final service = AiDealExtractionService(
+      client: client,
+      logRepository: logRepository,
+      retryDelay: Duration.zero,
+    );
+
+    final items = await service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages);
+
+    expect(callCount, 2);
+    expect(items.length, 1);
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isTrue);
+  });
+
+  test('does not retry more than once on repeated HTTP 429', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      return http.Response('still rate limited', 429);
+    });
+
+    final logRepository = AiCallLogRepository();
+    final service = AiDealExtractionService(
+      client: client,
+      logRepository: logRepository,
+      retryDelay: Duration.zero,
+    );
+
+    await expectLater(
+      service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages),
+      throwsException,
+    );
+
+    expect(callCount, 2);
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('HTTP 429'));
+  });
+
   test('registers the call as in-flight while pending and clears it afterwards', () async {
     final requestStarted = Completer<void>();
     final releaseResponse = Completer<void>();

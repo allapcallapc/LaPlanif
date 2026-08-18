@@ -27,4 +27,31 @@ void main() {
 
     expect(await repo.loadApiKey(), isEmpty);
   });
+
+  test('defaults to a single built-in model when none is configured', () async {
+    final repo = AiConfigRepository();
+    expect(await repo.loadModels(), AiConfigRepository.defaultModels);
+  });
+
+  test('saves and reloads a trimmed, ordered model list', () async {
+    final repo = AiConfigRepository();
+    await repo.saveModels(['  gemini-a  ', 'gemini-b']);
+
+    expect(await repo.loadModels(), ['gemini-a', 'gemini-b']);
+  });
+
+  test('drops blank entries when saving models', () async {
+    final repo = AiConfigRepository();
+    await repo.saveModels(['gemini-a', '   ', 'gemini-b']);
+
+    expect(await repo.loadModels(), ['gemini-a', 'gemini-b']);
+  });
+
+  test('saving an empty model list falls back to the default', () async {
+    final repo = AiConfigRepository();
+    await repo.saveModels(['gemini-a']);
+    await repo.saveModels([]);
+
+    expect(await repo.loadModels(), AiConfigRepository.defaultModels);
+  });
 }

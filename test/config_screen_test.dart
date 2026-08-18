@@ -31,7 +31,7 @@ void main() {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);
 
-    await tester.tap(find.byIcon(Icons.add));
+    await tester.tap(find.byTooltip('Add store'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Save'));
@@ -152,5 +152,81 @@ void main() {
 
     expect(find.text('AI Usage Log'), findsOneWidget);
     expect(find.text('No AI calls yet.'), findsOneWidget);
+  });
+
+  testWidgets('shows the single default model with removal disabled', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo);
+
+    expect(find.text('gemini-3.6-flash'), findsOneWidget);
+    final removeButton = tester.widget<IconButton>(find.byTooltip('Remove model'));
+    expect(removeButton.onPressed, isNull);
+  });
+
+  testWidgets('adds a model and persists the order', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await tester.pumpWidget(
+      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add model'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Model id'), 'gemini-backup');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('gemini-backup'), findsOneWidget);
+    expect(await aiConfigRepo.loadModels(), ['gemini-3.6-flash', 'gemini-backup']);
+  });
+
+  testWidgets('editing a model updates it in place', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await tester.pumpWidget(
+      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('gemini-3.6-flash'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Model id'), 'gemini-renamed');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('gemini-renamed'), findsOneWidget);
+    expect(await aiConfigRepo.loadModels(), ['gemini-renamed']);
+  });
+
+  testWidgets('reorders models with the move arrows and persists the new order', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveModels(['gemini-a', 'gemini-b']);
+    await tester.pumpWidget(
+      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Move up').last);
+    await tester.pumpAndSettle();
+
+    expect(await aiConfigRepo.loadModels(), ['gemini-b', 'gemini-a']);
+  });
+
+  testWidgets('removes a model when more than one is configured', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveModels(['gemini-a', 'gemini-b']);
+    await tester.pumpWidget(
+      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Remove model').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('gemini-a'), findsNothing);
+    expect(await aiConfigRepo.loadModels(), ['gemini-b']);
   });
 }

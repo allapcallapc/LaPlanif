@@ -11,6 +11,7 @@ import 'package:laplanif/models/flyer_page.dart';
 import 'package:laplanif/services/ai_call_activity.dart';
 import 'package:laplanif/services/ai_call_log_repository.dart';
 import 'package:laplanif/services/ai_deal_extraction_service.dart';
+import 'package:laplanif/services/model_fallback_controller.dart';
 
 http.Response _successResponse({
   int inputTokens = 100,
@@ -351,13 +352,37 @@ void main() {
     expect(log.errorMessage, contains('HTTP 503'));
   });
 
-  test('retries once on HTTP 429 and succeeds on the second attempt', () async {
+  test('throws RateLimitedException immediately on HTTP 429 and logs the failure', () async {
     var callCount = 0;
     final client = MockClient((request) async {
       callCount++;
-      if (callCount == 1) {
-        return http.Response('rate limited', 429);
-      }
+      return http.Response('rate limited', 429);
+    });
+
+    final logRepository = AiCallLogRepository();
+    final service = AiDealExtractionService(
+      client: client,
+      logRepository: logRepository,
+      retryDelay: Duration.zero,
+    );
+
+    // 429 is not retried inside the extraction service - that flow (wait,
+    // retry, ask the user) lives in ModelFallbackController.
+    await expectLater(
+      service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages),
+      throwsA(isA<RateLimitedException>()),
+    );
+
+    expect(callCount, 1);
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('HTTP 429'));
+  });
+
+  test('extractItems uses the per-call model override instead of the instance default', () async {
+    String? requestedUrl;
+    final client = MockClient((request) async {
+      requestedUrl = request.url.toString();
       return _successResponse(
         items: [
           {'name': 'Poulet entier', 'price': '3.99\$', 'unit': 'lb', 'category': 'Protein', 'page': 1},
@@ -366,43 +391,13 @@ void main() {
     });
 
     final logRepository = AiCallLogRepository();
-    final service = AiDealExtractionService(
-      client: client,
-      logRepository: logRepository,
-      retryDelay: Duration.zero,
-    );
+    final service = AiDealExtractionService(client: client, logRepository: logRepository);
 
-    final items = await service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages);
+    await service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages, model: 'gemini-other-model');
 
-    expect(callCount, 2);
-    expect(items.length, 1);
+    expect(requestedUrl, contains('models/gemini-other-model:generateContent'));
     final log = (await logRepository.loadAll()).single;
-    expect(log.success, isTrue);
-  });
-
-  test('does not retry more than once on repeated HTTP 429', () async {
-    var callCount = 0;
-    final client = MockClient((request) async {
-      callCount++;
-      return http.Response('still rate limited', 429);
-    });
-
-    final logRepository = AiCallLogRepository();
-    final service = AiDealExtractionService(
-      client: client,
-      logRepository: logRepository,
-      retryDelay: Duration.zero,
-    );
-
-    await expectLater(
-      service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages),
-      throwsException,
-    );
-
-    expect(callCount, 2);
-    final log = (await logRepository.loadAll()).single;
-    expect(log.success, isFalse);
-    expect(log.errorMessage, contains('HTTP 429'));
+    expect(log.model, 'gemini-other-model');
   });
 
   test('registers the call as in-flight while pending and clears it afterwards', () async {

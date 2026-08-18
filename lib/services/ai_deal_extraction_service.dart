@@ -7,6 +7,7 @@ import '../models/deal_item.dart';
 import '../models/flyer_page.dart';
 import 'ai_call_activity.dart';
 import 'ai_call_log_repository.dart';
+import 'model_fallback_controller.dart';
 
 /// Turns raw per-page flyer alt text into structured deal items using the
 /// Google AI (Gemini) API - no local splitting/parsing heuristics. Every
@@ -41,12 +42,19 @@ class AiDealExtractionService {
     required String apiKey,
     required String storeName,
     required List<FlyerPage> pages,
+    String? model,
   }) async {
+    final effectiveModel = model ?? this.model;
     final items = <DealItem>[];
     for (var start = 0; start < pages.length; start += _maxPagesPerCall) {
       final end = (start + _maxPagesPerCall).clamp(0, pages.length);
       items.addAll(
-        await _extractBatch(apiKey: apiKey, storeName: storeName, pages: pages.sublist(start, end)),
+        await _extractBatch(
+          apiKey: apiKey,
+          storeName: storeName,
+          pages: pages.sublist(start, end),
+          model: effectiveModel,
+        ),
       );
     }
     return items;
@@ -56,10 +64,11 @@ class AiDealExtractionService {
     required String apiKey,
     required String storeName,
     required List<FlyerPage> pages,
+    required String model,
   }) async {
     final activityId = AiCallActivity.start(storeName: storeName, model: model);
     try {
-      return await _extractBatchTracked(apiKey: apiKey, storeName: storeName, pages: pages);
+      return await _extractBatchTracked(apiKey: apiKey, storeName: storeName, pages: pages, model: model);
     } finally {
       AiCallActivity.finish(activityId);
     }
@@ -69,6 +78,7 @@ class AiDealExtractionService {
     required String apiKey,
     required String storeName,
     required List<FlyerPage> pages,
+    required String model,
   }) async {
     // Gemini occasionally produces an invalid function call under forced
     // function calling (finishReason MALFORMED_FUNCTION_CALL) - a
@@ -77,14 +87,29 @@ class AiDealExtractionService {
     for (var attempt = 1;; attempt++) {
       final http.Response response;
       try {
-        response = await _postWithRetry(apiKey: apiKey, pages: pages);
+        response = await _postWithRetry(apiKey: apiKey, pages: pages, model: model);
       } catch (_) {
-        await _log(storeName: storeName, success: false, errorMessage: 'Could not reach the AI API');
+        await _log(storeName: storeName, model: model, success: false, errorMessage: 'Could not reach the AI API');
         throw Exception('Could not reach the AI API');
       }
 
+      if (response.statusCode == 429) {
+        await _log(
+          storeName: storeName,
+          model: model,
+          success: false,
+          errorMessage: 'AI API HTTP 429',
+        );
+        throw RateLimitedException(model);
+      }
+
       if (response.statusCode != 200) {
-        await _log(storeName: storeName, success: false, errorMessage: 'AI API HTTP ${response.statusCode}');
+        await _log(
+          storeName: storeName,
+          model: model,
+          success: false,
+          errorMessage: 'AI API HTTP ${response.statusCode}',
+        );
         throw Exception('AI API HTTP ${response.statusCode}');
       }
 
@@ -92,7 +117,7 @@ class AiDealExtractionService {
       try {
         decoded = jsonDecode(response.body) as Map<String, dynamic>;
       } catch (_) {
-        await _log(storeName: storeName, success: false, errorMessage: 'Invalid JSON from the AI API');
+        await _log(storeName: storeName, model: model, success: false, errorMessage: 'Invalid JSON from the AI API');
         throw Exception('Invalid JSON from the AI API');
       }
 
@@ -104,6 +129,7 @@ class AiDealExtractionService {
         final items = _parseItems(decoded, storeName);
         await _log(
           storeName: storeName,
+          model: model,
           success: true,
           inputTokens: inputTokens,
           outputTokens: outputTokens,
@@ -117,6 +143,7 @@ class AiDealExtractionService {
         }
         await _log(
           storeName: storeName,
+          model: model,
           success: false,
           inputTokens: inputTokens,
           outputTokens: outputTokens,
@@ -128,16 +155,21 @@ class AiDealExtractionService {
   }
 
   /// Sends the request, retrying once after [retryDelay] if the API returns
-  /// HTTP 503 ("model overloaded") or HTTP 429 ("rate limited") - Google's
-  /// documented transient, try-again signals. 429s are common here since
-  /// every configured store's request fires around the same moment.
-  Future<http.Response> _postWithRetry({required String apiKey, required List<FlyerPage> pages}) async {
+  /// HTTP 503 - Google's documented "model overloaded, try again" signal.
+  /// HTTP 429 (rate limited) is deliberately NOT retried here: that flow -
+  /// wait, retry, then ask the user whether to keep retrying or fall back to
+  /// another model - lives in [ModelFallbackController], one level up.
+  Future<http.Response> _postWithRetry({
+    required String apiKey,
+    required List<FlyerPage> pages,
+    required String model,
+  }) async {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
     final body = jsonEncode(_buildRequestBody(pages));
 
     final response = await _client.post(uri, headers: headers, body: body);
-    if (response.statusCode != 503 && response.statusCode != 429) {
+    if (response.statusCode != 503) {
       return response;
     }
     await Future<void>.delayed(retryDelay);
@@ -148,6 +180,7 @@ class AiDealExtractionService {
 
   Future<void> _log({
     required String storeName,
+    required String model,
     required bool success,
     int inputTokens = 0,
     int outputTokens = 0,

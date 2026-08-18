@@ -18,6 +18,7 @@ class ConfigScreen extends StatefulWidget {
 
 class _ConfigScreenState extends State<ConfigScreen> {
   List<StoreConfig>? _stores;
+  List<String>? _models;
   final _apiKeyController = TextEditingController();
   bool _obscureApiKey = true;
 
@@ -26,6 +27,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     super.initState();
     _load();
     _loadApiKey();
+    _loadModels();
   }
 
   @override
@@ -44,6 +46,43 @@ class _ConfigScreenState extends State<ConfigScreen> {
     final apiKey = await widget.aiConfigRepository.loadApiKey();
     if (!mounted) return;
     _apiKeyController.text = apiKey;
+  }
+
+  Future<void> _loadModels() async {
+    final models = await widget.aiConfigRepository.loadModels();
+    if (!mounted) return;
+    setState(() => _models = models);
+  }
+
+  Future<void> _openModelEditor({String? existing, int? index}) async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => _ModelEditorDialog(existing: existing),
+    );
+    if (result == null) return;
+    setState(() {
+      if (index == null) {
+        _models!.add(result);
+      } else {
+        _models![index] = result;
+      }
+    });
+    await widget.aiConfigRepository.saveModels(_models!);
+  }
+
+  Future<void> _removeModel(int index) async {
+    setState(() => _models!.removeAt(index));
+    await widget.aiConfigRepository.saveModels(_models!);
+  }
+
+  // Only called from the move-up/move-down buttons, which are disabled at
+  // the top/bottom of the list, so index + delta is always in range here.
+  Future<void> _moveModel(int index, int delta) async {
+    setState(() {
+      final entry = _models!.removeAt(index);
+      _models!.insert(index + delta, entry);
+    });
+    await widget.aiConfigRepository.saveModels(_models!);
   }
 
   Future<void> _openEditor({StoreConfig? existing}) async {
@@ -128,6 +167,51 @@ class _ConfigScreenState extends State<ConfigScreen> {
               onChanged: (value) => widget.aiConfigRepository.saveApiKey(value),
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Models (tried in order)',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                IconButton(icon: const Icon(Icons.add), tooltip: 'Add model', onPressed: () => _openModelEditor()),
+              ],
+            ),
+          ),
+          if (_models != null)
+            for (var i = 0; i < _models!.length; i++)
+              ListTile(
+                dense: true,
+                title: Text(_models![i]),
+                onTap: () => _openModelEditor(existing: _models![i], index: i),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_upward),
+                      tooltip: 'Move up',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: i == 0 ? null : () => _moveModel(i, -1),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_downward),
+                      tooltip: 'Move down',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: i == _models!.length - 1 ? null : () => _moveModel(i, 1),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Remove model',
+                      visualDensity: VisualDensity.compact,
+                      // At least one model must stay configured.
+                      onPressed: _models!.length == 1 ? null : () => _removeModel(i),
+                    ),
+                  ],
+                ),
+              ),
           ListTile(
             leading: const Icon(Icons.receipt_long_outlined),
             title: const Text('AI usage log'),
@@ -209,6 +293,58 @@ class _StoreEditorDialogState extends State<_StoreEditorDialog> {
             Navigator.of(context).pop(
               StoreConfig(id: id, name: _nameController.text.trim(), flyerUrl: _urlController.text.trim()),
             );
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ModelEditorDialog extends StatefulWidget {
+  const _ModelEditorDialog({this.existing});
+
+  final String? existing;
+
+  @override
+  State<_ModelEditorDialog> createState() => _ModelEditorDialogState();
+}
+
+class _ModelEditorDialogState extends State<_ModelEditorDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _modelController;
+
+  @override
+  void initState() {
+    super.initState();
+    _modelController = TextEditingController(text: widget.existing ?? '');
+  }
+
+  @override
+  void dispose() {
+    _modelController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isNew = widget.existing == null;
+    return AlertDialog(
+      title: Text(isNew ? 'Add model' : 'Edit model'),
+      content: Form(
+        key: _formKey,
+        child: TextFormField(
+          controller: _modelController,
+          decoration: const InputDecoration(labelText: 'Model id', hintText: 'gemini-3.6-flash'),
+          validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () {
+            if (!_formKey.currentState!.validate()) return;
+            Navigator.of(context).pop(_modelController.text.trim());
           },
           child: const Text('Save'),
         ),

@@ -11,6 +11,7 @@ import 'package:laplanif/screens/planif_screen.dart';
 import 'package:laplanif/services/ai_config_repository.dart';
 import 'package:laplanif/services/ai_deal_extraction_service.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
+import 'package:laplanif/services/model_fallback_controller.dart';
 import 'package:laplanif/services/store_config_repository.dart';
 
 class _FakePagesScraper extends FlyerScraperService {
@@ -36,10 +37,29 @@ class _FakeExtractionService extends AiDealExtractionService {
     required String apiKey,
     required String storeName,
     required List<FlyerPage> pages,
+    String? model,
   }) {
     final handler = _handlers[storeName];
     if (handler == null) throw Exception('no handler for $storeName');
     return handler();
+  }
+}
+
+/// Extraction fake for exercising the model-fallback/rate-limit flow: the
+/// caller decides what happens per model, independent of which store asked.
+class _FakeModelAwareExtractionService extends AiDealExtractionService {
+  _FakeModelAwareExtractionService(this._byModel);
+
+  final Future<List<DealItem>> Function(String model, String storeName) _byModel;
+
+  @override
+  Future<List<DealItem>> extractItems({
+    required String apiKey,
+    required String storeName,
+    required List<FlyerPage> pages,
+    String? model,
+  }) {
+    return _byModel(model!, storeName);
   }
 }
 
@@ -395,5 +415,120 @@ void main() {
 
     expect(find.text('Set your Google AI API key in Config first.'), findsOneWidget);
     expect(find.textContaining('Press "Fetch'), findsOneWidget);
+  });
+
+  testWidgets('prompts for the next model when still rate limited, and continues with it', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    await aiConfigRepo.saveModels(['model-a', 'model-b']);
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeModelAwareExtractionService((model, storeName) async {
+      if (model == 'model-a') throw RateLimitedException(model);
+      return [
+        DealItem(
+          name: 'Poulet',
+          price: '3.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: storeName,
+          pageIndex: 1,
+        ),
+      ];
+    });
+
+    String? promptedCurrent;
+    String? promptedNext;
+    var promptCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          rateLimitWait: Duration.zero,
+          rateLimitPrompt: (context, {required currentModel, nextModel}) async {
+            promptCalls++;
+            promptedCurrent = currentModel;
+            promptedNext = nextModel;
+            return RateLimitChoice.nextModel;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    expect(promptCalls, 1);
+    expect(promptedCurrent, 'model-a');
+    expect(promptedNext, 'model-b');
+    expect(find.text('Poulet'), findsOneWidget);
+  });
+
+  testWidgets('offers only retrySame when the last configured model is still rate limited', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    await aiConfigRepo.saveModels(['only-model']);
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+
+    var attempts = 0;
+    final extraction = _FakeModelAwareExtractionService((model, storeName) async {
+      attempts++;
+      if (attempts <= 2) throw RateLimitedException(model);
+      return [
+        DealItem(
+          name: 'Poulet',
+          price: '3.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: storeName,
+          pageIndex: 1,
+        ),
+      ];
+    });
+
+    String? promptedCurrent;
+    Object? promptedNext = 'not called';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          rateLimitWait: Duration.zero,
+          rateLimitPrompt: (context, {required currentModel, nextModel}) async {
+            promptedCurrent = currentModel;
+            promptedNext = nextModel;
+            return RateLimitChoice.retrySame;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    expect(promptedCurrent, 'only-model');
+    expect(promptedNext, isNull);
+    expect(attempts, 3);
+    expect(find.text('Poulet'), findsOneWidget);
   });
 }

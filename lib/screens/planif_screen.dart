@@ -5,7 +5,9 @@ import '../models/store_config.dart';
 import '../services/ai_config_repository.dart';
 import '../services/ai_deal_extraction_service.dart';
 import '../services/flyer_scraper_service.dart';
+import '../services/model_fallback_controller.dart';
 import '../services/store_config_repository.dart';
+import '../widgets/rate_limit_dialog.dart';
 
 const _sectionOrder = [
   DealCategory.protein,
@@ -32,14 +34,26 @@ class PlanifScreen extends StatefulWidget {
     FlyerScraperService? scraperService,
     AiDealExtractionService? extractionService,
     AiConfigRepository? aiConfigRepository,
+    Duration? rateLimitWait,
+    RateLimitPrompt? rateLimitPrompt,
   }) : scraperService = scraperService ?? FlyerScraperService(),
        extractionService = extractionService ?? AiDealExtractionService(),
-       aiConfigRepository = aiConfigRepository ?? AiConfigRepository();
+       aiConfigRepository = aiConfigRepository ?? AiConfigRepository(),
+       rateLimitWait = rateLimitWait ?? const Duration(minutes: 1),
+       rateLimitPrompt = rateLimitPrompt ?? showRateLimitDialog;
 
   final StoreConfigRepository repository;
   final FlyerScraperService scraperService;
   final AiDealExtractionService extractionService;
   final AiConfigRepository aiConfigRepository;
+
+  /// How long [ModelFallbackController] waits before its one automatic
+  /// retry on a rate-limited call. Injectable so tests don't have to wait.
+  final Duration rateLimitWait;
+
+  /// Asks what to do when a call is still rate limited after that retry.
+  /// Injectable so tests can avoid driving a real dialog.
+  final RateLimitPrompt rateLimitPrompt;
 
   @override
   State<PlanifScreen> createState() => _PlanifScreenState();
@@ -62,6 +76,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       return;
     }
 
+    final models = await widget.aiConfigRepository.loadModels();
     final stores = await widget.repository.load();
     if (!mounted) return;
     setState(() {
@@ -77,7 +92,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     // rate limit (HTTP 429) far more often than fetching sequentially does.
     final items = <DealItem>[];
     for (final state in _states) {
-      items.addAll(await _fetchStore(state, apiKey));
+      items.addAll(await _fetchStore(state, apiKey, models));
     }
 
     if (!mounted) return;
@@ -88,14 +103,22 @@ class _PlanifScreenState extends State<PlanifScreen> {
     });
   }
 
-  Future<List<DealItem>> _fetchStore(StoreFetchState state, String apiKey) async {
+  Future<List<DealItem>> _fetchStore(StoreFetchState state, String apiKey, List<String> models) async {
     setState(() => state.status = StoreFetchStatus.inProgress);
     try {
       final pages = await widget.scraperService.fetchPages(state.store);
-      final items = await widget.extractionService.extractItems(
-        apiKey: apiKey,
-        storeName: state.store.name,
-        pages: pages,
+      final controller = ModelFallbackController(models: models, waitBeforeRetry: widget.rateLimitWait);
+      final items = await controller.run(
+        attempt: (model) => widget.extractionService.extractItems(
+          apiKey: apiKey,
+          storeName: state.store.name,
+          pages: pages,
+          model: model,
+        ),
+        onRateLimited: ({required currentModel, nextModel}) {
+          if (!mounted) return Future.value(RateLimitChoice.retrySame);
+          return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
+        },
       );
       if (mounted) {
         setState(() {

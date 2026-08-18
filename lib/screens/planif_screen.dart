@@ -72,11 +72,17 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _storeFilter = null;
     });
 
-    final results = await Future.wait(_states.map((state) => _fetchStore(state, apiKey)));
+    // Fetched one store at a time, not in parallel: every store hits the
+    // same AI API key, and firing them all at once was tripping Gemini's
+    // rate limit (HTTP 429) far more often than fetching sequentially does.
+    final items = <DealItem>[];
+    for (final state in _states) {
+      items.addAll(await _fetchStore(state, apiKey));
+    }
 
     if (!mounted) return;
     setState(() {
-      _items = results.expand((items) => items).toList();
+      _items = items;
       _isRunning = false;
       _hasRun = true;
     });
@@ -149,10 +155,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  // Future.wait starts every _fetchStore call synchronously before any of
-  // them can yield back to the UI thread, so every store's status has
-  // already flipped from waiting to inProgress before the first frame
-  // renders - waiting is never actually observable here.
+  // Stores are fetched one at a time, so a store further down the queue can
+  // sit in waiting while an earlier one is inProgress - both render the
+  // same "still to come" spinner row.
   Widget _buildStatusRow(StoreFetchState state) {
     final (icon, trailingText) = switch (state.status) {
       StoreFetchStatus.waiting || StoreFetchStatus.inProgress => (

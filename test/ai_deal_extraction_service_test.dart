@@ -49,7 +49,7 @@ void main() {
     final client = MockClient((request) async {
       expect(
         request.url.toString(),
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
       );
       expect(request.headers['x-goog-api-key'], 'test-key');
 
@@ -87,7 +87,7 @@ void main() {
     expect(logs.length, 1);
     expect(logs[0].success, isTrue);
     expect(logs[0].storeName, 'IGA');
-    expect(logs[0].model, 'gemini-2.5-flash');
+    expect(logs[0].model, 'gemini-3.6-flash');
     expect(logs[0].inputTokens, 100);
     expect(logs[0].outputTokens, 50);
   });

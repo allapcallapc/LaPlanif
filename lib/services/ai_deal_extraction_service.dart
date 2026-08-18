@@ -16,7 +16,7 @@ class AiDealExtractionService {
     : _client = client ?? http.Client(),
       _logRepository = logRepository ?? AiCallLogRepository();
 
-  static const _defaultModel = 'gemini-2.5-flash';
+  static const _defaultModel = 'gemini-3.6-flash';
   static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
 
   /// Flyers can run to dozens of pages; keep each call to a bounded chunk

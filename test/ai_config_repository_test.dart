@@ -28,9 +28,10 @@ void main() {
     expect(await repo.loadApiKey(), isEmpty);
   });
 
-  test('defaults to a single built-in model when none is configured', () async {
+  test('defaults to the built-in model list, gemini-3.5-flash-lite first, when none is configured', () async {
     final repo = AiConfigRepository();
     expect(await repo.loadModels(), AiConfigRepository.defaultModels);
+    expect(AiConfigRepository.defaultModels.first, 'gemini-3.5-flash-lite');
   });
 
   test('saves and reloads a trimmed, ordered model list', () async {

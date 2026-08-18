@@ -348,7 +348,7 @@ class _ModelEditorDialogState extends State<_ModelEditorDialog> {
         key: _formKey,
         child: TextFormField(
           controller: _modelController,
-          decoration: const InputDecoration(labelText: 'Model id', hintText: 'gemini-3.6-flash'),
+          decoration: const InputDecoration(labelText: 'Model id', hintText: 'gemini-3.5-flash-lite'),
           validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
         ),
       ),

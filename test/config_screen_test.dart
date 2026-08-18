@@ -21,7 +21,7 @@ void main() {
     StoreConfigRepository repo, {
     AiConfigRepository? aiConfigRepository,
   }) async {
-    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.physicalSize = const Size(800, 2200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -164,11 +164,23 @@ void main() {
     expect(find.text('No AI calls yet.'), findsOneWidget);
   });
 
-  testWidgets('shows the single default model with removal disabled', (tester) async {
+  testWidgets('shows the full default model list with gemini-3.5-flash-lite first', (tester) async {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);
 
-    expect(find.text('gemini-3.6-flash'), findsOneWidget);
+    for (final model in AiConfigRepository.defaultModels) {
+      expect(find.text(model), findsOneWidget);
+    }
+    expect(AiConfigRepository.defaultModels.first, 'gemini-3.5-flash-lite');
+  });
+
+  testWidgets('disables removal when only one model is configured', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveModels(['solo-model']);
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    expect(find.text('solo-model'), findsOneWidget);
     final removeButton = tester.widget<IconButton>(
       find.ancestor(of: find.byTooltip('Remove model'), matching: find.byType(IconButton)),
     );
@@ -187,7 +199,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('gemini-backup'), findsOneWidget);
-    expect(await aiConfigRepo.loadModels(), ['gemini-3.6-flash', 'gemini-backup']);
+    expect(await aiConfigRepo.loadModels(), [...AiConfigRepository.defaultModels, 'gemini-backup']);
   });
 
   testWidgets('editing a model updates it in place', (tester) async {
@@ -195,14 +207,17 @@ void main() {
     final aiConfigRepo = AiConfigRepository();
     await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
-    await tester.tap(find.text('gemini-3.6-flash'));
+    await tester.tap(find.text('gemini-3.5-flash-lite'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextFormField, 'Model id'), 'gemini-renamed');
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
     expect(find.text('gemini-renamed'), findsOneWidget);
-    expect(await aiConfigRepo.loadModels(), ['gemini-renamed']);
+    expect(await aiConfigRepo.loadModels(), [
+      'gemini-renamed',
+      ...AiConfigRepository.defaultModels.skip(1),
+    ]);
   });
 
   testWidgets('reorders models with the move arrows and persists the new order', (tester) async {

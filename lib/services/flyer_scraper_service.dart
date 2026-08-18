@@ -25,13 +25,23 @@ class FlyerScraperService {
     final images = document.querySelectorAll('img');
 
     final items = <DealItem>[];
+    int? coverPageIndex;
     for (var i = 0; i < images.length; i++) {
       final alt = images[i].attributes['alt'];
       if (alt == null || alt.trim().isEmpty) continue;
       final parsed = FlyerAltTextParser.parse(alt);
+      if (parsed.isEmpty) continue;
+      final pageIndex = i + 1;
+      coverPageIndex ??= pageIndex;
       for (final entry in parsed) {
         items.add(
-          DealItem(name: entry.name, price: entry.price, storeName: store.name, pageIndex: i + 1),
+          DealItem(
+            name: entry.name,
+            price: entry.price,
+            storeName: store.name,
+            pageIndex: pageIndex,
+            isCoverPage: pageIndex == coverPageIndex,
+          ),
         );
       }
     }

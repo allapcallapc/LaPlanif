@@ -4,10 +4,12 @@ class DealItem {
     required this.price,
     required this.storeName,
     required this.pageIndex,
+    this.isCoverPage = false,
   });
 
   final String name;
   final String price;
   final String storeName;
   final int pageIndex;
+  final bool isCoverPage;
 }

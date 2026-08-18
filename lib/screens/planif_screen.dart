@@ -3,7 +3,22 @@ import 'package:flutter/material.dart';
 import '../models/deal_item.dart';
 import '../models/store_config.dart';
 import '../services/flyer_scraper_service.dart';
+import '../services/item_categorizer.dart';
 import '../services/store_config_repository.dart';
+
+const _sectionOrder = [
+  DealCategory.protein,
+  DealCategory.vegetables,
+  DealCategory.carbs,
+  DealCategory.uncategorized,
+];
+
+String _sectionLabel(DealCategory category) => switch (category) {
+  DealCategory.protein => 'Protein',
+  DealCategory.vegetables => 'Vegetables',
+  DealCategory.carbs => 'Carbs',
+  DealCategory.uncategorized => 'Uncategorized',
+};
 
 enum StoreFetchStatus { waiting, inProgress, done, failed }
 
@@ -138,16 +153,45 @@ class _PlanifScreenState extends State<PlanifScreen> {
     if (_items.isEmpty) {
       return const Center(child: Text('No items found.'));
     }
-    return ListView.builder(
-      itemCount: _items.length,
-      itemBuilder: (context, i) {
-        final item = _items[i];
-        return ListTile(
-          title: Text(item.name),
-          subtitle: Text('${item.storeName} · page ${item.pageIndex}'),
-          trailing: Text(item.price, style: const TextStyle(fontWeight: FontWeight.bold)),
-        );
-      },
+
+    final grouped = <DealCategory, List<DealItem>>{};
+    for (final item in _items) {
+      grouped.putIfAbsent(ItemCategorizer.categorize(item.name), () => []).add(item);
+    }
+
+    return ListView(
+      children: [
+        for (final category in _sectionOrder)
+          if ((grouped[category] ?? const []).isNotEmpty) ...[
+            _buildSectionHeader(_sectionLabel(category)),
+            ..._coverFirst(grouped[category]!).map(_buildItemTile),
+          ],
+      ],
+    );
+  }
+
+  List<DealItem> _coverFirst(List<DealItem> items) {
+    final cover = items.where((item) => item.isCoverPage).toList();
+    final rest = items.where((item) => !item.isCoverPage).toList();
+    return [...cover, ...rest];
+  }
+
+  Widget _buildSectionHeader(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _buildItemTile(DealItem item) {
+    return ListTile(
+      leading: item.isCoverPage ? const Icon(Icons.star, color: Colors.amber) : null,
+      title: Text(item.name),
+      subtitle: Text('${item.storeName} · page ${item.pageIndex}'),
+      trailing: Text(item.price, style: const TextStyle(fontWeight: FontWeight.bold)),
     );
   }
 }

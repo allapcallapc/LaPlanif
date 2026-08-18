@@ -27,8 +27,27 @@ void main() {
     expect(items[0].price, '3.99\$/lb');
     expect(items[0].storeName, 'IGA');
     expect(items[0].pageIndex, 1);
+    expect(items[0].isCoverPage, isTrue);
     expect(items[1].name, 'Fromage cheddar 500g');
     expect(items[1].pageIndex, 3);
+    expect(items[1].isCoverPage, isFalse);
+  });
+
+  test('cover page is the first image that actually has parseable content', () async {
+    final client = MockClient((request) async {
+      return http.Response('''
+        <html><body>
+          <img alt="">
+          <img alt="Fromage cheddar 500g 6.99\$">
+        </body></html>
+      ''', 200);
+    });
+
+    final items = await FlyerScraperService(client: client).fetchDeals(store);
+
+    expect(items.length, 1);
+    expect(items[0].pageIndex, 2);
+    expect(items[0].isCoverPage, isTrue);
   });
 
   test('throws when the request fails', () async {

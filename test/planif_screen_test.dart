@@ -28,7 +28,14 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('shows live per-store status and the combined item list', (tester) async {
+  testWidgets('groups results into category sections with a cover-page marker', (tester) async {
+    // Tall enough that every section/row is mounted without needing to
+    // scroll - find.* only sees widgets that are actually built.
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final repository = StoreConfigRepository();
     await repository.save(const [
       StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
@@ -36,7 +43,12 @@ void main() {
     ]);
 
     final scraper = _FakeScraperService({
-      'iga': () async => const [DealItem(name: 'Poulet', price: '3.99\$', storeName: 'IGA', pageIndex: 1)],
+      'iga': () async => const [
+        DealItem(name: 'Poulet rôti', price: '3.99\$', storeName: 'IGA', pageIndex: 1, isCoverPage: true),
+        DealItem(name: 'Brocoli frais', price: '2.49\$', storeName: 'IGA', pageIndex: 2),
+        DealItem(name: 'Pain baguette', price: '1.99\$', storeName: 'IGA', pageIndex: 2),
+        DealItem(name: 'Papier essuie-tout', price: '4.99\$', storeName: 'IGA', pageIndex: 2),
+      ],
       'metro': () async => throw Exception('HTTP 500'),
     });
 
@@ -48,11 +60,20 @@ void main() {
     await tester.tap(find.text("Fetch this week's deals"));
     await tester.pumpAndSettle();
 
-    expect(find.text('1 items'), findsOneWidget);
+    expect(find.text('4 items'), findsOneWidget);
     expect(find.text('HTTP 500'), findsOneWidget);
-    expect(find.text('Poulet'), findsOneWidget);
-    expect(find.text('3.99\$'), findsOneWidget);
-    expect(find.text('IGA · page 1'), findsOneWidget);
+
+    expect(find.text('Protein'), findsOneWidget);
+    expect(find.text('Vegetables'), findsOneWidget);
+    expect(find.text('Carbs'), findsOneWidget);
+    expect(find.text('Uncategorized'), findsOneWidget);
+
+    expect(find.text('Poulet rôti'), findsOneWidget);
+    expect(find.text('Brocoli frais'), findsOneWidget);
+    expect(find.text('Pain baguette'), findsOneWidget);
+    expect(find.text('Papier essuie-tout'), findsOneWidget);
+
+    expect(find.byIcon(Icons.star), findsOneWidget);
   });
 
   testWidgets('shows an empty state when nothing could be parsed', (tester) async {

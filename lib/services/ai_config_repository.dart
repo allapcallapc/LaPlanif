@@ -8,15 +8,17 @@ class AiConfigRepository {
   static const _modelsPrefsKey = 'ai_models';
 
   /// Used whenever no model list has been configured yet. Tried in order -
-  /// gemini-3.5-flash-lite first for now.
+  /// gemini-3.5-flash-lite first for now, then newest to oldest major/minor
+  /// version.
   static const defaultModels = [
     'gemini-3.5-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3.7-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-3-flash',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite',
-    'gemini-3-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash',
-    'gemini-3.7-flash',
   ];
 
   Future<String> loadApiKey() async {

@@ -17,8 +17,18 @@ void main() {
     expect(find.text('Config'), findsWidgets);
   });
 
+  // Both the nav label and each screen's own AppBar title can read the same
+  // text ("Config"/"Planif"), and find.text() skips offstage IndexedStack
+  // branches by default, so tab switches in these tests go through the
+  // NavigationBar specifically rather than a bare find.text(label).
+  Finder navDestination(String label) =>
+      find.descendant(of: find.byType(NavigationBar), matching: find.text(label));
+
   testWidgets('default store list is preconfigured', (WidgetTester tester) async {
     await tester.pumpWidget(const LaPlanifApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(navDestination('Config'));
     await tester.pumpAndSettle();
 
     expect(find.text('IGA'), findsOneWidget);
@@ -30,11 +40,7 @@ void main() {
     await tester.pumpWidget(const LaPlanifApp());
     await tester.pumpAndSettle();
 
-    // Both the nav label and the Config screen's own AppBar title read
-    // "Config" (the latter stays mounted offstage via IndexedStack), so the
-    // tap must be scoped to the NavigationBar to hit the destination.
-    final configDestination = find.descendant(of: find.byType(NavigationBar), matching: find.text('Config'));
-    await tester.tap(configDestination);
+    await tester.tap(navDestination('Config'));
     await tester.pumpAndSettle();
 
     final stack = tester.widget<IndexedStack>(find.byType(IndexedStack));

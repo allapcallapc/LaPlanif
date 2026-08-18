@@ -1,0 +1,27 @@
+name: Release Please
+
+# Maintains a "Release PR" that accumulates a changelog from Conventional
+# Commits merged to main; merging that PR is the only manual step. Unlike
+# SplitBalance, releases here publish immediately (draft: false in
+# release-please-config.json) since there's no APK build step that needs
+# to attach an asset before publishing - merging the Release PR both
+# creates the release and fires deploy.yml (release: published) in one
+# go.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

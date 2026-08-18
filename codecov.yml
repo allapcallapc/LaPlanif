@@ -1,0 +1,15 @@
+coverage:
+  status:
+    # No coverage baseline yet - keep this informational so it shows up on
+    # PRs without failing the check while the app is still this small.
+    project:
+      default:
+        target: auto
+        informational: true
+    # Every line added/changed in a PR must be covered. Not informational -
+    # this fails the codecov/patch check (visible on the PR, not merge-
+    # blocking unless someone also marks it a required check in GitHub's
+    # branch protection settings for main).
+    patch:
+      default:
+        target: 100%

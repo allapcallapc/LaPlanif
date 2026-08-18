@@ -1,0 +1,54 @@
+name: Deploy main preview
+
+# Continuously redeploys the tip of main to a "staging" preview at
+# /main/ on gh-pages, separate from the release-triggered production
+# deploy at the root and from per-PR previews at /pr-<n>/.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: gh-pages-publish
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment:
+      name: staging
+      url: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/main/
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Determine preview version
+        id: version
+        run: |
+          BASE_VERSION=$(jq -r '.["."]' .release-please-manifest.json)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "name=${BASE_VERSION}-main-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build web app
+        run: |
+          flutter build web --base-href "/${{ github.event.repository.name }}/main/" \
+            --build-name=${{ steps.version.outputs.name }} --build-number=0
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+          destination_dir: main
+          keep_files: true
+          commit_message: 'deploy: main @ ${{ github.sha }}'

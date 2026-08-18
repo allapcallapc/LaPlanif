@@ -1,0 +1,68 @@
+name: Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test --coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage/lcov.info
+          if-no-files-found: ignore
+
+      - name: Run analysis
+        run: flutter analyze --no-fatal-infos
+
+  codecov:
+    # Uploads the lcov output from `test` to Codecov, which computes
+    # base-branch diffs server-side. Runs on every push too (not just
+    # pull_request) so Codecov has a base-branch report to diff PRs
+    # against - see https://app.codecov.io/gh/allapcallapc/LaPlanif to
+    # finish connecting the repo (sign in with GitHub, enable the repo, and
+    # install the Codecov GitHub App so PR comments/diff annotations show
+    # up - a CODECOV_TOKEN repo secret is optional for public repos but
+    # recommended to avoid tokenless-upload rate limits).
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download unit test coverage
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-unit
+          path: coverage-unit
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-unit/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

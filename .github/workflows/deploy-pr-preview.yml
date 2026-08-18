@@ -1,0 +1,88 @@
+name: Deploy PR preview
+
+# Builds a live preview of each PR at /pr-<number>/ on gh-pages, so it can
+# be reviewed from a URL without checking anything out locally. The preview
+# gets its own GitHub Environment so a "View deployment" link shows up
+# directly on the PR. The folder (and preview link) is removed when the
+# PR closes.
+#
+# Runs on pull_request, not pull_request_target, so it only has write
+# access to gh-pages for PRs from this repo - PRs from forks won't get a
+# live preview (their workflow run gets a read-only token).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+concurrency:
+  group: gh-pages-publish
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment:
+      name: pr-${{ github.event.pull_request.number }}
+      url: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr-${{ github.event.pull_request.number }}/
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Determine preview version
+        id: version
+        run: |
+          BASE_VERSION=$(jq -r '.["."]' .release-please-manifest.json)
+          SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
+          echo "name=${BASE_VERSION}-pr${{ github.event.pull_request.number }}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build web app
+        run: |
+          flutter build web --base-href "/${{ github.event.repository.name }}/pr-${{ github.event.pull_request.number }}/" \
+            --build-name=${{ steps.version.outputs.name }} --build-number=0
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/web
+          destination_dir: pr-${{ github.event.pull_request.number }}
+          keep_files: true
+          commit_message: 'deploy: preview for PR #${{ github.event.pull_request.number }}'
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Remove preview folder
+        run: |
+          PR_DIR="pr-${{ github.event.pull_request.number }}"
+          if [ -d "$PR_DIR" ]; then
+            git rm -r --ignore-unmatch "$PR_DIR"
+            git config user.name 'github-actions[bot]'
+            git config user.email 'github-actions[bot]@users.noreply.github.com'
+            git commit -m "deploy: remove preview for PR #${{ github.event.pull_request.number }}"
+            git push
+          else
+            echo "No preview folder for this PR, nothing to remove."
+          fi

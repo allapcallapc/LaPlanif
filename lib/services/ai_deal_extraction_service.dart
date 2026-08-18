@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/ai_call_log.dart';
 import '../models/deal_item.dart';
 import '../models/flyer_page.dart';
+import 'ai_call_activity.dart';
 import 'ai_call_log_repository.dart';
 
 /// Turns raw per-page flyer alt text into structured deal items using the
@@ -12,9 +13,13 @@ import 'ai_call_log_repository.dart';
 /// call (success or failure) is recorded via [AiCallLogRepository] so usage
 /// can be reviewed later.
 class AiDealExtractionService {
-  AiDealExtractionService({http.Client? client, this.model = _defaultModel, AiCallLogRepository? logRepository})
-    : _client = client ?? http.Client(),
-      _logRepository = logRepository ?? AiCallLogRepository();
+  AiDealExtractionService({
+    http.Client? client,
+    this.model = _defaultModel,
+    AiCallLogRepository? logRepository,
+    this.retryDelay = const Duration(seconds: 2),
+  }) : _client = client ?? http.Client(),
+       _logRepository = logRepository ?? AiCallLogRepository();
 
   static const _defaultModel = 'gemini-3.6-flash';
   static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -26,6 +31,11 @@ class AiDealExtractionService {
   final http.Client _client;
   final AiCallLogRepository _logRepository;
   final String model;
+
+  /// Delay before the single retry attempt on an HTTP 503 ("model
+  /// overloaded", a documented transient Gemini signal). Injectable so
+  /// tests don't have to wait for it.
+  final Duration retryDelay;
 
   Future<List<DealItem>> extractItems({
     required String apiKey,
@@ -47,13 +57,22 @@ class AiDealExtractionService {
     required String storeName,
     required List<FlyerPage> pages,
   }) async {
+    final activityId = AiCallActivity.start(storeName: storeName, model: model);
+    try {
+      return await _extractBatchTracked(apiKey: apiKey, storeName: storeName, pages: pages);
+    } finally {
+      AiCallActivity.finish(activityId);
+    }
+  }
+
+  Future<List<DealItem>> _extractBatchTracked({
+    required String apiKey,
+    required String storeName,
+    required List<FlyerPage> pages,
+  }) async {
     final http.Response response;
     try {
-      response = await _client.post(
-        Uri.parse('$_apiBase/$model:generateContent'),
-        headers: {'x-goog-api-key': apiKey, 'content-type': 'application/json'},
-        body: jsonEncode(_buildRequestBody(pages)),
-      );
+      response = await _postWithRetry(apiKey: apiKey, pages: pages);
     } catch (_) {
       await _log(storeName: storeName, success: false, errorMessage: 'Could not reach the AI API');
       throw Exception('Could not reach the AI API');
@@ -85,17 +104,34 @@ class AiDealExtractionService {
         outputTokens: outputTokens,
       );
       return items;
-    } catch (_) {
+    } catch (e) {
       await _log(
         storeName: storeName,
         success: false,
         inputTokens: inputTokens,
         outputTokens: outputTokens,
-        errorMessage: 'Could not parse structured output from the AI response',
+        errorMessage: 'Could not parse structured output from the AI response: ${_errorDetail(e)}',
       );
       rethrow;
     }
   }
+
+  /// Sends the request, retrying once after [retryDelay] if the API returns
+  /// HTTP 503 - Google's documented "model overloaded, try again" signal.
+  Future<http.Response> _postWithRetry({required String apiKey, required List<FlyerPage> pages}) async {
+    final uri = Uri.parse('$_apiBase/$model:generateContent');
+    final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
+    final body = jsonEncode(_buildRequestBody(pages));
+
+    final response = await _client.post(uri, headers: headers, body: body);
+    if (response.statusCode != 503) {
+      return response;
+    }
+    await Future<void>.delayed(retryDelay);
+    return _client.post(uri, headers: headers, body: body);
+  }
+
+  String _errorDetail(Object error) => error.toString().replaceFirst('Exception: ', '');
 
   Future<void> _log({
     required String storeName,
@@ -146,13 +182,34 @@ class AiDealExtractionService {
   }
 
   List<DealItem> _parseItems(Map<String, dynamic> decoded, String storeName) {
-    final candidates = decoded['candidates'] as List<dynamic>;
+    final candidates = decoded['candidates'] as List<dynamic>?;
+    if (candidates == null || candidates.isEmpty) {
+      final blockReason = (decoded['promptFeedback'] as Map<String, dynamic>?)?['blockReason'];
+      throw Exception('no candidates returned${blockReason != null ? ' (blockReason: $blockReason)' : ''}');
+    }
+
     final firstCandidate = candidates.first as Map<String, dynamic>;
-    final content = firstCandidate['content'] as Map<String, dynamic>;
-    final parts = content['parts'] as List<dynamic>;
-    final functionCallPart =
-        parts.firstWhere((part) => (part as Map<String, dynamic>).containsKey('functionCall'))
-            as Map<String, dynamic>;
+    final finishReason = firstCandidate['finishReason'] as String?;
+    final reasonSuffix = finishReason != null ? ' (finishReason: $finishReason)' : '';
+
+    final content = firstCandidate['content'] as Map<String, dynamic>?;
+    final parts = content?['parts'] as List<dynamic>?;
+    if (parts == null) {
+      throw Exception('no content in response$reasonSuffix');
+    }
+
+    Map<String, dynamic>? functionCallPart;
+    for (final part in parts) {
+      final map = part as Map<String, dynamic>;
+      if (map.containsKey('functionCall')) {
+        functionCallPart = map;
+        break;
+      }
+    }
+    if (functionCallPart == null) {
+      throw Exception('no functionCall in response$reasonSuffix');
+    }
+
     final functionCall = functionCallPart['functionCall'] as Map<String, dynamic>;
     final args = functionCall['args'] as Map<String, dynamic>;
     final rawItems = args['items'] as List<dynamic>;

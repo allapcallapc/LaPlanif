@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../models/ai_call_log.dart';
+import '../services/ai_call_activity.dart';
 import '../services/ai_call_log_repository.dart';
 
 class AiUsageScreen extends StatefulWidget {
-  AiUsageScreen({super.key, AiCallLogRepository? repository})
-    : repository = repository ?? AiCallLogRepository();
+  AiUsageScreen({super.key, AiCallLogRepository? repository, ValueListenable<List<AiInFlightCall>>? activity})
+    : repository = repository ?? AiCallLogRepository(),
+      activity = activity ?? AiCallActivity.inFlight;
 
   final AiCallLogRepository repository;
+  final ValueListenable<List<AiInFlightCall>> activity;
 
   @override
   State<AiUsageScreen> createState() => _AiUsageScreenState();
@@ -35,12 +38,44 @@ class _AiUsageScreenState extends State<AiUsageScreen> {
       appBar: AppBar(title: const Text('AI Usage Log')),
       body: logs == null
           ? const Center(child: CircularProgressIndicator())
-          : logs.isEmpty
-          ? const Center(child: Text('No AI calls yet.'))
-          : ListView.builder(
-              itemCount: logs.length,
-              itemBuilder: (context, i) => _buildLogRow(logs[i]),
+          : ValueListenableBuilder<List<AiInFlightCall>>(
+              valueListenable: widget.activity,
+              builder: (context, running, _) {
+                if (running.isEmpty && logs.isEmpty) {
+                  return const Center(child: Text('No AI calls yet.'));
+                }
+                return ListView(
+                  children: [
+                    if (running.isNotEmpty) ...[
+                      _buildSectionHeader('Running now'),
+                      ...running.map(_buildRunningRow),
+                      const Divider(height: 1),
+                    ],
+                    ...logs.map(_buildLogRow),
+                  ],
+                );
+              },
             ),
+    );
+  }
+
+  Widget _buildSectionHeader(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Text(
+        label,
+        style: Theme.of(
+          context,
+        ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary),
+      ),
+    );
+  }
+
+  Widget _buildRunningRow(AiInFlightCall call) {
+    return ListTile(
+      leading: const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+      title: Text('${call.storeName} · ${call.model}'),
+      subtitle: Text('Started ${_formatTimestamp(call.startedAt)}'),
     );
   }
 

@@ -11,8 +11,24 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  Future<void> pumpScreen(WidgetTester tester, StoreConfigRepository repo) async {
-    await tester.pumpWidget(MaterialApp(home: ConfigScreen(repository: repo)));
+  // Tall enough that every row (stores, API key field, models, usage log
+  // tile) is laid out without needing to scroll - find.*/tap() only see
+  // widgets that are actually built, and the default 800x600 test surface
+  // is shorter than this screen's full content once a few models are
+  // configured.
+  Future<void> pumpScreen(
+    WidgetTester tester,
+    StoreConfigRepository repo, {
+    AiConfigRepository? aiConfigRepository,
+  }) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ConfigScreen(repository: repo, aiConfigRepository: aiConfigRepository)),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -112,20 +128,14 @@ void main() {
     final storeRepo = StoreConfigRepository();
     final aiConfigRepo = AiConfigRepository();
 
-    await tester.pumpWidget(
-      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
-    );
-    await tester.pumpAndSettle();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     await tester.enterText(find.widgetWithText(TextField, 'Google AI API key'), 'test-google-ai-key');
     await tester.pump();
 
     expect(await aiConfigRepo.loadApiKey(), 'test-google-ai-key');
 
-    await tester.pumpWidget(
-      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
-    );
-    await tester.pumpAndSettle();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     expect(find.text('test-google-ai-key'), findsOneWidget);
   });
@@ -168,10 +178,7 @@ void main() {
   testWidgets('adds a model and persists the order', (tester) async {
     final storeRepo = StoreConfigRepository();
     final aiConfigRepo = AiConfigRepository();
-    await tester.pumpWidget(
-      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
-    );
-    await tester.pumpAndSettle();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     await tester.tap(find.byTooltip('Add model'));
     await tester.pumpAndSettle();
@@ -186,10 +193,7 @@ void main() {
   testWidgets('editing a model updates it in place', (tester) async {
     final storeRepo = StoreConfigRepository();
     final aiConfigRepo = AiConfigRepository();
-    await tester.pumpWidget(
-      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
-    );
-    await tester.pumpAndSettle();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     await tester.tap(find.text('gemini-3.6-flash'));
     await tester.pumpAndSettle();
@@ -205,10 +209,7 @@ void main() {
     final storeRepo = StoreConfigRepository();
     final aiConfigRepo = AiConfigRepository();
     await aiConfigRepo.saveModels(['gemini-a', 'gemini-b']);
-    await tester.pumpWidget(
-      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
-    );
-    await tester.pumpAndSettle();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     await tester.tap(find.byTooltip('Move up').last);
     await tester.pumpAndSettle();
@@ -220,10 +221,7 @@ void main() {
     final storeRepo = StoreConfigRepository();
     final aiConfigRepo = AiConfigRepository();
     await aiConfigRepo.saveModels(['gemini-a', 'gemini-b']);
-    await tester.pumpWidget(
-      MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
-    );
-    await tester.pumpAndSettle();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     await tester.tap(find.byTooltip('Remove model').first);
     await tester.pumpAndSettle();

@@ -95830,7 +95830,7 @@ s($,"aWB","aFO",()=>A.c2('[()<>@,;:"\\\\/\\[\\]?={} \\t\\x00-\\x1F\\x7F]',!0,!1)
 s($,"aWM","aFT",()=>A.c2("(?:"+$.aFl().a+")*",!0,!1))
 s($,"aSu","aDn",()=>A.c2("(\\$\\s?\\d+[.,]\\d{2}|\\d+[.,]\\d{2}\\s?\\$)(?:\\s?/\\s?(?:lb|kg))?",!1,!1))
 s($,"aSv","aDo",()=>A.c2("\\.\\s+",!0,!1))
-s($,"aSt","aDm",()=>A.c2("^ce qui revient \xe0\\b",!1,!1))
+s($,"aSt","aDm",()=>A.c2("^ce qui revient \xe0",!1,!1))
 s($,"aSw","aDp",()=>A.c2("\\s*\\bpour\\s*$",!1,!1))
 s($,"aSF","avB",()=>{var q=null
 return A.by(q,q,!0,"background",new A.a5Q(),q,new A.a5R(),q)})

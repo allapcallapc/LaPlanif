@@ -7,6 +7,7 @@ import '../services/ai_deal_extraction_service.dart';
 import '../services/flyer_scraper_service.dart';
 import '../services/model_fallback_controller.dart';
 import '../services/store_config_repository.dart';
+import '../utils/error_formatting.dart';
 import '../widgets/rate_limit_dialog.dart';
 
 const _sectionOrder = [
@@ -116,6 +117,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
     if (!mounted) return;
     setState(() {
       _items = [..._items.where((item) => item.storeName != state.store.name), ...items];
+      // A retry can drop the filtered store to zero items, which would
+      // otherwise leave _storeFilter pointing at a name _buildResults can no
+      // longer find - reset it rather than showing an unexplained empty list.
+      if (_storeFilter != null && !_items.any((item) => item.storeName == _storeFilter)) {
+        _storeFilter = null;
+      }
       _isRunning = false;
     });
   }
@@ -125,28 +132,38 @@ class _PlanifScreenState extends State<PlanifScreen> {
   // that chunk's pages, so a later chunk failing never re-sends - or loses -
   // an earlier chunk's already-extracted items.
   Future<List<DealItem>> _fetchStore(StoreFetchState state, String apiKey, List<String> models) async {
-    setState(() => state.status = StoreFetchStatus.inProgress);
+    if (mounted) setState(() => state.status = StoreFetchStatus.inProgress);
     final items = <DealItem>[];
+    // Remaining models to try, trimmed to start at whichever model actually
+    // succeeded for the previous chunk - a chunked store's later chunks
+    // otherwise forget a model already skipped past and re-attempt (and
+    // re-prompt for) it from scratch every time.
+    var remainingModels = models;
     try {
       final pages = await widget.scraperService.fetchPages(state.store);
       for (var start = 0; start < pages.length; start += AiDealExtractionService.maxPagesPerCall) {
         final end = (start + AiDealExtractionService.maxPagesPerCall).clamp(0, pages.length);
         final chunk = pages.sublist(start, end);
-        final controller = ModelFallbackController(models: models, waitBeforeRetry: widget.rateLimitWait);
+        final controller = ModelFallbackController(models: remainingModels, waitBeforeRetry: widget.rateLimitWait);
+        var usedModel = remainingModels.first;
         items.addAll(
           await controller.run(
-            attempt: (model) => widget.extractionService.extractItems(
-              apiKey: apiKey,
-              storeName: state.store.name,
-              pages: chunk,
-              model: model,
-            ),
+            attempt: (model) {
+              usedModel = model;
+              return widget.extractionService.extractItems(
+                apiKey: apiKey,
+                storeName: state.store.name,
+                pages: chunk,
+                model: model,
+              );
+            },
             onRateLimited: ({required currentModel, nextModel}) {
               if (!mounted) return Future.value(RateLimitChoice.retrySame);
               return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
             },
           ),
         );
+        remainingModels = remainingModels.sublist(remainingModels.indexOf(usedModel));
       }
       if (mounted) {
         setState(() {
@@ -172,7 +189,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   String _shortReason(Object error) {
-    final message = error.toString().replaceFirst('Exception: ', '');
+    final message = stripExceptionPrefix(error);
     return message.length > 80 ? '${message.substring(0, 80)}…' : message;
   }
 

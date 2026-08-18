@@ -924,4 +924,155 @@ void main() {
     expect(chunkPageCounts, [AiDealExtractionService.maxPagesPerCall, 2, 2]);
     expect(find.text('IGA · 2'), findsOneWidget);
   });
+
+  testWidgets('carries a model switch forward to later chunks instead of re-trying a skipped model', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    await aiConfigRepo.saveModels(['model-a', 'model-b']);
+
+    // Two equal chunks, so a second chunk actually happens.
+    final pageCount = AiDealExtractionService.maxPagesPerCall * 2;
+    final scraper = _FakePagesScraper({
+      'iga': List.generate(pageCount, (i) => FlyerPage(pageNumber: i + 1, altText: 'Item $i')),
+    });
+
+    final modelAttempts = <String, int>{};
+    var promptCalls = 0;
+    final extraction = _FakeModelAwareExtractionService((model, storeName) async {
+      modelAttempts[model] = (modelAttempts[model] ?? 0) + 1;
+      // model-a is permanently rate limited; model-b always works.
+      if (model == 'model-a') throw RateLimitedException(model);
+      return [
+        DealItem(
+          name: 'Item ${modelAttempts[model]}',
+          price: '1.00\$',
+          unit: '',
+          category: DealCategory.uncategorized,
+          storeName: storeName,
+          pageIndex: 1,
+        ),
+      ];
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          rateLimitWait: Duration.zero,
+          rateLimitPrompt: (context, {required currentModel, nextModel}) async {
+            promptCalls++;
+            return RateLimitChoice.nextModel;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    // Chunk 1 hits model-a twice (initial + automatic cooldown retry) before
+    // the user is asked once and switches to model-b. Chunk 2 should start
+    // straight from model-b - if it forgot the switch and started over at
+    // model-a, model-a would be attempted twice more and the user would be
+    // asked a second time.
+    expect(modelAttempts['model-a'], 2);
+    expect(modelAttempts['model-b'], 2);
+    expect(promptCalls, 1);
+    expect(find.text('IGA · 2'), findsOneWidget);
+  });
+
+  testWidgets('resets the store filter when a retry drops the filtered store to zero items', (tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = StoreConfigRepository();
+    await repository.save(const [
+      StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
+      StoreConfig(id: 'metro', name: 'Metro', flyerUrl: 'https://example.com/metro'),
+    ]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final pageCount = AiDealExtractionService.maxPagesPerCall + 2;
+    final scraper = _FakePagesScraper({
+      'iga': List.generate(pageCount, (i) => FlyerPage(pageNumber: i + 1, altText: 'Item $i')),
+      'metro': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+
+    final extraction = _FakeMultiStoreChunkAwareExtractionService({
+      'IGA': (pages, callNumber) async {
+        // Initial fetch: chunk 1 succeeds, chunk 2 fails outright, leaving
+        // IGA with one partial item.
+        if (callNumber == 1) {
+          return [
+            DealItem(
+              name: 'Poulet',
+              price: '3.99\$',
+              unit: '',
+              category: DealCategory.protein,
+              storeName: 'IGA',
+              pageIndex: pages.first.pageNumber,
+            ),
+          ];
+        }
+        if (callNumber == 2) throw Exception('boom');
+        // Retry: both chunks now succeed, but with nothing to report.
+        return const [];
+      },
+      'Metro': (pages, callNumber) async => [
+        DealItem(
+          name: 'Fromage',
+          price: '6.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'Metro',
+          pageIndex: pages.first.pageNumber,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    // Both stores have items, so the filter row is showing.
+    expect(find.text('Poulet'), findsOneWidget);
+    expect(find.text('Fromage'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'IGA'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Poulet'), findsOneWidget);
+    expect(find.text('Fromage'), findsNothing);
+
+    await tester.tap(find.text('IGA · 1 kept, failed, tap to retry'));
+    await tester.pumpAndSettle();
+
+    // The retry left IGA with zero items, so filtering to "IGA" would show
+    // nothing with no way back - the filter should have reset instead.
+    expect(find.text('Fromage'), findsOneWidget);
+  });
 }

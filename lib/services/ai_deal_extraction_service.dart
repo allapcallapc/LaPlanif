@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../models/ai_call_log.dart';
 import '../models/deal_item.dart';
 import '../models/flyer_page.dart';
+import '../utils/error_formatting.dart';
 import 'ai_call_activity.dart';
 import 'ai_call_log_repository.dart';
 import 'model_fallback_controller.dart';
@@ -170,7 +171,7 @@ class AiDealExtractionService {
     return _client.post(uri, headers: headers, body: body);
   }
 
-  String _errorDetail(Object error) => error.toString().replaceFirst('Exception: ', '');
+  String _errorDetail(Object error) => stripExceptionPrefix(error);
 
   Future<void> _log({
     required String storeName,

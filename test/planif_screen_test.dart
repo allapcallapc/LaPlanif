@@ -80,7 +80,7 @@ void main() {
     expect(find.text('Pain baguette'), findsOneWidget);
     expect(find.text('Papier essuie-tout'), findsOneWidget);
 
-    expect(find.byIcon(Icons.star), findsOneWidget);
+    expect(find.text('COVER'), findsOneWidget);
     expect(find.text('1.33\$/kg'), findsOneWidget);
   });
 

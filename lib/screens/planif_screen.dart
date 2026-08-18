@@ -188,8 +188,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   Widget _buildItemTile(DealItem item) {
     return ListTile(
-      leading: item.isCoverPage ? const Icon(Icons.star, color: Colors.amber) : null,
-      title: Text(item.name),
+      title: Row(
+        children: [
+          Flexible(child: Text(item.name)),
+          if (item.isCoverPage) ...[const SizedBox(width: 8), _buildCoverBadge()],
+        ],
+      ),
       subtitle: Text('${item.storeName} · page ${item.pageIndex}'),
       trailing: Column(
         mainAxisSize: MainAxisSize.min,
@@ -198,6 +202,21 @@ class _PlanifScreenState extends State<PlanifScreen> {
           Text(item.price, style: const TextStyle(fontWeight: FontWeight.bold)),
           if (item.unitPrice != null) Text(item.unitPrice!, style: Theme.of(context).textTheme.bodySmall),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCoverBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.amber.shade100,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Colors.amber.shade700),
+      ),
+      child: Text(
+        'COVER',
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber.shade900),
       ),
     );
   }

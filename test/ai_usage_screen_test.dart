@@ -56,10 +56,13 @@ void main() {
       AiInFlightCall(id: 1, storeName: 'Maxi', model: 'gemini-3.6-flash', startedAt: DateTime(2026, 1, 1, 9, 0)),
     ]);
 
+    // pumpAndSettle would never terminate: the running row's spinner is an
+    // indeterminate CircularProgressIndicator that animates forever.
     await tester.pumpWidget(
       MaterialApp(home: AiUsageScreen(repository: AiCallLogRepository(), activity: activity)),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
 
     expect(find.text('Running now'), findsOneWidget);
     expect(find.textContaining('Maxi · gemini-3.6-flash'), findsOneWidget);
@@ -74,11 +77,13 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: AiUsageScreen(repository: AiCallLogRepository(), activity: activity)),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
     expect(find.text('Running now'), findsOneWidget);
 
     activity.value = const [];
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
 
     expect(find.text('Running now'), findsNothing);
     expect(find.text('No AI calls yet.'), findsOneWidget);

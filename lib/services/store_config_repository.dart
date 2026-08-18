@@ -19,7 +19,7 @@ class StoreConfigRepository {
     if (raw == null) {
       final defaults = defaultStores();
       await save(defaults);
-      return defaults;
+      return defaults.toList();
     }
     final decoded = jsonDecode(raw) as List<dynamic>;
     return decoded.map((e) => StoreConfig.fromJson(e as Map<String, dynamic>)).toList();

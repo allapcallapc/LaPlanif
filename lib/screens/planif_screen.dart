@@ -102,18 +102,22 @@ class _PlanifScreenState extends State<PlanifScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
             child: Align(
               alignment: Alignment.centerLeft,
-              child: Text("Step 1 · This week's deals", style: Theme.of(context).textTheme.titleMedium),
+              child: Text("Step 1 · This week's deals", style: Theme.of(context).textTheme.titleSmall),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
             child: FilledButton.icon(
               onPressed: _isRunning ? null : _fetchAll,
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh, size: 18),
               label: Text(_isRunning ? 'Fetching…' : "Fetch this week's deals"),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              ),
             ),
           ),
           if (_states.isNotEmpty) ...[

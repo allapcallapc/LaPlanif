@@ -531,4 +531,141 @@ void main() {
     expect(attempts, 3);
     expect(find.text('Poulet'), findsOneWidget);
   });
+
+  testWidgets('retries a single failed store without re-fetching the others', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [
+      StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
+      StoreConfig(id: 'metro', name: 'Metro', flyerUrl: 'https://example.com/metro'),
+    ]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      'metro': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+
+    var igaAttempts = 0;
+    final extraction = _FakeExtractionService({
+      'IGA': () async {
+        igaAttempts++;
+        if (igaAttempts == 1) throw Exception('boom');
+        return const [
+          DealItem(
+            name: 'Poulet',
+            price: '3.99\$',
+            unit: '',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 1,
+          ),
+        ];
+      },
+      'Metro': () async => const [
+        DealItem(
+          name: 'Fromage',
+          price: '6.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'Metro',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('IGA · failed'), findsOneWidget);
+    expect(find.text('Metro · 1'), findsOneWidget);
+    expect(find.text('Fromage'), findsOneWidget);
+    expect(find.text('Poulet'), findsNothing);
+
+    await tester.tap(find.text('IGA · failed'));
+    await tester.pumpAndSettle();
+
+    expect(igaAttempts, 2);
+    expect(find.text('IGA · 1'), findsOneWidget);
+    expect(find.text('Metro · 1'), findsOneWidget);
+    expect(find.text('Poulet'), findsOneWidget);
+    expect(find.text('Fromage'), findsOneWidget);
+  });
+
+  testWidgets('shows a retrying chip and disables Fetch deals while a single store retries', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+
+    var attempts = 0;
+    final retryCompleter = Completer<List<DealItem>>();
+    final extraction = _FakeExtractionService({
+      'IGA': () async {
+        attempts++;
+        if (attempts == 1) throw Exception('boom');
+        return retryCompleter.future;
+      },
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    expect(find.text('IGA · failed'), findsOneWidget);
+
+    await tester.tap(find.text('IGA · failed'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('IGA · retrying…'), findsOneWidget);
+    expect(find.text('Fetching…'), findsOneWidget);
+    final fetchButton = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Fetching…'));
+    expect(fetchButton.onPressed, isNull);
+
+    retryCompleter.complete(const [
+      DealItem(
+        name: 'Poulet',
+        price: '3.99\$',
+        unit: '',
+        category: DealCategory.protein,
+        storeName: 'IGA',
+        pageIndex: 1,
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('IGA · 1'), findsOneWidget);
+    expect(find.text('Poulet'), findsOneWidget);
+  });
 }

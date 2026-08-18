@@ -65,6 +65,8 @@ class _PlanifScreenState extends State<PlanifScreen> {
   bool _isRunning = false;
   bool _hasRun = false;
   String? _storeFilter;
+  String? _apiKey;
+  List<String> _models = [];
 
   Future<void> _fetchAll() async {
     final apiKey = await widget.aiConfigRepository.loadApiKey();
@@ -85,6 +87,8 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _isRunning = true;
       _hasRun = false;
       _storeFilter = null;
+      _apiKey = apiKey;
+      _models = models;
     });
 
     // Fetched one store at a time, not in parallel: every store hits the
@@ -100,6 +104,19 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _items = items;
       _isRunning = false;
       _hasRun = true;
+    });
+  }
+
+  Future<void> _retryStore(StoreFetchState state) async {
+    final apiKey = _apiKey;
+    if (apiKey == null || _isRunning) return;
+
+    setState(() => _isRunning = true);
+    final items = await _fetchStore(state, apiKey, _models);
+    if (!mounted) return;
+    setState(() {
+      _items = [..._items.where((item) => item.storeName != state.store.name), ...items];
+      _isRunning = false;
     });
   }
 
@@ -210,20 +227,33 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  // Only called once _hasRun is true, by which point every store has
-  // settled to done or failed - waiting/inProgress can't occur here.
+  // Called once _hasRun is true. Every store has settled to done or failed
+  // at that point, except one that's mid-retry via _retryStore, which shows
+  // as inProgress.
   Widget _buildStatusChip(StoreFetchState state) {
-    final failed = state.status == StoreFetchStatus.failed;
+    if (state.status == StoreFetchStatus.failed) {
+      return ActionChip(
+        avatar: const Icon(Icons.error, size: 16, color: Colors.red),
+        label: Text('${state.store.name} · failed', style: const TextStyle(fontSize: 12)),
+        tooltip: 'Retry ${state.store.name}',
+        onPressed: _isRunning ? null : () => _retryStore(state),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+      );
+    }
+    if (state.status == StoreFetchStatus.done) {
+      return Chip(
+        avatar: const Icon(Icons.check_circle, size: 16, color: Colors.green),
+        label: Text('${state.store.name} · ${state.itemCount}', style: const TextStyle(fontSize: 12)),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+      );
+    }
     return Chip(
-      avatar: Icon(
-        failed ? Icons.error : Icons.check_circle,
-        size: 16,
-        color: failed ? Colors.red : Colors.green,
-      ),
-      label: Text(
-        failed ? '${state.store.name} · failed' : '${state.store.name} · ${state.itemCount}',
-        style: const TextStyle(fontSize: 12),
-      ),
+      avatar: const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+      label: Text('${state.store.name} · retrying…', style: const TextStyle(fontSize: 12)),
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       padding: const EdgeInsets.symmetric(horizontal: 4),

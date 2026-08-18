@@ -30,7 +30,10 @@ class FlyerAltTextParser {
 
   static final RegExp _sentenceSplitRegex = RegExp(r'\.\s+');
 
-  static final RegExp _continuationRegex = RegExp(r'^ce qui revient à\b', caseSensitive: false);
+  // No trailing \b: Dart/JS regex's \b is ASCII \w-only, so it never
+  // matches right after the accented "à" and would silently prevent
+  // this from ever matching.
+  static final RegExp _continuationRegex = RegExp(r'^ce qui revient à', caseSensitive: false);
 
   static final RegExp _trailingPourRegex = RegExp(r'\s*\bpour\s*$', caseSensitive: false);
 

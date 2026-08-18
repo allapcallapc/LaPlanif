@@ -67,8 +67,10 @@ void main() {
     await tester.tap(find.text("Fetch this week's deals"));
     await tester.pumpAndSettle();
 
-    expect(find.text('4 items'), findsOneWidget);
-    expect(find.text('HTTP 500'), findsOneWidget);
+    // Once loaded, the per-store status collapses to a compact summary
+    // chip per store instead of a full status row each.
+    expect(find.text('IGA · 4'), findsOneWidget);
+    expect(find.text('Metro · failed'), findsOneWidget);
 
     expect(find.text('Protein'), findsOneWidget);
     expect(find.text('Vegetables'), findsOneWidget);

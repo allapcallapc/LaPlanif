@@ -118,7 +118,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
           ),
           if (_states.isNotEmpty) ...[
             const Divider(height: 1),
-            ..._states.map(_buildStatusRow),
+            if (_hasRun) _buildStatusSummary() else ..._states.map(_buildStatusRow),
             const Divider(height: 1),
           ],
           Expanded(child: _buildResults()),
@@ -144,6 +144,37 @@ class _PlanifScreenState extends State<PlanifScreen> {
       ),
     };
     return ListTile(leading: icon, title: Text(state.store.name), trailing: Text(trailingText));
+  }
+
+  Widget _buildStatusSummary() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: _states.map(_buildStatusChip).toList(),
+      ),
+    );
+  }
+
+  Widget _buildStatusChip(StoreFetchState state) {
+    final (icon, color, label) = switch (state.status) {
+      StoreFetchStatus.waiting => (Icons.hourglass_empty, Colors.grey, state.store.name),
+      StoreFetchStatus.inProgress => (Icons.sync, Colors.grey, state.store.name),
+      StoreFetchStatus.done => (
+        Icons.check_circle,
+        Colors.green,
+        '${state.store.name} · ${state.itemCount}',
+      ),
+      StoreFetchStatus.failed => (Icons.error, Colors.red, '${state.store.name} · failed'),
+    };
+    return Chip(
+      avatar: Icon(icon, size: 16, color: color),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+    );
   }
 
   Widget _buildResults() {

@@ -89406,21 +89406,22 @@ case 5:case 1:return A.Q(q,r)
 case 2:return A.P(o.at(-1),r)}})
 return A.R($async$ku,r)},
 uy(a,b){return this.ahY(a,b)},
-ahY(a,b){var s=0,r=A.S(t.Wd),q,p=this,o,n,m,l,k
+ahY(a,b){var s=0,r=A.S(t.Wd),q,p=this,o,n,m,l,k,j
 var $async$uy=A.T(function(c,d){if(c===1)return A.P(d,r)
-for(;;)switch(s){case 0:n=A.fr("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",0,null)
-m=t.N
-l=A.U(["x-goog-api-key",a,"content-type","application/json"],m,m)
-k=B.bN.Ao(p.a7U(b),null)
-m=p.a
+for(;;)switch(s){case 0:m=A.fr("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",0,null)
+l=t.N
+k=A.U(["x-goog-api-key",a,"content-type","application/json"],l,l)
+j=B.bN.Ao(p.a7U(b),null)
+l=p.a
 s=3
-return A.N(m.qC("POST",n,l,k,null),$async$uy)
+return A.N(l.qC("POST",m,k,j,null),$async$uy)
 case 3:o=d
-if(o.b!==503){q=o
+n=o.b
+if(n!==503&&n!==429){q=o
 s=1
 break}s=4
 return A.N(A.tc(B.fx,t.H),$async$uy)
-case 4:q=m.qC("POST",n,l,k,null)
+case 4:q=l.qC("POST",m,k,j,null)
 s=1
 break
 case 1:return A.Q(q,r)}})

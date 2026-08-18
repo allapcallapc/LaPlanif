@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:laplanif/models/deal_item.dart';
 import 'package:laplanif/models/store_config.dart';
-import 'package:laplanif/screens/deals_screen.dart';
+import 'package:laplanif/screens/planif_screen.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
 import 'package:laplanif/services/store_config_repository.dart';
 
@@ -40,7 +40,7 @@ void main() {
       'metro': () async => throw Exception('HTTP 500'),
     });
 
-    await tester.pumpWidget(MaterialApp(home: DealsScreen(repository: repository, scraper: scraper)));
+    await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository, scraper: scraper)));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Press "Fetch'), findsOneWidget);
@@ -61,7 +61,7 @@ void main() {
 
     final scraper = _FakeScraperService({'iga': () async => throw Exception('boom')});
 
-    await tester.pumpWidget(MaterialApp(home: DealsScreen(repository: repository, scraper: scraper)));
+    await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository, scraper: scraper)));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text("Fetch this week's deals"));

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:laplanif/screens/store_config_screen.dart';
+import 'package:laplanif/screens/config_screen.dart';
 import 'package:laplanif/services/store_config_repository.dart';
 
 void main() {
@@ -11,7 +11,7 @@ void main() {
   });
 
   Future<void> pumpScreen(WidgetTester tester, StoreConfigRepository repo) async {
-    await tester.pumpWidget(MaterialApp(home: StoreConfigScreen(repository: repo)));
+    await tester.pumpWidget(MaterialApp(home: ConfigScreen(repository: repo)));
     await tester.pumpAndSettle();
   }
 

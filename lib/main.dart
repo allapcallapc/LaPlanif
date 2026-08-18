@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'screens/deals_screen.dart';
-import 'screens/store_config_screen.dart';
+import 'screens/config_screen.dart';
+import 'screens/planif_screen.dart';
 import 'services/store_config_repository.dart';
 
 void main() {
@@ -34,10 +34,7 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    final screens = [
-      StoreConfigScreen(repository: _storeRepository),
-      DealsScreen(repository: _storeRepository),
-    ];
+    final screens = [PlanifScreen(repository: _storeRepository), ConfigScreen(repository: _storeRepository)];
     return Scaffold(
       body: IndexedStack(index: _tabIndex, children: screens),
       bottomNavigationBar: NavigationBar(
@@ -45,14 +42,14 @@ class _HomeShellState extends State<HomeShell> {
         onDestinationSelected: (i) => setState(() => _tabIndex = i),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.storefront_outlined),
-            selectedIcon: Icon(Icons.storefront),
-            label: 'Stores',
+            icon: Icon(Icons.checklist_outlined),
+            selectedIcon: Icon(Icons.checklist),
+            label: 'Planif',
           ),
           NavigationDestination(
-            icon: Icon(Icons.local_offer_outlined),
-            selectedIcon: Icon(Icons.local_offer),
-            label: 'Deals',
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Config',
           ),
         ],
       ),

@@ -3,16 +3,16 @@ import 'package:flutter/material.dart';
 import '../models/store_config.dart';
 import '../services/store_config_repository.dart';
 
-class StoreConfigScreen extends StatefulWidget {
-  const StoreConfigScreen({super.key, required this.repository});
+class ConfigScreen extends StatefulWidget {
+  const ConfigScreen({super.key, required this.repository});
 
   final StoreConfigRepository repository;
 
   @override
-  State<StoreConfigScreen> createState() => _StoreConfigScreenState();
+  State<ConfigScreen> createState() => _ConfigScreenState();
 }
 
-class _StoreConfigScreenState extends State<StoreConfigScreen> {
+class _ConfigScreenState extends State<ConfigScreen> {
   List<StoreConfig>? _stores;
 
   @override
@@ -53,29 +53,41 @@ class _StoreConfigScreenState extends State<StoreConfigScreen> {
   Widget build(BuildContext context) {
     final stores = _stores;
     return Scaffold(
-      appBar: AppBar(title: const Text('Stores')),
-      body: stores == null
-          ? const Center(child: CircularProgressIndicator())
-          : stores.isEmpty
-          ? const Center(child: Text('No stores configured yet.'))
-          : ListView.builder(
-              itemCount: stores.length,
-              itemBuilder: (context, i) {
-                final store = stores[i];
-                return ListTile(
-                  title: Text(store.name),
-                  subtitle: Text(store.flyerUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  onTap: () => _openEditor(existing: store),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => _remove(store),
-                  ),
-                );
-              },
+      appBar: AppBar(title: const Text('Config')),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+            child: Row(
+              children: [
+                Expanded(child: Text('Stores', style: Theme.of(context).textTheme.titleMedium)),
+                IconButton(icon: const Icon(Icons.add), tooltip: 'Add store', onPressed: () => _openEditor()),
+              ],
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _openEditor(),
-        child: const Icon(Icons.add),
+          ),
+          Expanded(
+            child: stores == null
+                ? const Center(child: CircularProgressIndicator())
+                : stores.isEmpty
+                ? const Center(child: Text('No stores configured yet.'))
+                : ListView.builder(
+                    itemCount: stores.length,
+                    itemBuilder: (context, i) {
+                      final store = stores[i];
+                      return ListTile(
+                        title: Text(store.name),
+                        subtitle: Text(store.flyerUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        onTap: () => _openEditor(existing: store),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () => _remove(store),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

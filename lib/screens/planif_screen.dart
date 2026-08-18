@@ -16,18 +16,18 @@ class StoreFetchState {
   String? errorMessage;
 }
 
-class DealsScreen extends StatefulWidget {
-  DealsScreen({super.key, required this.repository, FlyerScraperService? scraper})
+class PlanifScreen extends StatefulWidget {
+  PlanifScreen({super.key, required this.repository, FlyerScraperService? scraper})
     : scraper = scraper ?? FlyerScraperService();
 
   final StoreConfigRepository repository;
   final FlyerScraperService scraper;
 
   @override
-  State<DealsScreen> createState() => _DealsScreenState();
+  State<PlanifScreen> createState() => _PlanifScreenState();
 }
 
-class _DealsScreenState extends State<DealsScreen> {
+class _PlanifScreenState extends State<PlanifScreen> {
   List<StoreFetchState> _states = [];
   List<DealItem> _items = [];
   bool _isRunning = false;
@@ -83,9 +83,16 @@ class _DealsScreenState extends State<DealsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("This Week's Deals")),
+      appBar: AppBar(title: const Text('Planif')),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text("Step 1 · This week's deals", style: Theme.of(context).textTheme.titleMedium),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.all(16),
             child: FilledButton.icon(

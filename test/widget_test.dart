@@ -9,12 +9,12 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('shows the Stores and Deals tabs', (WidgetTester tester) async {
+  testWidgets('shows the Planif and Config tabs', (WidgetTester tester) async {
     await tester.pumpWidget(const LaPlanifApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Stores'), findsWidgets);
-    expect(find.text('Deals'), findsWidgets);
+    expect(find.text('Planif'), findsWidgets);
+    expect(find.text('Config'), findsWidgets);
   });
 
   testWidgets('default store list is preconfigured', (WidgetTester tester) async {
@@ -26,11 +26,15 @@ void main() {
     expect(find.text('Maxi'), findsOneWidget);
   });
 
-  testWidgets('tapping the Deals destination switches tabs', (WidgetTester tester) async {
+  testWidgets('tapping the Config destination switches tabs', (WidgetTester tester) async {
     await tester.pumpWidget(const LaPlanifApp());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Deals'));
+    // Both the nav label and the Config screen's own AppBar title read
+    // "Config" (the latter stays mounted offstage via IndexedStack), so the
+    // tap must be scoped to the NavigationBar to hit the destination.
+    final configDestination = find.descendant(of: find.byType(NavigationBar), matching: find.text('Config'));
+    await tester.tap(configDestination);
     await tester.pumpAndSettle();
 
     final stack = tester.widget<IndexedStack>(find.byType(IndexedStack));

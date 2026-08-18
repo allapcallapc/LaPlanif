@@ -51,6 +51,23 @@ void main() {
       expect(items[0].price, '6,99 \$');
     });
 
+    test('splits a semicolon-separated list of items within one sentence', () {
+      const alt =
+          'On y trouve : des haricots verts ou jaunes à 2,99 \$ la livre; '
+          'des carottes nantaises à 2,99 \$ la livre; '
+          'du céleri à 1,99 \$.';
+
+      final items = FlyerAltTextParser.parse(alt);
+
+      expect(items.length, 3);
+      expect(items[0].name, 'On y trouve : des haricots verts ou jaunes à');
+      expect(items[0].price, '2,99 \$');
+      expect(items[1].name, 'des carottes nantaises à');
+      expect(items[1].price, '2,99 \$');
+      expect(items[2].name, 'du céleri à');
+      expect(items[2].price, '1,99 \$');
+    });
+
     test('returns nothing when no price is present', () {
       expect(FlyerAltTextParser.parse('Page couverture de la circulaire'), isEmpty);
     });

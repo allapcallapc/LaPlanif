@@ -107,6 +107,21 @@ void main() {
     expect((await logRepository.loadAll()).single.success, isFalse);
   });
 
+  test('throws and logs a failure when the response body is not valid JSON', () async {
+    final client = MockClient((request) async => http.Response('not json', 200));
+    final logRepository = AiCallLogRepository();
+    final service = AiDealExtractionService(client: client, logRepository: logRepository);
+
+    await expectLater(
+      service.extractItems(apiKey: 'sk-test', storeName: 'Metro', pages: pages),
+      throwsException,
+    );
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('Invalid JSON'));
+  });
+
   test('throws and logs a failure when the response has no tool_use block', () async {
     final client = MockClient(
       (request) async => http.Response(

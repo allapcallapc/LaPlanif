@@ -89819,7 +89819,7 @@ var $async$AJ=A.S(function(e,f){if(e===1)return A.O(f,r)
 for(;;)switch(s){case 0:l=A.d([],t.sN)
 o=J.bo(c),n=0
 case 3:if(!(n<o.gE(c))){s=5
-break}m=n+15
+break}m=n+10
 k=B.b
 j=l
 s=6
@@ -89977,7 +89977,7 @@ break
 case 1:return A.P(q,r)}})
 return A.Q($async$uF,r)},
 a89(a){var s=t.N,r=J.fv(a,new A.a_5(),s).bg(0,"\n\n"),q=t.m0,p=t.K
-return A.U(["systemInstruction",A.U(["parts",A.d([A.U(["text",'You are extracting real grocery deals from OCR-style descriptions of grocery flyer pages. Each page\'s description is prose, not a delimited list, and may describe several items in one passage.\n\nFor every real product deal you find, record:\n- name: the cleaned product name. Remove narrative filler and price-connector language (e.g. "pour", "\xe0", "ce qui revient \xe0", "on trouve aussi"), but keep package size, brand, and format intact.\n- price: the flat price if that\'s how it\'s listed, or the per-unit price if it\'s listed per unit (e.g. per lb/kg/100g).\n- unit: the unit the price applies to (e.g. "lb", "kg", "100g", "each"), or an empty string if it\'s a flat price.\n- category: exactly one of "Protein", "Vegetables", "Carbs", or "Uncategorized" - use "Uncategorized" rather than forcing a bad fit.\n- page: the page number exactly as labeled in the input ("Page N:").\n\nSkip:\n- Page intros, theme, or promotional descriptions with no actual product or price.\n- Duplicate mentions of the same item appearing more than once within the same page\'s description.\n\nCall the record_items function with every item you find.\n'],s,s)],q)],s,t.nJ),"contents",A.d([A.U(["role","user","parts",A.d([A.U(["text",r],s,s)],q)],s,p)],t.Mq),"tools",A.d([B.a42],t.lU),"toolConfig",A.U(["functionCallingConfig",A.U(["mode","ANY","allowedFunctionNames",A.d(["record_items"],t.s)],s,p)],s,t.nf),"generationConfig",A.U(["maxOutputTokens",8192],s,t.S)],s,t.z)},
+return A.U(["systemInstruction",A.U(["parts",A.d([A.U(["text",'You are extracting real grocery deals from OCR-style descriptions of grocery flyer pages. Each page\'s description is prose, not a delimited list, and may describe several items in one passage.\n\nFor every real product deal you find, record:\n- name: the cleaned product name. Remove narrative filler and price-connector language (e.g. "pour", "\xe0", "ce qui revient \xe0", "on trouve aussi"), but keep package size, brand, and format intact.\n- price: the flat price if that\'s how it\'s listed, or the per-unit price if it\'s listed per unit (e.g. per lb/kg/100g).\n- unit: the unit the price applies to (e.g. "lb", "kg", "100g", "each"), or an empty string if it\'s a flat price.\n- category: exactly one of "Protein", "Vegetables", "Carbs", or "Uncategorized" - use "Uncategorized" rather than forcing a bad fit.\n- page: the page number exactly as labeled in the input ("Page N:").\n\nSkip:\n- Page intros, theme, or promotional descriptions with no actual product or price.\n- Duplicate mentions of the same item appearing more than once within the same page\'s description.\n\nCall the record_items function with every item you find.\n'],s,s)],q)],s,t.nJ),"contents",A.d([A.U(["role","user","parts",A.d([A.U(["text",r],s,s)],q)],s,p)],t.Mq),"tools",A.d([B.a42],t.lU),"toolConfig",A.U(["functionCallingConfig",A.U(["mode","ANY","allowedFunctionNames",A.d(["record_items"],t.s)],s,p)],s,t.nf),"generationConfig",A.U(["maxOutputTokens",32768],s,t.S)],s,t.z)},
 ahH(a,b){var s,r,q,p,o,n,m,l,k,j="functionCall",i=t.kc,h=i.a(a.h(0,"candidates"))
 if(h==null||J.o5(h)){i=t.nA.a(a.h(0,"promptFeedback"))
 s=i==null?null:i.h(0,"blockReason")

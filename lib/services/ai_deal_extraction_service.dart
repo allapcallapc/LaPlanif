@@ -26,8 +26,12 @@ class AiDealExtractionService {
   static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
 
   /// Flyers can run to dozens of pages; keep each call to a bounded chunk
-  /// rather than sending an entire flyer in one request.
-  static const _maxPagesPerCall = 15;
+  /// rather than sending an entire flyer in one request. Kept small enough
+  /// that even a dense flyer (many items per page) stays well under
+  /// maxOutputTokens - a batch that's too large gets its function-call JSON
+  /// truncated mid-response, which Gemini reports as finishReason
+  /// MALFORMED_FUNCTION_CALL rather than MAX_TOKENS.
+  static const _maxPagesPerCall = 10;
 
   final http.Client _client;
   final AiCallLogRepository _logRepository;
@@ -223,7 +227,7 @@ class AiDealExtractionService {
           'allowedFunctionNames': ['record_items'],
         },
       },
-      'generationConfig': {'maxOutputTokens': 8192},
+      'generationConfig': {'maxOutputTokens': 32768},
     };
   }
 

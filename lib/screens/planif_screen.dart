@@ -127,10 +127,13 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
+  // Future.wait starts every _fetchStore call synchronously before any of
+  // them can yield back to the UI thread, so every store's status has
+  // already flipped from waiting to inProgress before the first frame
+  // renders - waiting is never actually observable here.
   Widget _buildStatusRow(StoreFetchState state) {
     final (icon, trailingText) = switch (state.status) {
-      StoreFetchStatus.waiting => (const Icon(Icons.hourglass_empty, color: Colors.grey), 'Waiting'),
-      StoreFetchStatus.inProgress => (
+      StoreFetchStatus.waiting || StoreFetchStatus.inProgress => (
         const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
         'Fetching…',
       ),

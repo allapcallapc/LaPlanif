@@ -8,7 +8,7 @@ import '../models/flyer_page.dart';
 import 'ai_call_log_repository.dart';
 
 /// Turns raw per-page flyer alt text into structured deal items using the
-/// Anthropic Messages API - no local splitting/parsing heuristics. Every
+/// Google AI (Gemini) API - no local splitting/parsing heuristics. Every
 /// call (success or failure) is recorded via [AiCallLogRepository] so usage
 /// can be reviewed later.
 class AiDealExtractionService {
@@ -16,8 +16,8 @@ class AiDealExtractionService {
     : _client = client ?? http.Client(),
       _logRepository = logRepository ?? AiCallLogRepository();
 
-  static const _defaultModel = 'claude-haiku-4-5-20251001';
-  static const _endpoint = 'https://api.anthropic.com/v1/messages';
+  static const _defaultModel = 'gemini-2.5-flash';
+  static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
 
   /// Flyers can run to dozens of pages; keep each call to a bounded chunk
   /// rather than sending an entire flyer in one request.
@@ -50,15 +50,8 @@ class AiDealExtractionService {
     final http.Response response;
     try {
       response = await _client.post(
-        Uri.parse(_endpoint),
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-          // Required for the Anthropic API to accept a direct browser
-          // request rather than rejecting it as a likely leaked-key misuse.
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
+        Uri.parse('$_apiBase/$model:generateContent'),
+        headers: {'x-goog-api-key': apiKey, 'content-type': 'application/json'},
         body: jsonEncode(_buildRequestBody(pages)),
       );
     } catch (_) {
@@ -79,9 +72,9 @@ class AiDealExtractionService {
       throw Exception('Invalid JSON from the AI API');
     }
 
-    final usage = decoded['usage'] as Map<String, dynamic>?;
-    final inputTokens = (usage?['input_tokens'] as num?)?.toInt() ?? 0;
-    final outputTokens = (usage?['output_tokens'] as num?)?.toInt() ?? 0;
+    final usage = decoded['usageMetadata'] as Map<String, dynamic>?;
+    final inputTokens = (usage?['promptTokenCount'] as num?)?.toInt() ?? 0;
+    final outputTokens = (usage?['candidatesTokenCount'] as num?)?.toInt() ?? 0;
 
     try {
       final items = _parseItems(decoded, storeName);
@@ -128,24 +121,41 @@ class AiDealExtractionService {
     final labeledPages = pages.map((p) => 'Page ${p.pageNumber}:\n${p.altText}').join('\n\n');
 
     return {
-      'model': model,
-      'max_tokens': 8192,
-      'system': _systemPrompt,
-      'messages': [
-        {'role': 'user', 'content': labeledPages},
+      'systemInstruction': {
+        'parts': [
+          {'text': _systemPrompt},
+        ],
+      },
+      'contents': [
+        {
+          'role': 'user',
+          'parts': [
+            {'text': labeledPages},
+          ],
+        },
       ],
       'tools': [_recordItemsTool],
-      'tool_choice': {'type': 'tool', 'name': 'record_items'},
+      'toolConfig': {
+        'functionCallingConfig': {
+          'mode': 'ANY',
+          'allowedFunctionNames': ['record_items'],
+        },
+      },
+      'generationConfig': {'maxOutputTokens': 8192},
     };
   }
 
   List<DealItem> _parseItems(Map<String, dynamic> decoded, String storeName) {
-    final content = decoded['content'] as List<dynamic>;
-    final toolUse =
-        content.firstWhere((block) => (block as Map<String, dynamic>)['type'] == 'tool_use')
+    final candidates = decoded['candidates'] as List<dynamic>;
+    final firstCandidate = candidates.first as Map<String, dynamic>;
+    final content = firstCandidate['content'] as Map<String, dynamic>;
+    final parts = content['parts'] as List<dynamic>;
+    final functionCallPart =
+        parts.firstWhere((part) => (part as Map<String, dynamic>).containsKey('functionCall'))
             as Map<String, dynamic>;
-    final input = toolUse['input'] as Map<String, dynamic>;
-    final rawItems = input['items'] as List<dynamic>;
+    final functionCall = functionCallPart['functionCall'] as Map<String, dynamic>;
+    final args = functionCall['args'] as Map<String, dynamic>;
+    final rawItems = args['items'] as List<dynamic>;
 
     return rawItems.map((raw) {
       final map = raw as Map<String, dynamic>;
@@ -175,33 +185,37 @@ Skip:
 - Page intros, theme, or promotional descriptions with no actual product or price.
 - Duplicate mentions of the same item appearing more than once within the same page's description.
 
-Call the record_items tool with every item you find.
+Call the record_items function with every item you find.
 ''';
 
 const _recordItemsTool = {
-  'name': 'record_items',
-  'description': 'Records every real grocery deal item found across the given flyer pages.',
-  'input_schema': {
-    'type': 'object',
-    'properties': {
-      'items': {
-        'type': 'array',
-        'items': {
-          'type': 'object',
-          'properties': {
-            'name': {'type': 'string'},
-            'price': {'type': 'string'},
-            'unit': {'type': 'string'},
-            'category': {
-              'type': 'string',
-              'enum': ['Protein', 'Vegetables', 'Carbs', 'Uncategorized'],
+  'functionDeclarations': [
+    {
+      'name': 'record_items',
+      'description': 'Records every real grocery deal item found across the given flyer pages.',
+      'parameters': {
+        'type': 'OBJECT',
+        'properties': {
+          'items': {
+            'type': 'ARRAY',
+            'items': {
+              'type': 'OBJECT',
+              'properties': {
+                'name': {'type': 'STRING'},
+                'price': {'type': 'STRING'},
+                'unit': {'type': 'STRING'},
+                'category': {
+                  'type': 'STRING',
+                  'enum': ['Protein', 'Vegetables', 'Carbs', 'Uncategorized'],
+                },
+                'page': {'type': 'INTEGER'},
+              },
+              'required': ['name', 'price', 'unit', 'category', 'page'],
             },
-            'page': {'type': 'integer'},
           },
-          'required': ['name', 'price', 'unit', 'category', 'page'],
         },
+        'required': ['items'],
       },
     },
-    'required': ['items'],
-  },
+  ],
 };

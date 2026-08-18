@@ -117,7 +117,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
               controller: _apiKeyController,
               obscureText: _obscureApiKey,
               decoration: InputDecoration(
-                labelText: 'Anthropic API key',
+                labelText: 'Google AI API key',
                 helperText: 'Stored on this device only.',
                 suffixIcon: IconButton(
                   icon: Icon(_obscureApiKey ? Icons.visibility : Icons.visibility_off),

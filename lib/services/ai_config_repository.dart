@@ -1,8 +1,8 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Stores the user's own Anthropic API key locally (this browser only).
-/// There is no default - the key must be entered in Config before any AI
-/// extraction call can be made.
+/// Stores the user's own Google AI (Gemini) API key locally (this browser
+/// only). There is no default - the key must be entered in Config before
+/// any AI extraction call can be made.
 class AiConfigRepository {
   static const _apiKeyPrefsKey = 'ai_api_key';
 

@@ -17,14 +17,22 @@ http.Response _successResponse({
 }) {
   return http.Response(
     jsonEncode({
-      'content': [
+      'candidates': [
         {
-          'type': 'tool_use',
-          'name': 'record_items',
-          'input': {'items': items},
+          'content': {
+            'parts': [
+              {
+                'functionCall': {
+                  'name': 'record_items',
+                  'args': {'items': items},
+                },
+              },
+            ],
+            'role': 'model',
+          },
         },
       ],
-      'usage': {'input_tokens': inputTokens, 'output_tokens': outputTokens},
+      'usageMetadata': {'promptTokenCount': inputTokens, 'candidatesTokenCount': outputTokens},
     }),
     200,
   );
@@ -37,18 +45,23 @@ void main() {
 
   const pages = [FlyerPage(pageNumber: 1, altText: 'Poulet entier 3,99 \$ la lb.')];
 
-  test('parses items from the tool_use response and logs a successful call', () async {
+  test('parses items from the functionCall response and logs a successful call', () async {
     final client = MockClient((request) async {
-      expect(request.url.toString(), 'https://api.anthropic.com/v1/messages');
-      expect(request.headers['x-api-key'], 'sk-test');
-      expect(request.headers['anthropic-dangerous-direct-browser-access'], 'true');
+      expect(
+        request.url.toString(),
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+      );
+      expect(request.headers['x-goog-api-key'], 'test-key');
 
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       final tools = body['tools'] as List;
       expect(tools.length, 1);
-      expect((tools.single as Map)['name'], 'record_items');
-      // No web search tool must ever be included in the request.
-      expect(request.body.contains('web_search'), isFalse);
+      final declarations = (tools.single as Map)['functionDeclarations'] as List;
+      expect(declarations.length, 1);
+      expect((declarations.single as Map)['name'], 'record_items');
+      expect(body['toolConfig'], isNotNull);
+      // No search tool must ever be included in the request.
+      expect(request.body.toLowerCase().contains('search'), isFalse);
 
       return _successResponse(
         items: [
@@ -60,7 +73,7 @@ void main() {
     final logRepository = AiCallLogRepository();
     final service = AiDealExtractionService(client: client, logRepository: logRepository);
 
-    final items = await service.extractItems(apiKey: 'sk-test', storeName: 'IGA', pages: pages);
+    final items = await service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages);
 
     expect(items.length, 1);
     expect(items[0].name, 'Poulet entier');
@@ -74,6 +87,7 @@ void main() {
     expect(logs.length, 1);
     expect(logs[0].success, isTrue);
     expect(logs[0].storeName, 'IGA');
+    expect(logs[0].model, 'gemini-2.5-flash');
     expect(logs[0].inputTokens, 100);
     expect(logs[0].outputTokens, 50);
   });
@@ -84,7 +98,7 @@ void main() {
     final service = AiDealExtractionService(client: client, logRepository: logRepository);
 
     await expectLater(
-      service.extractItems(apiKey: 'sk-test', storeName: 'Metro', pages: pages),
+      service.extractItems(apiKey: 'test-key', storeName: 'Metro', pages: pages),
       throwsException,
     );
 
@@ -100,7 +114,7 @@ void main() {
     final service = AiDealExtractionService(client: client, logRepository: logRepository);
 
     await expectLater(
-      service.extractItems(apiKey: 'sk-test', storeName: 'Metro', pages: pages),
+      service.extractItems(apiKey: 'test-key', storeName: 'Metro', pages: pages),
       throwsException,
     );
 
@@ -113,7 +127,7 @@ void main() {
     final service = AiDealExtractionService(client: client, logRepository: logRepository);
 
     await expectLater(
-      service.extractItems(apiKey: 'sk-test', storeName: 'Metro', pages: pages),
+      service.extractItems(apiKey: 'test-key', storeName: 'Metro', pages: pages),
       throwsException,
     );
 
@@ -122,14 +136,21 @@ void main() {
     expect(log.errorMessage, contains('Invalid JSON'));
   });
 
-  test('throws and logs a failure when the response has no tool_use block', () async {
+  test('throws and logs a failure when the response has no functionCall part', () async {
     final client = MockClient(
       (request) async => http.Response(
         jsonEncode({
-          'content': [
-            {'type': 'text', 'text': 'Sorry, nothing found.'},
+          'candidates': [
+            {
+              'content': {
+                'parts': [
+                  {'text': 'Sorry, nothing found.'},
+                ],
+                'role': 'model',
+              },
+            },
           ],
-          'usage': {'input_tokens': 10, 'output_tokens': 5},
+          'usageMetadata': {'promptTokenCount': 10, 'candidatesTokenCount': 5},
         }),
         200,
       ),
@@ -138,7 +159,7 @@ void main() {
     final service = AiDealExtractionService(client: client, logRepository: logRepository);
 
     await expectLater(
-      service.extractItems(apiKey: 'sk-test', storeName: 'Maxi', pages: pages),
+      service.extractItems(apiKey: 'test-key', storeName: 'Maxi', pages: pages),
       throwsA(anything),
     );
 
@@ -154,8 +175,9 @@ void main() {
     final client = MockClient((request) async {
       callCount++;
       final body = jsonDecode(request.body) as Map<String, dynamic>;
-      final userMessage = (body['messages'] as List).single as Map<String, dynamic>;
-      final pageCount = 'Page '.allMatches(userMessage['content'] as String).length;
+      final userContent = (body['contents'] as List).single as Map<String, dynamic>;
+      final text = ((userContent['parts'] as List).single as Map<String, dynamic>)['text'] as String;
+      final pageCount = 'Page '.allMatches(text).length;
       return _successResponse(
         items: List.generate(
           pageCount,
@@ -174,7 +196,7 @@ void main() {
     final logRepository = AiCallLogRepository();
     final service = AiDealExtractionService(client: client, logRepository: logRepository);
 
-    final items = await service.extractItems(apiKey: 'sk-test', storeName: 'IGA', pages: pagesList);
+    final items = await service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pagesList);
 
     expect(callCount, 2);
     expect(items.length, 20);

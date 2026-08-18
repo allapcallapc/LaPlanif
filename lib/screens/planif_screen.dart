@@ -58,7 +58,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Set your Anthropic API key in Config first.')));
+      ).showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
       return;
     }
 

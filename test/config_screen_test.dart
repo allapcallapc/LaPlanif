@@ -117,17 +117,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.widgetWithText(TextField, 'Anthropic API key'), 'sk-ant-test');
+    await tester.enterText(find.widgetWithText(TextField, 'Google AI API key'), 'test-google-ai-key');
     await tester.pump();
 
-    expect(await aiConfigRepo.loadApiKey(), 'sk-ant-test');
+    expect(await aiConfigRepo.loadApiKey(), 'test-google-ai-key');
 
     await tester.pumpWidget(
       MaterialApp(home: ConfigScreen(repository: storeRepo, aiConfigRepository: aiConfigRepo)),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('sk-ant-test'), findsOneWidget);
+    expect(find.text('test-google-ai-key'), findsOneWidget);
   });
 
   testWidgets('toggles the API key visibility icon', (tester) async {

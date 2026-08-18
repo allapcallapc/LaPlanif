@@ -393,7 +393,7 @@ void main() {
     await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Set your Anthropic API key in Config first.'), findsOneWidget);
+    expect(find.text('Set your Google AI API key in Config first.'), findsOneWidget);
     expect(find.textContaining('Press "Fetch'), findsOneWidget);
   });
 }

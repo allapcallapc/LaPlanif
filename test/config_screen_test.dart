@@ -131,13 +131,38 @@ void main() {
     await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     await tester.enterText(find.widgetWithText(TextField, 'Google AI API key'), 'test-google-ai-key');
-    await tester.pump();
+    // The save is debounced; advance past the debounce window rather than
+    // asserting it wrote synchronously on every keystroke.
+    await tester.pump(const Duration(milliseconds: 600));
 
     expect(await aiConfigRepo.loadApiKey(), 'test-google-ai-key');
 
     await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     expect(find.text('test-google-ai-key'), findsOneWidget);
+  });
+
+  testWidgets('debounces API key saves instead of writing on every keystroke', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    final field = find.widgetWithText(TextField, 'Google AI API key');
+    await tester.enterText(field, 't');
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.enterText(field, 'te');
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.enterText(field, 'test-key');
+
+    // Still inside the debounce window from the last keystroke - nothing
+    // written yet.
+    expect(await aiConfigRepo.loadApiKey(), isEmpty);
+
+    await tester.pump(const Duration(milliseconds: 600));
+
+    // One coalesced write of the final value once typing settles.
+    expect(await aiConfigRepo.loadApiKey(), 'test-key');
   });
 
   testWidgets('toggles the API key visibility icon', (tester) async {

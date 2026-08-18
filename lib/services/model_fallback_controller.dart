@@ -50,8 +50,16 @@ class ModelFallbackController {
 
       final nextModel = modelIndex + 1 < models.length ? models[modelIndex + 1] : null;
       final decision = await onRateLimited(currentModel: model, nextModel: nextModel);
-      if (decision == RateLimitChoice.nextModel && nextModel != null) {
-        modelIndex++;
+      if (decision == RateLimitChoice.nextModel) {
+        // onRateLimited is only ever handed a non-null nextModel to offer
+        // this choice for in the first place - a caller returning nextModel
+        // when nextModel is null broke that contract, and silently no-oping
+        // here would just repeat the same model (and the same question)
+        // forever with no way out.
+        assert(nextModel != null, 'onRateLimited returned RateLimitChoice.nextModel with no next model available');
+        if (nextModel != null) {
+          modelIndex++;
+        }
       }
     }
   }

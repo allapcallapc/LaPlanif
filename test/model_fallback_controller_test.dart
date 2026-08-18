@@ -108,6 +108,18 @@ void main() {
     expect(result, 'ok:only-model');
   });
 
+  test('asserts when onRateLimited returns nextModel with no next model available', () async {
+    final controller = ModelFallbackController(models: const ['only-model'], waitBeforeRetry: Duration.zero);
+
+    await expectLater(
+      controller.run(
+        attempt: (model) async => throw RateLimitedException(model),
+        onRateLimited: ({required currentModel, nextModel}) async => RateLimitChoice.nextModel,
+      ),
+      throwsA(isA<AssertionError>()),
+    );
+  });
+
   test('propagates a non-RateLimitedException immediately without retrying or asking', () async {
     final controller = ModelFallbackController(models: const ['model-a', 'model-b'], waitBeforeRetry: Duration.zero);
     var attempts = 0;

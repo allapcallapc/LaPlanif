@@ -120,23 +120,34 @@ class _PlanifScreenState extends State<PlanifScreen> {
     });
   }
 
+  // items accumulates outside the try block (and outside each chunk's
+  // ModelFallbackController.run) on purpose: a chunk is retried with only
+  // that chunk's pages, so a later chunk failing never re-sends - or loses -
+  // an earlier chunk's already-extracted items.
   Future<List<DealItem>> _fetchStore(StoreFetchState state, String apiKey, List<String> models) async {
     setState(() => state.status = StoreFetchStatus.inProgress);
+    final items = <DealItem>[];
     try {
       final pages = await widget.scraperService.fetchPages(state.store);
-      final controller = ModelFallbackController(models: models, waitBeforeRetry: widget.rateLimitWait);
-      final items = await controller.run(
-        attempt: (model) => widget.extractionService.extractItems(
-          apiKey: apiKey,
-          storeName: state.store.name,
-          pages: pages,
-          model: model,
-        ),
-        onRateLimited: ({required currentModel, nextModel}) {
-          if (!mounted) return Future.value(RateLimitChoice.retrySame);
-          return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
-        },
-      );
+      for (var start = 0; start < pages.length; start += AiDealExtractionService.maxPagesPerCall) {
+        final end = (start + AiDealExtractionService.maxPagesPerCall).clamp(0, pages.length);
+        final chunk = pages.sublist(start, end);
+        final controller = ModelFallbackController(models: models, waitBeforeRetry: widget.rateLimitWait);
+        items.addAll(
+          await controller.run(
+            attempt: (model) => widget.extractionService.extractItems(
+              apiKey: apiKey,
+              storeName: state.store.name,
+              pages: chunk,
+              model: model,
+            ),
+            onRateLimited: ({required currentModel, nextModel}) {
+              if (!mounted) return Future.value(RateLimitChoice.retrySame);
+              return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
+            },
+          ),
+        );
+      }
       if (mounted) {
         setState(() {
           state.status = StoreFetchStatus.done;
@@ -151,7 +162,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
           state.errorMessage = _shortReason(e);
         });
       }
-      return const [];
+      return items;
     }
   }
 

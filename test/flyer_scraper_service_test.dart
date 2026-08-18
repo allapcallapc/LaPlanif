@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -84,6 +86,29 @@ void main() {
     expect(pages[1].altText, contains('Pâté aux trois viandes'));
     expect(pages[2].pageNumber, 11);
     expect(pages[2].altText, 'Circulaire Metro - Page 11');
+  });
+
+  // package:http's Response.body decodes using the charset from the
+  // Content-Type header, defaulting to latin1 when the header omits one -
+  // which real sites commonly do when they only declare UTF-8 via an HTML
+  // <meta charset> tag. Using Response.bytes (rather than the String
+  // constructor used elsewhere in this file) reproduces that faithfully:
+  // the bytes are genuinely UTF-8-encoded French text, with no charset in
+  // the header to hint at that.
+  test('decodes the response as UTF-8 even when the Content-Type header omits a charset', () async {
+    const html = '''
+      <html><body>
+        <img alt="Circulaire Metro - Page 1. Bœuf haché mi-maigre 4,99 \$/lb. Crème glacée 5,49 \$.">
+      </body></html>
+    ''';
+    final client = MockClient((request) async {
+      return http.Response.bytes(utf8.encode(html), 200, headers: {'content-type': 'text/html'});
+    });
+
+    final pages = await FlyerScraperService(client: client).fetchPages(store);
+
+    expect(pages.single.altText, contains('Bœuf haché mi-maigre'));
+    expect(pages.single.altText, contains('Crème glacée'));
   });
 
   test('throws when the request fails', () async {

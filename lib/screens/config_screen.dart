@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/store_config.dart';
@@ -21,6 +23,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   List<String>? _models;
   final _apiKeyController = TextEditingController();
   bool _obscureApiKey = true;
+  Timer? _apiKeySaveDebounce;
 
   @override
   void initState() {
@@ -32,8 +35,20 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
   @override
   void dispose() {
+    _apiKeySaveDebounce?.cancel();
     _apiKeyController.dispose();
     super.dispose();
+  }
+
+  // Saving on every keystroke meant a full SharedPreferences round trip per
+  // character; debounce it so a burst of typing collapses into one write
+  // shortly after the user pauses.
+  void _onApiKeyChanged(String value) {
+    _apiKeySaveDebounce?.cancel();
+    _apiKeySaveDebounce = Timer(
+      const Duration(milliseconds: 500),
+      () => widget.aiConfigRepository.saveApiKey(value),
+    );
   }
 
   Future<void> _load() async {
@@ -172,7 +187,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                     onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
                   ),
                 ),
-                onChanged: (value) => widget.aiConfigRepository.saveApiKey(value),
+                onChanged: _onApiKeyChanged,
               ),
             ),
           ),

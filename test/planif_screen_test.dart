@@ -63,6 +63,26 @@ class _FakeModelAwareExtractionService extends AiDealExtractionService {
   }
 }
 
+/// Extraction fake for exercising _fetchStore's own chunking: the caller
+/// decides what happens per call, given which chunk of pages it was sent.
+class _FakeChunkAwareExtractionService extends AiDealExtractionService {
+  _FakeChunkAwareExtractionService(this._handler);
+
+  final Future<List<DealItem>> Function(List<FlyerPage> pages, int callNumber) _handler;
+  int _callCount = 0;
+
+  @override
+  Future<List<DealItem>> extractItems({
+    required String apiKey,
+    required String storeName,
+    required List<FlyerPage> pages,
+    String? model,
+  }) {
+    _callCount++;
+    return _handler(pages, _callCount);
+  }
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -667,5 +687,153 @@ void main() {
 
     expect(find.text('IGA · 1'), findsOneWidget);
     expect(find.text('Poulet'), findsOneWidget);
+  });
+
+  testWidgets('splits a store with more pages than maxPagesPerCall into multiple extraction calls', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final pageCount = AiDealExtractionService.maxPagesPerCall + 2;
+    final scraper = _FakePagesScraper({
+      'iga': List.generate(pageCount, (i) => FlyerPage(pageNumber: i + 1, altText: 'Item $i')),
+    });
+
+    final chunkSizes = <int>[];
+    final extraction = _FakeChunkAwareExtractionService((pages, callNumber) async {
+      chunkSizes.add(pages.length);
+      return [
+        DealItem(
+          name: 'Item $callNumber',
+          price: '1.00\$',
+          unit: '',
+          category: DealCategory.uncategorized,
+          storeName: 'IGA',
+          pageIndex: pages.first.pageNumber,
+        ),
+      ];
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    expect(chunkSizes, [AiDealExtractionService.maxPagesPerCall, 2]);
+    expect(find.text('IGA · 2'), findsOneWidget);
+  });
+
+  testWidgets("keeps an earlier chunk's items when a later chunk fails outright", (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final pageCount = AiDealExtractionService.maxPagesPerCall + 2;
+    final scraper = _FakePagesScraper({
+      'iga': List.generate(pageCount, (i) => FlyerPage(pageNumber: i + 1, altText: 'Item $i')),
+    });
+
+    final extraction = _FakeChunkAwareExtractionService((pages, callNumber) async {
+      if (callNumber == 1) {
+        return [
+          DealItem(
+            name: 'Poulet',
+            price: '3.99\$',
+            unit: '',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: pages.first.pageNumber,
+          ),
+        ];
+      }
+      throw Exception('boom');
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    // The whole store is still reported as failed (chunk 2 never completed)
+    // but chunk 1's already-extracted item isn't thrown away.
+    expect(find.text('IGA · failed, tap to retry'), findsOneWidget);
+    expect(find.text('Poulet'), findsOneWidget);
+  });
+
+  testWidgets('does not resend an earlier chunk when a later chunk needs a rate-limit retry', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final pageCount = AiDealExtractionService.maxPagesPerCall + 2;
+    final scraper = _FakePagesScraper({
+      'iga': List.generate(pageCount, (i) => FlyerPage(pageNumber: i + 1, altText: 'Item $i')),
+    });
+
+    final chunkPageCounts = <int>[];
+    final extraction = _FakeChunkAwareExtractionService((pages, callNumber) async {
+      chunkPageCounts.add(pages.length);
+      // Call 1 is chunk 1, and succeeds immediately. Call 2 is chunk 2's
+      // first attempt, which is rate limited; call 3 is chunk 2's automatic
+      // cooldown retry, which succeeds.
+      if (callNumber == 2) throw RateLimitedException('model-a');
+      return [
+        DealItem(
+          name: 'Item $callNumber',
+          price: '1.00\$',
+          unit: '',
+          category: DealCategory.uncategorized,
+          storeName: 'IGA',
+          pageIndex: pages.first.pageNumber,
+        ),
+      ];
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          rateLimitWait: Duration.zero,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    // Chunk 1's page count (maxPagesPerCall) appears exactly once - it's
+    // never resent just because chunk 2 needed a retry.
+    expect(chunkPageCounts, [AiDealExtractionService.maxPagesPerCall, 2, 2]);
+    expect(find.text('IGA · 2'), findsOneWidget);
   });
 }

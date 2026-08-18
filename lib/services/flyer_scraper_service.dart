@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
 
@@ -34,7 +36,15 @@ class FlyerScraperService {
       throw Exception('HTTP ${response.statusCode}');
     }
 
-    final document = html_parser.parse(response.body);
+    // response.body would decode using the Content-Type header's charset,
+    // defaulting to latin1 when the header omits one - common for sites
+    // (like circulaire-en-ligne.ca) that only declare UTF-8 via an HTML
+    // <meta charset> tag rather than the HTTP header, which would silently
+    // corrupt every accented character (à, é, œ, ç...) in the French alt
+    // text. Decode the raw bytes as UTF-8 directly instead; allowMalformed
+    // degrades gracefully rather than throwing if a page genuinely isn't
+    // UTF-8.
+    final document = html_parser.parse(utf8.decode(response.bodyBytes, allowMalformed: true));
     final images = document.querySelectorAll('img');
 
     final pages = <FlyerPage>[];

@@ -439,7 +439,12 @@ void main() {
     expect(AiCallActivity.inFlight.value, isEmpty);
   });
 
-  test('splits more than 15 pages into multiple calls and aggregates the results', () async {
+  // Chunking a large page list into maxPagesPerCall-sized calls is the
+  // caller's responsibility (see planif_screen_test.dart) precisely so that
+  // a failure on one chunk doesn't have to re-send - or lose - another
+  // chunk's already-extracted items; extractItems itself just sends
+  // whatever pages it's given in a single call.
+  test('sends every given page in a single call, however many there are', () async {
     var callCount = 0;
     final client = MockClient((request) async {
       callCount++;
@@ -447,6 +452,7 @@ void main() {
       final userContent = (body['contents'] as List).single as Map<String, dynamic>;
       final text = ((userContent['parts'] as List).single as Map<String, dynamic>)['text'] as String;
       final pageCount = 'Page '.allMatches(text).length;
+      expect(pageCount, 20);
       return _successResponse(
         items: List.generate(
           pageCount,
@@ -467,8 +473,8 @@ void main() {
 
     final items = await service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pagesList);
 
-    expect(callCount, 2);
+    expect(callCount, 1);
     expect(items.length, 20);
-    expect((await logRepository.loadAll()).length, 2);
+    expect((await logRepository.loadAll()).length, 1);
   });
 }

@@ -25,13 +25,19 @@ class AiDealExtractionService {
   static const _defaultModel = 'gemini-3.5-flash-lite';
   static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-  /// Flyers can run to dozens of pages; keep each call to a bounded chunk
-  /// rather than sending an entire flyer in one request. Kept small enough
-  /// that even a dense flyer (many items per page) stays well under
-  /// maxOutputTokens - a batch that's too large gets its function-call JSON
+  /// Flyers can run to dozens of pages; callers should split a store's pages
+  /// into chunks of at most this many before calling [extractItems] rather
+  /// than sending an entire flyer in one request - kept small enough that
+  /// even a dense flyer (many items per page) stays well under
+  /// maxOutputTokens. A batch that's too large gets its function-call JSON
   /// truncated mid-response, which Gemini reports as finishReason
   /// MALFORMED_FUNCTION_CALL rather than MAX_TOKENS.
-  static const _maxPagesPerCall = 10;
+  ///
+  /// Chunking lives with the caller (not inside this method) so that when
+  /// one chunk of a multi-chunk store fails, only that chunk needs retrying
+  /// - a caller that retried the whole (unchunked) page list would silently
+  /// discard already-extracted chunks and re-pay for them.
+  static const maxPagesPerCall = 10;
 
   final http.Client _client;
   final AiCallLogRepository _logRepository;
@@ -42,6 +48,9 @@ class AiDealExtractionService {
   /// tests don't have to wait for it.
   final Duration retryDelay;
 
+  /// Extracts deal items from [pages] in a single API call. [pages] should
+  /// be at most [maxPagesPerCall] long - see its doc comment for why
+  /// chunking a larger page list is the caller's responsibility.
   Future<List<DealItem>> extractItems({
     required String apiKey,
     required String storeName,
@@ -49,30 +58,9 @@ class AiDealExtractionService {
     String? model,
   }) async {
     final effectiveModel = model ?? this.model;
-    final items = <DealItem>[];
-    for (var start = 0; start < pages.length; start += _maxPagesPerCall) {
-      final end = (start + _maxPagesPerCall).clamp(0, pages.length);
-      items.addAll(
-        await _extractBatch(
-          apiKey: apiKey,
-          storeName: storeName,
-          pages: pages.sublist(start, end),
-          model: effectiveModel,
-        ),
-      );
-    }
-    return items;
-  }
-
-  Future<List<DealItem>> _extractBatch({
-    required String apiKey,
-    required String storeName,
-    required List<FlyerPage> pages,
-    required String model,
-  }) async {
-    final activityId = AiCallActivity.start(storeName: storeName, model: model);
+    final activityId = AiCallActivity.start(storeName: storeName, model: effectiveModel);
     try {
-      return await _extractBatchTracked(apiKey: apiKey, storeName: storeName, pages: pages, model: model);
+      return await _extractBatchTracked(apiKey: apiKey, storeName: storeName, pages: pages, model: effectiveModel);
     } finally {
       AiCallActivity.finish(activityId);
     }

@@ -146,7 +146,7 @@ void main() {
     // Once loaded, the per-store status collapses to a compact summary
     // chip per store instead of a full status row each.
     expect(find.text('IGA · 4'), findsOneWidget);
-    expect(find.text('Metro · failed'), findsOneWidget);
+    expect(find.text('Metro · failed, tap to retry'), findsOneWidget);
 
     expect(find.text('Protein'), findsOneWidget);
     expect(find.text('Vegetables'), findsOneWidget);
@@ -240,7 +240,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('IGA · 1'), findsOneWidget);
-    expect(find.text('Metro · failed'), findsOneWidget);
+    expect(find.text('Metro · failed, tap to retry'), findsOneWidget);
     expect(find.text('Maxi · 1'), findsOneWidget);
   });
 

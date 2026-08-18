@@ -89272,7 +89272,7 @@ s=p}for(;;)switch(s){case 0:c=null
 p=4
 i=t.N
 s=7
-return A.N(n.a.uE("POST",A.fp("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",0,null),A.P(["x-goog-api-key",a1,"content-type","application/json"],i,i),B.bN.An(n.a7U(a2),null),null),$async$lA)
+return A.N(n.a.uE("POST",A.fp("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",0,null),A.P(["x-goog-api-key",a1,"content-type","application/json"],i,i),B.bN.An(n.a7U(a2),null),null),$async$lA)
 case 7:c=a5
 p=2
 s=6
@@ -89339,7 +89339,7 @@ break
 case 20:case 1:return A.R(q,r)
 case 2:return A.Q(o.at(-1),r)}})
 return A.S($async$lA,r)},
-FI(a,b,c,d,e){return this.b.F(0,new A.ij(new A.h1(Date.now(),0,!1),d,"gemini-2.5-flash",e,b,c,a))},
+FI(a,b,c,d,e){return this.b.F(0,new A.ij(new A.h1(Date.now(),0,!1),d,"gemini-3.6-flash",e,b,c,a))},
 FH(a,b,c){return this.FI(a,0,0,b,c)},
 afy(a,b,c,d){return this.FI(null,a,b,c,d)},
 a7U(a){var s=t.N,r=J.hE(a,new A.ZQ(),s).bg(0,"\n\n"),q=t.m0,p=t.K

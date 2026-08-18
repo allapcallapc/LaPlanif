@@ -91,7 +91,7 @@ class AiDealExtractionService {
     for (var attempt = 1;; attempt++) {
       final http.Response response;
       try {
-        response = await _postWithRetry(apiKey: apiKey, pages: pages, model: model);
+        response = await _postWithRetry(apiKey: apiKey, storeName: storeName, pages: pages, model: model);
       } catch (_) {
         await _log(storeName: storeName, model: model, success: false, errorMessage: 'Could not reach the AI API');
         throw Exception('Could not reach the AI API');
@@ -141,10 +141,6 @@ class AiDealExtractionService {
         return items;
       } catch (e) {
         final detail = _errorDetail(e);
-        if (attempt == 1 && detail.contains('MALFORMED_FUNCTION_CALL')) {
-          await Future<void>.delayed(retryDelay);
-          continue;
-        }
         await _log(
           storeName: storeName,
           model: model,
@@ -153,6 +149,10 @@ class AiDealExtractionService {
           outputTokens: outputTokens,
           errorMessage: 'Could not parse structured output from the AI response: $detail',
         );
+        if (attempt == 1 && detail.contains('MALFORMED_FUNCTION_CALL')) {
+          await Future<void>.delayed(retryDelay);
+          continue;
+        }
         rethrow;
       }
     }
@@ -165,6 +165,7 @@ class AiDealExtractionService {
   /// another model - lives in [ModelFallbackController], one level up.
   Future<http.Response> _postWithRetry({
     required String apiKey,
+    required String storeName,
     required List<FlyerPage> pages,
     required String model,
   }) async {
@@ -176,6 +177,7 @@ class AiDealExtractionService {
     if (response.statusCode != 503) {
       return response;
     }
+    await _log(storeName: storeName, model: model, success: false, errorMessage: 'AI API HTTP 503');
     await Future<void>.delayed(retryDelay);
     return _client.post(uri, headers: headers, body: body);
   }

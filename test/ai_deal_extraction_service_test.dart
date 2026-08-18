@@ -269,8 +269,10 @@ void main() {
     expect(callCount, 2);
     expect(items.length, 1);
     final logs = await logRepository.loadAll();
-    expect(logs.length, 1);
-    expect(logs.single.success, isTrue);
+    expect(logs.length, 2);
+    expect(logs[0].success, isTrue);
+    expect(logs[1].success, isFalse);
+    expect(logs[1].errorMessage, contains('MALFORMED_FUNCTION_CALL'));
   });
 
   test('does not retry more than once on repeated MALFORMED_FUNCTION_CALL', () async {
@@ -293,9 +295,12 @@ void main() {
     );
 
     expect(callCount, 2);
-    final log = (await logRepository.loadAll()).single;
-    expect(log.success, isFalse);
-    expect(log.errorMessage, contains('MALFORMED_FUNCTION_CALL'));
+    final logs = await logRepository.loadAll();
+    expect(logs.length, 2);
+    for (final log in logs) {
+      expect(log.success, isFalse);
+      expect(log.errorMessage, contains('MALFORMED_FUNCTION_CALL'));
+    }
   });
 
   test('retries once on HTTP 503 and succeeds on the second attempt', () async {
@@ -323,8 +328,11 @@ void main() {
 
     expect(callCount, 2);
     expect(items.length, 1);
-    final log = (await logRepository.loadAll()).single;
-    expect(log.success, isTrue);
+    final logs = await logRepository.loadAll();
+    expect(logs.length, 2);
+    expect(logs[0].success, isTrue);
+    expect(logs[1].success, isFalse);
+    expect(logs[1].errorMessage, contains('HTTP 503'));
   });
 
   test('does not retry more than once on repeated HTTP 503', () async {
@@ -347,9 +355,12 @@ void main() {
     );
 
     expect(callCount, 2);
-    final log = (await logRepository.loadAll()).single;
-    expect(log.success, isFalse);
-    expect(log.errorMessage, contains('HTTP 503'));
+    final logs = await logRepository.loadAll();
+    expect(logs.length, 2);
+    for (final log in logs) {
+      expect(log.success, isFalse);
+      expect(log.errorMessage, contains('HTTP 503'));
+    }
   });
 
   test('throws RateLimitedException immediately on HTTP 429 and logs the failure', () async {

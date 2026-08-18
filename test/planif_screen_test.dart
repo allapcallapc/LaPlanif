@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -84,6 +86,34 @@ void main() {
 
     expect(find.text('COVER'), findsOneWidget);
     expect(find.text('1.33\$/kg'), findsOneWidget);
+  });
+
+  testWidgets('shows the full status list while a fetch is in flight', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    // A Completer that never resolves on its own lets the test observe the
+    // in-flight state deterministically, with no race against how fast the
+    // fake scraper would otherwise finish.
+    final completer = Completer<List<DealItem>>();
+    final scraper = _FakeScraperService({'iga': () => completer.future});
+
+    await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository, scraper: scraper)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text("Fetch this week's deals"));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('IGA'), findsOneWidget);
+    expect(find.text('Fetching…'), findsWidgets);
+    expect(find.text('IGA · 1'), findsNothing);
+
+    completer.complete(const [DealItem(name: 'Poulet', price: '3.99\$', storeName: 'IGA', pageIndex: 1)]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('IGA · 1'), findsOneWidget);
   });
 
   testWidgets('shows an empty state when nothing could be parsed', (tester) async {

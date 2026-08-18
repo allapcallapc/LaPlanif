@@ -88,15 +88,27 @@ void main() {
     expect(find.text('1.33\$/kg'), findsOneWidget);
   });
 
-  testWidgets('shows the full status list while a fetch is in flight', (tester) async {
+  testWidgets('shows resolved and failed rows in the full list while another store is still fetching', (
+    tester,
+  ) async {
     final repository = StoreConfigRepository();
-    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    await repository.save(const [
+      StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
+      StoreConfig(id: 'metro', name: 'Metro', flyerUrl: 'https://example.com/metro'),
+      StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi'),
+    ]);
 
-    // A Completer that never resolves on its own lets the test observe the
-    // in-flight state deterministically, with no race against how fast the
-    // fake scraper would otherwise finish.
-    final completer = Completer<List<DealItem>>();
-    final scraper = _FakeScraperService({'iga': () => completer.future});
+    // A Completer that never resolves on its own lets the test hold Maxi's
+    // fetch open indefinitely, so _hasRun stays false and the full
+    // per-store list (not the collapsed summary) stays on screen while IGA
+    // and Metro have already settled to done/failed - deterministically,
+    // with no race against how fast the fake scraper would otherwise finish.
+    final maxiCompleter = Completer<List<DealItem>>();
+    final scraper = _FakeScraperService({
+      'iga': () async => const [DealItem(name: 'Poulet', price: '3.99\$', storeName: 'IGA', pageIndex: 1)],
+      'metro': () async => throw Exception('HTTP 500'),
+      'maxi': () => maxiCompleter.future,
+    });
 
     await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository, scraper: scraper)));
     await tester.pumpAndSettle();
@@ -105,15 +117,19 @@ void main() {
     await tester.pump();
     await tester.pump();
     await tester.pump();
+    await tester.pump();
 
-    expect(find.text('IGA'), findsOneWidget);
+    expect(find.text('1 items'), findsOneWidget);
+    expect(find.text('HTTP 500'), findsOneWidget);
     expect(find.text('Fetching…'), findsWidgets);
     expect(find.text('IGA · 1'), findsNothing);
 
-    completer.complete(const [DealItem(name: 'Poulet', price: '3.99\$', storeName: 'IGA', pageIndex: 1)]);
+    maxiCompleter.complete(const [DealItem(name: 'Fromage', price: '6.99\$', storeName: 'Maxi', pageIndex: 1)]);
     await tester.pumpAndSettle();
 
     expect(find.text('IGA · 1'), findsOneWidget);
+    expect(find.text('Metro · failed'), findsOneWidget);
+    expect(find.text('Maxi · 1'), findsOneWidget);
   });
 
   testWidgets('shows an empty state when nothing could be parsed', (tester) async {

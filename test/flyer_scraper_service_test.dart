@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -72,7 +74,7 @@ void main() {
             title="Circulaire Metro - Page 11"
             width="1280" height="2560" class="img-fluid" />
         </body></html>
-      ''', 200);
+      ''', 200, encoding: utf8);
     });
 
     final pages = await FlyerScraperService(client: client).fetchPages(store);

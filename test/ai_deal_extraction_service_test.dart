@@ -226,6 +226,77 @@ void main() {
     expect(log.errorMessage, contains('no content in response (finishReason: MAX_TOKENS)'));
   });
 
+  http.Response _malformedFunctionCallResponse() => http.Response(
+    jsonEncode({
+      'candidates': [
+        {
+          'finishReason': 'MALFORMED_FUNCTION_CALL',
+          'content': {
+            'parts': [
+              {'text': 'oops'},
+            ],
+            'role': 'model',
+          },
+        },
+      ],
+      'usageMetadata': {'promptTokenCount': 20, 'candidatesTokenCount': 8192},
+    }),
+    200,
+  );
+
+  test('retries once on MALFORMED_FUNCTION_CALL and succeeds on the second attempt', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) return _malformedFunctionCallResponse();
+      return _successResponse(
+        items: [
+          {'name': 'Poulet entier', 'price': '3.99\$', 'unit': 'lb', 'category': 'Protein', 'page': 1},
+        ],
+      );
+    });
+
+    final logRepository = AiCallLogRepository();
+    final service = AiDealExtractionService(
+      client: client,
+      logRepository: logRepository,
+      retryDelay: Duration.zero,
+    );
+
+    final items = await service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages);
+
+    expect(callCount, 2);
+    expect(items.length, 1);
+    final logs = await logRepository.loadAll();
+    expect(logs.length, 1);
+    expect(logs.single.success, isTrue);
+  });
+
+  test('does not retry more than once on repeated MALFORMED_FUNCTION_CALL', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      return _malformedFunctionCallResponse();
+    });
+
+    final logRepository = AiCallLogRepository();
+    final service = AiDealExtractionService(
+      client: client,
+      logRepository: logRepository,
+      retryDelay: Duration.zero,
+    );
+
+    await expectLater(
+      service.extractItems(apiKey: 'test-key', storeName: 'IGA', pages: pages),
+      throwsA(anything),
+    );
+
+    expect(callCount, 2);
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('MALFORMED_FUNCTION_CALL'));
+  });
+
   test('retries once on HTTP 503 and succeeds on the second attempt', () async {
     var callCount = 0;
     final client = MockClient((request) async {

@@ -70,49 +70,60 @@ class AiDealExtractionService {
     required String storeName,
     required List<FlyerPage> pages,
   }) async {
-    final http.Response response;
-    try {
-      response = await _postWithRetry(apiKey: apiKey, pages: pages);
-    } catch (_) {
-      await _log(storeName: storeName, success: false, errorMessage: 'Could not reach the AI API');
-      throw Exception('Could not reach the AI API');
-    }
+    // Gemini occasionally produces an invalid function call under forced
+    // function calling (finishReason MALFORMED_FUNCTION_CALL) - a
+    // documented, non-deterministic quirk worth a single full retry, same
+    // as the HTTP 503 case.
+    for (var attempt = 1;; attempt++) {
+      final http.Response response;
+      try {
+        response = await _postWithRetry(apiKey: apiKey, pages: pages);
+      } catch (_) {
+        await _log(storeName: storeName, success: false, errorMessage: 'Could not reach the AI API');
+        throw Exception('Could not reach the AI API');
+      }
 
-    if (response.statusCode != 200) {
-      await _log(storeName: storeName, success: false, errorMessage: 'AI API HTTP ${response.statusCode}');
-      throw Exception('AI API HTTP ${response.statusCode}');
-    }
+      if (response.statusCode != 200) {
+        await _log(storeName: storeName, success: false, errorMessage: 'AI API HTTP ${response.statusCode}');
+        throw Exception('AI API HTTP ${response.statusCode}');
+      }
 
-    final Map<String, dynamic> decoded;
-    try {
-      decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    } catch (_) {
-      await _log(storeName: storeName, success: false, errorMessage: 'Invalid JSON from the AI API');
-      throw Exception('Invalid JSON from the AI API');
-    }
+      final Map<String, dynamic> decoded;
+      try {
+        decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      } catch (_) {
+        await _log(storeName: storeName, success: false, errorMessage: 'Invalid JSON from the AI API');
+        throw Exception('Invalid JSON from the AI API');
+      }
 
-    final usage = decoded['usageMetadata'] as Map<String, dynamic>?;
-    final inputTokens = (usage?['promptTokenCount'] as num?)?.toInt() ?? 0;
-    final outputTokens = (usage?['candidatesTokenCount'] as num?)?.toInt() ?? 0;
+      final usage = decoded['usageMetadata'] as Map<String, dynamic>?;
+      final inputTokens = (usage?['promptTokenCount'] as num?)?.toInt() ?? 0;
+      final outputTokens = (usage?['candidatesTokenCount'] as num?)?.toInt() ?? 0;
 
-    try {
-      final items = _parseItems(decoded, storeName);
-      await _log(
-        storeName: storeName,
-        success: true,
-        inputTokens: inputTokens,
-        outputTokens: outputTokens,
-      );
-      return items;
-    } catch (e) {
-      await _log(
-        storeName: storeName,
-        success: false,
-        inputTokens: inputTokens,
-        outputTokens: outputTokens,
-        errorMessage: 'Could not parse structured output from the AI response: ${_errorDetail(e)}',
-      );
-      rethrow;
+      try {
+        final items = _parseItems(decoded, storeName);
+        await _log(
+          storeName: storeName,
+          success: true,
+          inputTokens: inputTokens,
+          outputTokens: outputTokens,
+        );
+        return items;
+      } catch (e) {
+        final detail = _errorDetail(e);
+        if (attempt == 1 && detail.contains('MALFORMED_FUNCTION_CALL')) {
+          await Future<void>.delayed(retryDelay);
+          continue;
+        }
+        await _log(
+          storeName: storeName,
+          success: false,
+          inputTokens: inputTokens,
+          outputTokens: outputTokens,
+          errorMessage: 'Could not parse structured output from the AI response: $detail',
+        );
+        rethrow;
+      }
     }
   }
 

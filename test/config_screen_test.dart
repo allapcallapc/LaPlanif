@@ -159,7 +159,9 @@ void main() {
     await pumpScreen(tester, repo);
 
     expect(find.text('gemini-3.6-flash'), findsOneWidget);
-    final removeButton = tester.widget<IconButton>(find.byTooltip('Remove model'));
+    final removeButton = tester.widget<IconButton>(
+      find.ancestor(of: find.byTooltip('Remove model'), matching: find.byType(IconButton)),
+    );
     expect(removeButton.onPressed, isNull);
   });
 

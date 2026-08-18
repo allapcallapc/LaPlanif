@@ -110,115 +110,128 @@ class _ConfigScreenState extends State<ConfigScreen> {
   @override
   Widget build(BuildContext context) {
     final stores = _stores;
+    final models = _models;
     return Scaffold(
       appBar: AppBar(title: const Text('Config')),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
-            child: Row(
-              children: [
-                Expanded(child: Text('Stores', style: Theme.of(context).textTheme.titleMedium)),
-                IconButton(icon: const Icon(Icons.add), tooltip: 'Add store', onPressed: () => _openEditor()),
-              ],
-            ),
-          ),
-          Expanded(
-            child: stores == null
-                ? const Center(child: CircularProgressIndicator())
-                : stores.isEmpty
-                ? const Center(child: Text('No stores configured yet.'))
-                : ListView.builder(
-                    itemCount: stores.length,
-                    itemBuilder: (context, i) {
-                      final store = stores[i];
-                      return ListTile(
-                        title: Text(store.name),
-                        subtitle: Text(store.flyerUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        onTap: () => _openEditor(existing: store),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () => _remove(store),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Text('AI', style: Theme.of(context).textTheme.titleMedium),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _apiKeyController,
-              obscureText: _obscureApiKey,
-              decoration: InputDecoration(
-                labelText: 'Google AI API key',
-                helperText: 'Stored on this device only.',
-                suffixIcon: IconButton(
-                  icon: Icon(_obscureApiKey ? Icons.visibility : Icons.visibility_off),
-                  tooltip: _obscureApiKey ? 'Show key' : 'Hide key',
-                  onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
-                ),
+      // The whole page scrolls as one region rather than giving the store
+      // list its own bounded Expanded pane: with a Models section of
+      // variable length below it, a fixed-height pane could squeeze the
+      // store list down to where later stores never get laid out.
+      body: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+              child: Row(
+                children: [
+                  Expanded(child: Text('Stores', style: Theme.of(context).textTheme.titleMedium)),
+                  IconButton(icon: const Icon(Icons.add), tooltip: 'Add store', onPressed: () => _openEditor()),
+                ],
               ),
-              onChanged: (value) => widget.aiConfigRepository.saveApiKey(value),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Models (tried in order)',
-                    style: Theme.of(context).textTheme.titleSmall,
+          if (stores == null)
+            const SliverToBoxAdapter(
+              child: Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+            )
+          else if (stores.isEmpty)
+            const SliverToBoxAdapter(
+              child: Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No stores configured yet.'))),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate((context, i) {
+                final store = stores[i];
+                return ListTile(
+                  title: Text(store.name),
+                  subtitle: Text(store.flyerUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  onTap: () => _openEditor(existing: store),
+                  trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => _remove(store)),
+                );
+              }, childCount: stores.length),
+            ),
+          const SliverToBoxAdapter(child: Divider(height: 1)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text('AI', style: Theme.of(context).textTheme.titleMedium),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                controller: _apiKeyController,
+                obscureText: _obscureApiKey,
+                decoration: InputDecoration(
+                  labelText: 'Google AI API key',
+                  helperText: 'Stored on this device only.',
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscureApiKey ? Icons.visibility : Icons.visibility_off),
+                    tooltip: _obscureApiKey ? 'Show key' : 'Hide key',
+                    onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
                   ),
                 ),
-                IconButton(icon: const Icon(Icons.add), tooltip: 'Add model', onPressed: () => _openModelEditor()),
-              ],
+                onChanged: (value) => widget.aiConfigRepository.saveApiKey(value),
+              ),
             ),
           ),
-          if (_models != null)
-            for (var i = 0; i < _models!.length; i++)
-              ListTile(
-                dense: true,
-                title: Text(_models![i]),
-                onTap: () => _openModelEditor(existing: _models![i], index: i),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_upward),
-                      tooltip: 'Move up',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: i == 0 ? null : () => _moveModel(i, -1),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.arrow_downward),
-                      tooltip: 'Move down',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: i == _models!.length - 1 ? null : () => _moveModel(i, 1),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Remove model',
-                      visualDensity: VisualDensity.compact,
-                      // At least one model must stay configured.
-                      onPressed: _models!.length == 1 ? null : () => _removeModel(i),
-                    ),
-                  ],
-                ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text('Models (tried in order)', style: Theme.of(context).textTheme.titleSmall),
+                  ),
+                  IconButton(icon: const Icon(Icons.add), tooltip: 'Add model', onPressed: () => _openModelEditor()),
+                ],
               ),
-          ListTile(
-            leading: const Icon(Icons.receipt_long_outlined),
-            title: const Text('AI usage log'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              Navigator.of(context).push(MaterialPageRoute(builder: (_) => AiUsageScreen()));
-            },
+            ),
+          ),
+          if (models != null)
+            SliverList(
+              delegate: SliverChildBuilderDelegate((context, i) {
+                return ListTile(
+                  dense: true,
+                  title: Text(models[i]),
+                  onTap: () => _openModelEditor(existing: models[i], index: i),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_upward),
+                        tooltip: 'Move up',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: i == 0 ? null : () => _moveModel(i, -1),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.arrow_downward),
+                        tooltip: 'Move down',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: i == models.length - 1 ? null : () => _moveModel(i, 1),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Remove model',
+                        visualDensity: VisualDensity.compact,
+                        // At least one model must stay configured.
+                        onPressed: models.length == 1 ? null : () => _removeModel(i),
+                      ),
+                    ],
+                  ),
+                );
+              }, childCount: models.length),
+            ),
+          SliverToBoxAdapter(
+            child: ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('AI usage log'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => AiUsageScreen()));
+              },
+            ),
           ),
         ],
       ),

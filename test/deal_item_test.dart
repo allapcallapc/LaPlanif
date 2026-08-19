@@ -18,6 +18,7 @@ void main() {
     expect(item.category, DealCategory.protein);
     expect(item.storeName, 'IGA');
     expect(item.pageIndex, 2);
+    expect(item.preference, DealPreference.neutral);
   });
 
   test('isCoverPage is true only for page 1', () {
@@ -40,6 +41,46 @@ void main() {
 
     expect(cover.isCoverPage, isTrue);
     expect(notCover.isCoverPage, isFalse);
+  });
+
+  test('preferenceKey combines store and name', () {
+    const item = DealItem(
+      name: 'Poulet',
+      price: '3.99\$',
+      unit: 'lb',
+      category: DealCategory.protein,
+      storeName: 'IGA',
+      pageIndex: 2,
+    );
+
+    expect(item.preferenceKey, 'IGA::Poulet');
+  });
+
+  test('copyWith replaces the preference and keeps other fields', () {
+    const item = DealItem(
+      name: 'Poulet',
+      price: '3.99\$',
+      unit: 'lb',
+      category: DealCategory.protein,
+      storeName: 'IGA',
+      pageIndex: 2,
+    );
+
+    final updated = item.copyWith(preference: DealPreference.priority);
+
+    expect(updated.preference, DealPreference.priority);
+    expect(updated.name, item.name);
+    expect(updated.price, item.price);
+    expect(updated.storeName, item.storeName);
+    expect(item.preference, DealPreference.neutral, reason: 'original item is unchanged');
+  });
+
+  group('DealPreferenceCycle', () {
+    test('cycles neutral -> priority -> excluded -> neutral', () {
+      expect(DealPreference.neutral.next, DealPreference.priority);
+      expect(DealPreference.priority.next, DealPreference.excluded);
+      expect(DealPreference.excluded.next, DealPreference.neutral);
+    });
   });
 
   group('DealCategoryLabel', () {

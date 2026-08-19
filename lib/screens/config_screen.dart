@@ -106,9 +106,17 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   Future<void> _openEditor({StoreConfig? existing}) async {
+    // Deal items are matched back to a store by display name (see
+    // planif_screen._retryStore), so two stores sharing a name would
+    // silently corrupt each other's results on retry - block that instead
+    // of letting it happen.
+    final otherNames = _stores!
+        .where((s) => s.id != existing?.id)
+        .map((s) => s.name.trim().toLowerCase())
+        .toSet();
     final result = await showDialog<StoreConfig>(
       context: context,
-      builder: (_) => _StoreEditorDialog(existing: existing),
+      builder: (_) => _StoreEditorDialog(existing: existing, otherNames: otherNames),
     );
     if (result == null) return;
     setState(() {
@@ -268,9 +276,13 @@ class _ConfigScreenState extends State<ConfigScreen> {
 }
 
 class _StoreEditorDialog extends StatefulWidget {
-  const _StoreEditorDialog({this.existing});
+  const _StoreEditorDialog({this.existing, this.otherNames = const {}});
 
   final StoreConfig? existing;
+
+  /// Every other configured store's name, trimmed and lowercased. Used to
+  /// reject a duplicate name - see the comment in ConfigScreen._openEditor.
+  final Set<String> otherNames;
 
   @override
   State<_StoreEditorDialog> createState() => _StoreEditorDialogState();
@@ -308,7 +320,14 @@ class _StoreEditorDialogState extends State<_StoreEditorDialog> {
             TextFormField(
               controller: _nameController,
               decoration: const InputDecoration(labelText: 'Display name'),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+              validator: (v) {
+                final trimmed = v?.trim() ?? '';
+                if (trimmed.isEmpty) return 'Required';
+                if (widget.otherNames.contains(trimmed.toLowerCase())) {
+                  return 'A store with this name already exists';
+                }
+                return null;
+              },
             ),
             TextFormField(
               controller: _urlController,

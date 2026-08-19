@@ -95,6 +95,47 @@ void main() {
     expect(saved.any((s) => s.name == 'Super C' && s.flyerUrl == 'https://example.com/super-c'), isTrue);
   });
 
+  // Deal items are matched back to a store by display name on retry
+  // (planif_screen._retryStore), so two stores sharing a name would
+  // silently corrupt each other's results - the name field rejects a
+  // duplicate rather than letting that happen.
+  testWidgets('rejects a store name that duplicates an existing store', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo);
+
+    await tester.tap(find.byTooltip('Add store'));
+    await tester.pumpAndSettle();
+
+    // Case/whitespace-insensitive: "  iga " still collides with "IGA".
+    await tester.enterText(find.widgetWithText(TextFormField, 'Display name'), '  iga ');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Flyer URL'), 'https://example.com/another-iga');
+    await tester.tap(find.text('Save'));
+    await tester.pump();
+
+    expect(find.text('A store with this name already exists'), findsOneWidget);
+
+    final saved = await repo.load();
+    expect(saved.where((s) => s.name.toLowerCase() == 'iga').length, 1);
+  });
+
+  testWidgets('allows saving a store with its own unchanged name', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo);
+
+    await tester.tap(find.text('Metro'));
+    await tester.pumpAndSettle();
+
+    // Editing the URL but leaving the name as-is shouldn't trip the
+    // duplicate-name check against itself.
+    await tester.enterText(find.widgetWithText(TextFormField, 'Flyer URL'), 'https://example.com/metro-updated');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('A store with this name already exists'), findsNothing);
+    final saved = await repo.load();
+    expect(saved.firstWhere((s) => s.id == 'metro').flyerUrl, 'https://example.com/metro-updated');
+  });
+
   testWidgets('editing a store updates it in place', (tester) async {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);

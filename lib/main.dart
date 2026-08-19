@@ -1,5 +1,12 @@
 import 'package:flutter/material.dart';
 
+import 'screens/config_screen.dart';
+import 'screens/planif_screen.dart';
+import 'services/ai_config_repository.dart';
+import 'services/ai_deal_extraction_service.dart';
+import 'services/flyer_scraper_service.dart';
+import 'services/store_config_repository.dart';
+
 void main() {
   runApp(const LaPlanifApp());
 }
@@ -12,40 +19,57 @@ class LaPlanifApp extends StatelessWidget {
     return MaterialApp(
       title: 'LaPlanif',
       theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal)),
-      home: const ConstructionPage(),
+      home: const HomeShell(),
     );
   }
 }
 
-class ConstructionPage extends StatelessWidget {
-  const ConstructionPage({super.key});
+class HomeShell extends StatefulWidget {
+  const HomeShell({super.key});
+
+  @override
+  State<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<HomeShell> {
+  // Constructed once for the app's lifetime rather than in build(), which
+  // IndexedStack calls on every rebuild (not just tab switches) - each of
+  // these owns an http.Client, and building fresh ones every rebuild would
+  // leak the previous client without ever calling .close() on it.
+  final StoreConfigRepository _storeRepository = StoreConfigRepository();
+  final AiConfigRepository _aiConfigRepository = AiConfigRepository();
+  final FlyerScraperService _scraperService = FlyerScraperService();
+  final AiDealExtractionService _extractionService = AiDealExtractionService();
+  int _tabIndex = 0;
 
   @override
   Widget build(BuildContext context) {
+    final screens = [
+      PlanifScreen(
+        repository: _storeRepository,
+        scraperService: _scraperService,
+        extractionService: _extractionService,
+        aiConfigRepository: _aiConfigRepository,
+      ),
+      ConfigScreen(repository: _storeRepository, aiConfigRepository: _aiConfigRepository),
+    ];
     return Scaffold(
-      appBar: AppBar(title: const Text('LaPlanif')),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.construction, size: 64),
-              SizedBox(height: 16),
-              Text(
-                'LaPlanif is under construction',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: 8),
-              Text(
-                'Check back soon.',
-                style: TextStyle(fontSize: 14),
-                textAlign: TextAlign.center,
-              ),
-            ],
+      body: IndexedStack(index: _tabIndex, children: screens),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tabIndex,
+        onDestinationSelected: (i) => setState(() => _tabIndex = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.checklist_outlined),
+            selectedIcon: Icon(Icons.checklist),
+            label: 'Planif',
           ),
-        ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Config',
+          ),
+        ],
       ),
     );
   }

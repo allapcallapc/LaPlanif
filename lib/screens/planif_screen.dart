@@ -4,6 +4,7 @@ import '../models/deal_item.dart';
 import '../models/store_config.dart';
 import '../services/ai_config_repository.dart';
 import '../services/ai_deal_extraction_service.dart';
+import '../services/deal_preference_repository.dart';
 import '../services/flyer_scraper_service.dart';
 import '../services/model_fallback_controller.dart';
 import '../services/store_config_repository.dart';
@@ -35,11 +36,13 @@ class PlanifScreen extends StatefulWidget {
     FlyerScraperService? scraperService,
     AiDealExtractionService? extractionService,
     AiConfigRepository? aiConfigRepository,
+    DealPreferenceRepository? preferenceRepository,
     Duration? rateLimitWait,
     RateLimitPrompt? rateLimitPrompt,
   }) : scraperService = scraperService ?? FlyerScraperService(),
        extractionService = extractionService ?? AiDealExtractionService(),
        aiConfigRepository = aiConfigRepository ?? AiConfigRepository(),
+       preferenceRepository = preferenceRepository ?? DealPreferenceRepository(),
        rateLimitWait = rateLimitWait ?? const Duration(minutes: 1),
        rateLimitPrompt = rateLimitPrompt ?? showRateLimitDialog;
 
@@ -47,6 +50,7 @@ class PlanifScreen extends StatefulWidget {
   final FlyerScraperService scraperService;
   final AiDealExtractionService extractionService;
   final AiConfigRepository aiConfigRepository;
+  final DealPreferenceRepository preferenceRepository;
 
   /// How long [ModelFallbackController] waits before its one automatic
   /// retry on a rate-limited call. Injectable so tests don't have to wait.
@@ -100,12 +104,32 @@ class _PlanifScreenState extends State<PlanifScreen> {
       items.addAll(await _fetchStore(state, apiKey, models));
     }
 
+    final withPreferences = await _applyPreferences(items);
     if (!mounted) return;
     setState(() {
-      _items = items;
+      _items = withPreferences;
       _isRunning = false;
       _hasRun = true;
     });
+  }
+
+  Future<List<DealItem>> _applyPreferences(List<DealItem> items) async {
+    final saved = await widget.preferenceRepository.loadAll();
+    if (saved.isEmpty) return items;
+    return items.map((item) {
+      final preference = saved[item.preferenceKey];
+      return preference == null ? item : item.copyWith(preference: preference);
+    }).toList();
+  }
+
+  Future<void> _togglePreference(DealItem item) async {
+    final next = item.preference.next;
+    final updated = item.copyWith(preference: next);
+    setState(() {
+      final index = _items.indexOf(item);
+      if (index != -1) _items[index] = updated;
+    });
+    await widget.preferenceRepository.setPreference(item.preferenceKey, next);
   }
 
   Future<void> _retryStore(StoreFetchState state) async {
@@ -113,7 +137,8 @@ class _PlanifScreenState extends State<PlanifScreen> {
     if (apiKey == null || _isRunning) return;
 
     setState(() => _isRunning = true);
-    final items = await _fetchStore(state, apiKey, _models);
+    final rawItems = await _fetchStore(state, apiKey, _models);
+    final items = await _applyPreferences(rawItems);
     if (!mounted) return;
     setState(() {
       _items = [..._items.where((item) => item.storeName != state.store.name), ...items];
@@ -322,6 +347,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     // least one item always matches.
     return Column(
       children: [
+        _buildPreferenceSummary(),
         if (storeNames.length > 1) _buildStoreFilterRow(storeNames),
         Expanded(
           child: ListView(
@@ -335,6 +361,21 @@ class _PlanifScreenState extends State<PlanifScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildPreferenceSummary() {
+    final priorityCount = _items.where((item) => item.preference == DealPreference.priority).length;
+    final excludedCount = _items.where((item) => item.preference == DealPreference.excluded).length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          '$priorityCount priority, $excludedCount excluded',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+      ),
     );
   }
 
@@ -382,15 +423,24 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   Widget _buildItemTile(DealItem item) {
     final priceText = item.unit.isEmpty ? item.price : '${item.price}/${item.unit}';
-    return ListTile(
-      title: Row(
-        children: [
-          Flexible(child: Text(item.name)),
-          if (item.isCoverPage) ...[const SizedBox(width: 8), _buildCoverBadge()],
-        ],
+    final isPriority = item.preference == DealPreference.priority;
+    final isExcluded = item.preference == DealPreference.excluded;
+    final nameStyle = isExcluded ? const TextStyle(decoration: TextDecoration.lineThrough) : null;
+    return Opacity(
+      opacity: isExcluded ? 0.5 : 1,
+      child: ListTile(
+        onTap: () => _togglePreference(item),
+        tileColor: isPriority ? Theme.of(context).colorScheme.primaryContainer : null,
+        leading: isPriority ? Icon(Icons.star, color: Theme.of(context).colorScheme.primary) : null,
+        title: Row(
+          children: [
+            Flexible(child: Text(item.name, style: nameStyle)),
+            if (item.isCoverPage) ...[const SizedBox(width: 8), _buildCoverBadge()],
+          ],
+        ),
+        subtitle: Text('${item.storeName} · page ${item.pageIndex}'),
+        trailing: Text(priceText, style: TextStyle(fontWeight: FontWeight.bold, decoration: nameStyle?.decoration)),
       ),
-      subtitle: Text('${item.storeName} · page ${item.pageIndex}'),
-      trailing: Text(priceText, style: const TextStyle(fontWeight: FontWeight.bold)),
     );
   }
 

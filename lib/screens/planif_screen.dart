@@ -531,62 +531,64 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Widget _buildStep2Row() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-      child: Row(
-        children: [
-          Text('Step 2', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(width: 12),
-          // The chips + button group can outgrow narrow widths (especially
-          // once both toggle chips are showing) - scroll it horizontally
-          // instead of letting the row overflow, same as the store filter
-          // row. reverse: true keeps the button (the primary action) in
-          // view by default rather than the chips ahead of it.
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              reverse: true,
-              child: Row(
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          child: Row(
+            children: [
+              Text('Step 2', style: Theme.of(context).textTheme.titleSmall),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: _isPreviewLoading ? null : _generatePreview,
+                icon: _isPreviewLoading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.restaurant_menu, size: 18),
+                label: Text(
+                  _isPreviewLoading
+                      ? 'Generating…'
+                      : (_preview == null ? 'Preview meal plan' : 'Regenerate preview'),
+                ),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_preview != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              // Wrap instead of a Row: at narrow widths both chips together
+              // can outgrow the line, and Wrap drops the second one to a new
+              // line instead of overflowing or needing a scroll gesture to
+              // reach it.
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  if (_preview != null) ...[
-                    ChoiceChip(
-                      label: const Text('Deal items'),
-                      selected: !_showPreview,
-                      onSelected: (_) => setState(() => _showPreview = false),
-                    ),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      label: const Text('Meal plan preview'),
-                      selected: _showPreview,
-                      onSelected: (_) => setState(() => _showPreview = true),
-                    ),
-                    const SizedBox(width: 12),
-                  ],
-                  FilledButton.icon(
-                    onPressed: _isPreviewLoading ? null : _generatePreview,
-                    icon: _isPreviewLoading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.restaurant_menu, size: 18),
-                    label: Text(
-                      _isPreviewLoading
-                          ? 'Generating…'
-                          : (_preview == null ? 'Preview meal plan' : 'Regenerate preview'),
-                    ),
-                    style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    ),
+                  ChoiceChip(
+                    label: const Text('Deal items'),
+                    selected: !_showPreview,
+                    onSelected: (_) => setState(() => _showPreview = false),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Meal plan preview'),
+                    selected: _showPreview,
+                    onSelected: (_) => setState(() => _showPreview = true),
                   ),
                 ],
               ),
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 

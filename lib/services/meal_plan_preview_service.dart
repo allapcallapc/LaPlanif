@@ -254,9 +254,9 @@ You are planning a non-binding meal-plan preview: a checkpoint before full recip
 
 Each meal slot represents ONE recipe, batch-cooked once, that must yield enough portions to cover every meal instance in that slot - not one recipe per instance. A slot with count=5 and portionsPerMeal=3 needs one recipe that yields 15 portions total, batch-cooked once and portioned out across the week.
 
-For each meal slot, propose ONE anchor item set: the main protein plus 1-2 key supporting items, drawn from the priority items first, then the other available deal items. Never propose an excluded item. Size the selection conceptually for a big-batch recipe covering the slot's total portions needed - do not invent a recipe name or instructions yet.
+For each meal slot, propose the anchor item(s) that define this slot's big-batch recipe - almost always just the main protein item. Only include a second anchor item when it is itself essential to the recipe's identity (e.g. a specific marinade base, a defining sauce, or a second protein in a combo dish) - never a plain vegetable or carb side dish, since those are chosen later during full recipe generation, not here. Draw anchors from the priority items first, then the other available deal items. Never propose an excluded item. Size the selection conceptually for a big-batch recipe covering the slot's total portions needed - do not invent a recipe name or instructions yet.
 
-Also write a one-line note describing the direction for that slot's recipe (e.g. "Big-batch chicken thigh stir-fry, portioned across the week.").
+Also write a one-line note describing the direction for that slot's recipe (e.g. "Big-batch chicken thigh stir-fry, portioned across the week." - vegetables and carbs can be mentioned generically in the note, but must not be selected as anchor items).
 
 Propose exactly one entry per meal slot, in the same order the slots were given, and record it by calling record_slot_previews.
 ''';

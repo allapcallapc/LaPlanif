@@ -119,6 +119,10 @@ class _FakePreviewService extends MealPlanPreviewService {
   final Future<MealPlanPreview> Function(List<MealSlot> mealSlots, int portionsPerMeal, List<DealItem> items)
   _handler;
 
+  /// Every mealSlots list passed to previewMealPlan, in call order - lets
+  /// tests assert a regenerate call only asked for the one slot it targets.
+  final List<List<MealSlot>> calls = [];
+
   @override
   Future<MealPlanPreview> previewMealPlan({
     required String apiKey,
@@ -127,6 +131,7 @@ class _FakePreviewService extends MealPlanPreviewService {
     required List<DealItem> items,
     String? model,
   }) {
+    calls.add(mealSlots);
     return _handler(mealSlots, portionsPerMeal, items);
   }
 }
@@ -1612,5 +1617,300 @@ void main() {
     expect(promptedCurrent, 'model-a');
     expect(promptedNext, 'model-b');
     expect(find.text('Lunch · meat'), findsOneWidget);
+  });
+
+  testWidgets('regenerates a single slot without affecting the other slots', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [
+          MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5),
+          MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4),
+        ],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(
+          name: 'Ground pork',
+          price: '4.49\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(
+          name: 'Tofu',
+          price: '2.29\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService((mealSlots, portionsPerMeal, items) async {
+      if (mealSlots.length == 2) {
+        return MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: MealType.lunch,
+              protein: 'meat',
+              count: 5,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Original lunch note.',
+            ),
+            MealSlotPreview(
+              mealType: MealType.supper,
+              protein: 'tofu',
+              count: 4,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Tofu', store: 'IGA')],
+              note: 'Original supper note.',
+            ),
+          ],
+        );
+      }
+      final slot = mealSlots.single;
+      return MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: slot.mealType,
+            protein: slot.protein,
+            count: slot.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Ground pork', store: 'IGA')],
+            note: 'Regenerated lunch note.',
+          ),
+        ],
+      );
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Original lunch note.'), findsOneWidget);
+    expect(find.text('Original supper note.'), findsOneWidget);
+    expect(previewService.calls.length, 1);
+
+    final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
+    final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
+    await tester.tap(regenerateButton);
+    await tester.pumpAndSettle();
+
+    expect(previewService.calls.length, 2);
+    expect(previewService.calls[1].length, 1);
+    expect(previewService.calls[1].single.mealType, MealType.lunch);
+
+    // Only the regenerated slot changed.
+    expect(find.text('Regenerated lunch note.'), findsOneWidget);
+    expect(find.textContaining('Ground pork'), findsOneWidget);
+    expect(find.textContaining('Chicken thighs'), findsNothing);
+    expect(find.text('Original supper note.'), findsOneWidget);
+    expect(find.textContaining('Tofu'), findsOneWidget);
+  });
+
+  testWidgets('adds an anchor item to a slot via the Add item chip', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(
+          name: 'Ground pork',
+          price: '4.49\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Ground pork'), findsNothing);
+
+    await tester.tap(find.text('Add item'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add anchor item'), findsOneWidget);
+    // Chicken thighs is already an anchor, so it should not be offered again.
+    expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing);
+
+    await tester.tap(find.text('Ground pork'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Chicken thighs'), findsOneWidget);
+    expect(find.textContaining('Ground pork'), findsOneWidget);
+  });
+
+  testWidgets('removes an anchor item from a slot via its chip delete icon', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Chicken thighs'), findsOneWidget);
+
+    final chip = find.widgetWithText(InputChip, 'Chicken thighs · IGA');
+    final deleteIcon = find.descendant(of: chip, matching: find.byIcon(Icons.close));
+    await tester.tap(deleteIcon);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Chicken thighs'), findsNothing);
+    expect(find.text('Add item'), findsOneWidget);
   });
 }

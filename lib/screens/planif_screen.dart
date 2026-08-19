@@ -83,8 +83,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
   String? _apiKey;
   List<String> _models = [];
   MealPlanPreview? _preview;
+  MealPlanConfig? _mealPlanConfig;
   bool _isPreviewLoading = false;
   bool _showPreview = false;
+  final Set<int> _regeneratingSlots = {};
 
   Future<void> _fetchAll() async {
     final apiKey = await widget.aiConfigRepository.loadApiKey();
@@ -147,10 +149,13 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   Future<void> _generatePreview() async {
     final apiKey = _apiKey;
-    if (apiKey == null || _isPreviewLoading) return;
+    if (apiKey == null || _isPreviewLoading || _regeneratingSlots.isNotEmpty) return;
 
     final config = await widget.mealPlanConfigRepository.load();
-    setState(() => _isPreviewLoading = true);
+    setState(() {
+      _isPreviewLoading = true;
+      _mealPlanConfig = config;
+    });
 
     final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
     try {
@@ -182,6 +187,46 @@ class _PlanifScreenState extends State<PlanifScreen> {
     }
   }
 
+  // Re-runs the AI call for just this one slot and splices the result back
+  // into _preview, leaving every other slot's anchors/note untouched.
+  Future<void> _regenerateSlot(int index) async {
+    final apiKey = _apiKey;
+    final config = _mealPlanConfig;
+    if (apiKey == null || config == null || _isPreviewLoading || _regeneratingSlots.contains(index)) return;
+
+    setState(() => _regeneratingSlots.add(index));
+
+    final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
+    try {
+      final result = await controller.run(
+        attempt: (model) => widget.previewService.previewMealPlan(
+          apiKey: apiKey,
+          mealSlots: [config.mealSlots[index]],
+          portionsPerMeal: config.portionsPerMeal,
+          items: _items,
+          model: model,
+        ),
+        onRateLimited: ({required currentModel, nextModel}) {
+          if (!mounted) return Future.value(RateLimitChoice.retrySame);
+          return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        final slots = [..._preview!.slots];
+        slots[index] = result.slots.single;
+        _preview = MealPlanPreview(slots: slots);
+        _regeneratingSlots.remove(index);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _regeneratingSlots.remove(index));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not regenerate this recipe: ${stripExceptionPrefix(e)}')));
+    }
+  }
+
   Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
     final available = _items.where((item) => item.preference != DealPreference.excluded).toList();
     final selected = await showDialog<DealItem>(context: context, builder: (_) => _AnchorPickerDialog(items: available));
@@ -193,6 +238,37 @@ class _PlanifScreenState extends State<PlanifScreen> {
       final anchors = slot.anchorItems
           .map((a) => identical(a, current) ? AnchorItem(name: selected.name, store: selected.storeName) : a)
           .toList();
+      slots[slotIndex] = slot.copyWith(anchorItems: anchors);
+      _preview = MealPlanPreview(slots: slots);
+    });
+  }
+
+  Future<void> _addAnchorItem(int slotIndex) async {
+    final slot = _preview!.slots[slotIndex];
+    final existingKeys = slot.anchorItems.map((a) => '${a.name}::${a.store}').toSet();
+    final available = _items
+        .where((item) => item.preference != DealPreference.excluded)
+        .where((item) => !existingKeys.contains('${item.name}::${item.storeName}'))
+        .toList();
+    final selected = await showDialog<DealItem>(
+      context: context,
+      builder: (_) => _AnchorPickerDialog(items: available, title: 'Add anchor item'),
+    );
+    if (selected == null) return;
+
+    setState(() {
+      final slots = [..._preview!.slots];
+      final anchors = [...slots[slotIndex].anchorItems, AnchorItem(name: selected.name, store: selected.storeName)];
+      slots[slotIndex] = slots[slotIndex].copyWith(anchorItems: anchors);
+      _preview = MealPlanPreview(slots: slots);
+    });
+  }
+
+  void _removeAnchorItem(int slotIndex, AnchorItem anchor) {
+    setState(() {
+      final slots = [..._preview!.slots];
+      final slot = slots[slotIndex];
+      final anchors = slot.anchorItems.where((a) => !identical(a, anchor)).toList();
       slots[slotIndex] = slot.copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
     });
@@ -540,7 +616,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
               Text('Step 2', style: Theme.of(context).textTheme.titleSmall),
               const Spacer(),
               FilledButton.icon(
-                onPressed: _isPreviewLoading ? null : _generatePreview,
+                onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _generatePreview,
                 icon: _isPreviewLoading
                     ? const SizedBox(
                         width: 16,
@@ -614,6 +690,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Widget _buildPreviewCard(int index, MealSlotPreview slot) {
+    final isRegenerating = _regeneratingSlots.contains(index);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -639,6 +716,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
                   visualDensity: VisualDensity.compact,
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
+                IconButton(
+                  icon: isRegenerating
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.refresh, size: 18),
+                  tooltip: 'Regenerate this recipe',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: (_isPreviewLoading || isRegenerating) ? null : () => _regenerateSlot(index),
+                ),
               ],
             ),
             const SizedBox(height: 2),
@@ -650,7 +735,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor)],
+              children: [
+                for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor),
+                ActionChip(
+                  avatar: const Icon(Icons.add, size: 16),
+                  label: const Text('Add item'),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _addAnchorItem(index),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Text(slot.note, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontStyle: FontStyle.italic)),
@@ -664,8 +757,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
     return InputChip(
       avatar: const Icon(Icons.swap_horiz, size: 16),
       label: Text('${anchor.name} · ${anchor.store}'),
-      tooltip: 'Swap this anchor item',
+      tooltip: 'Tap to swap, or use the × to remove',
       onPressed: () => _swapAnchorItem(slotIndex, anchor),
+      deleteIcon: const Icon(Icons.close, size: 16),
+      onDeleted: () => _removeAnchorItem(slotIndex, anchor),
     );
   }
 
@@ -673,14 +768,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
 }
 
 class _AnchorPickerDialog extends StatelessWidget {
-  const _AnchorPickerDialog({required this.items});
+  const _AnchorPickerDialog({required this.items, this.title = 'Swap anchor item'});
 
   final List<DealItem> items;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Swap anchor item'),
+      title: Text(title),
       content: SizedBox(
         width: double.maxFinite,
         child: items.isEmpty

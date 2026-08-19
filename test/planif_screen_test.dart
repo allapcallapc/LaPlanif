@@ -2209,4 +2209,100 @@ void main() {
     expect(find.textContaining('Chicken thighs'), findsOneWidget);
     expect(find.textContaining('Ground pork'), findsNothing);
   });
+
+  testWidgets('prompts for the next model when a slot regenerate call is still rate limited, and continues with it', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    await aiConfigRepo.saveModels(['model-a', 'model-b']);
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    // Every previewMealPlan call (both the initial generate and the slot
+    // regenerate) starts a fresh ModelFallbackController from model-a, so
+    // this fake rate-limits and prompts on every call, not just the first.
+    final previewService = _FakeModelAwarePreviewService((model) async {
+      if (model == 'model-a') throw RateLimitedException(model);
+      return MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 5,
+            portionsPerMeal: 3,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'note',
+          ),
+        ],
+      );
+    });
+
+    var promptCalls = 0;
+    String? promptedCurrent;
+    String? promptedNext;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          rateLimitWait: Duration.zero,
+          rateLimitPrompt: (context, {required currentModel, nextModel}) async {
+            promptCalls++;
+            promptedCurrent = currentModel;
+            promptedNext = nextModel;
+            return RateLimitChoice.nextModel;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    expect(promptCalls, 1, reason: 'the initial generate call rate-limited once');
+
+    final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
+    final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
+    await tester.tap(regenerateButton);
+    await tester.pumpAndSettle();
+
+    expect(promptCalls, 2, reason: 'the regenerate call goes through its own rate-limit retry flow');
+    expect(promptedCurrent, 'model-a');
+    expect(promptedNext, 'model-b');
+  });
 }

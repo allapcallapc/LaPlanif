@@ -238,19 +238,24 @@ class _PlanifScreenState extends State<PlanifScreen> {
     }
   }
 
+  // Normalized by name alone, not name+store: the same ingredient sold at
+  // two different stores (e.g. "Brocoli" at IGA and "Brocoli" at Metro)
+  // still counts as reusing it, so this can't dedupe on store too.
+  String _anchorNameKey(String name) => name.trim().toLowerCase();
+
   // Every anchor item currently used anywhere in the preview, across every
   // slot - an ingredient shouldn't anchor more than one slot, so neither the
   // swap nor the add picker should offer one already spoken for elsewhere.
   Set<String> _usedAnchorKeys() => {
     for (final slot in _preview!.slots)
-      for (final anchor in slot.anchorItems) '${anchor.name}::${anchor.store}',
+      for (final anchor in slot.anchorItems) _anchorNameKey(anchor.name),
   };
 
   Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
     final usedKeys = _usedAnchorKeys();
     final available = _items
         .where((item) => item.preference != DealPreference.excluded)
-        .where((item) => !usedKeys.contains('${item.name}::${item.storeName}'))
+        .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
         .toList();
     final selected = await showDialog<DealItem>(context: context, builder: (_) => _AnchorPickerDialog(items: available));
     if (selected == null) return;
@@ -270,7 +275,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final usedKeys = _usedAnchorKeys();
     final available = _items
         .where((item) => item.preference != DealPreference.excluded)
-        .where((item) => !usedKeys.contains('${item.name}::${item.storeName}'))
+        .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
         .toList();
     final selected = await showDialog<DealItem>(
       context: context,

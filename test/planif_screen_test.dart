@@ -2431,4 +2431,130 @@ void main() {
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing, reason: 'already an anchor on this slot');
     expect(find.widgetWithText(ListTile, 'Ground pork'), findsOneWidget);
   });
+
+  testWidgets('treats the same produce name at a different store as already used too', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [
+      StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
+      StoreConfig(id: 'metro', name: 'Metro', flyerUrl: 'https://example.com/metro'),
+    ]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [
+          MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5),
+          MealSlot(id: 'supper-meat', mealType: MealType.supper, protein: 'meat', count: 2),
+        ],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      'metro': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(
+          name: 'Brocoli',
+          price: '1.99\$',
+          unit: 'lb',
+          category: DealCategory.vegetables,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(
+          name: 'Rice',
+          price: '2.99\$',
+          unit: '',
+          category: DealCategory.carbs,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+      'Metro': () async => const [
+        DealItem(
+          name: 'Brocoli',
+          price: '2.49\$',
+          unit: 'lb',
+          category: DealCategory.vegetables,
+          storeName: 'Metro',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 5,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Brocoli', store: 'IGA')],
+            note: 'Lunch note.',
+          ),
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'meat',
+            count: 2,
+            portionsPerMeal: portionsPerMeal,
+            // Deliberately not a real deal item name, so it doesn't collide
+            // with anything checked below.
+            anchorItems: const [AnchorItem(name: 'Ground beef', store: 'Metro')],
+            note: 'Supper note.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    // The lunch slot is anchored on IGA's Brocoli - Metro's Brocoli is the
+    // same produce under a different store, so the add picker on the
+    // supper slot must not offer it either.
+    final supperCard = find.ancestor(of: find.text('Supper · meat'), matching: find.byType(Card));
+    await tester.tap(find.descendant(of: supperCard, matching: find.text('Add item')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add anchor item'), findsOneWidget);
+    // Both listings of Brocoli (IGA and Metro) are excluded, since the lunch
+    // slot already claims the ingredient regardless of which store it's
+    // from - but unrelated items are still offered, proving the dialog
+    // isn't just empty for an unrelated reason.
+    expect(find.widgetWithText(ListTile, 'Brocoli'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Rice'), findsOneWidget);
+  });
 }

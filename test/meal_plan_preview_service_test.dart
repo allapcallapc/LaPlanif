@@ -102,6 +102,11 @@ void main() {
       expect(request.body, contains('Ground beef'));
       expect(request.body, contains('Excluded'));
 
+      // Chicken thighs (pageIndex 1) is a cover-page item and gets flagged
+      // as such; Firm tofu (pageIndex 2) is not.
+      expect(request.body, contains('Chicken thighs (IGA, Protein, 3.99\$/lb) [COVER DEAL]'));
+      expect(request.body, isNot(contains('Firm tofu (IGA, Protein, 2.49\$) [COVER DEAL]')));
+
       return _successResponse(
         slots: [
           {

@@ -35,6 +35,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   final _diversityController = TextEditingController();
   bool _obscureApiKey = true;
   Timer? _apiKeySaveDebounce;
+  Timer? _mealPlanSaveDebounce;
 
   @override
   void initState() {
@@ -53,6 +54,12 @@ class _ConfigScreenState extends State<ConfigScreen> {
       widget.aiConfigRepository.saveApiKey(_apiKeyController.text);
     }
     _apiKeySaveDebounce?.cancel();
+    // Same reasoning as the API key flush above: a pending meal-plan
+    // debounce means the last edit was never written to SharedPreferences.
+    if ((_mealPlanSaveDebounce?.isActive ?? false) && _mealPlanConfig != null) {
+      widget.mealPlanConfigRepository.save(_mealPlanConfig!);
+    }
+    _mealPlanSaveDebounce?.cancel();
     _apiKeyController.dispose();
     _portionsController.dispose();
     _diversityController.dispose();
@@ -96,9 +103,17 @@ class _ConfigScreenState extends State<ConfigScreen> {
     setState(() => _mealPlanConfig = config);
   }
 
-  Future<void> _saveMealPlanConfig(MealPlanConfig updated) async {
+  // Mirrors _onApiKeyChanged: the model update (setState) happens
+  // immediately so the UI stays responsive, but the SharedPreferences write
+  // is debounced so a burst of edits (typing, or several field changes in
+  // quick succession) collapses into one round trip.
+  void _saveMealPlanConfig(MealPlanConfig updated) {
     setState(() => _mealPlanConfig = updated);
-    await widget.mealPlanConfigRepository.save(updated);
+    _mealPlanSaveDebounce?.cancel();
+    _mealPlanSaveDebounce = Timer(
+      const Duration(milliseconds: 500),
+      () => widget.mealPlanConfigRepository.save(updated),
+    );
   }
 
   void _onPortionsChanged(String value) {
@@ -116,7 +131,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   void _addMealSlot() {
     final slots = [
       ..._mealPlanConfig!.mealSlots,
-      const MealSlot(mealType: MealType.lunch, protein: 'meat', count: 1),
+      MealSlot(id: '${DateTime.now().millisecondsSinceEpoch}', mealType: MealType.lunch, protein: 'meat', count: 1),
     ];
     _saveMealPlanConfig(_mealPlanConfig!.copyWith(mealSlots: slots));
   }
@@ -298,7 +313,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       Expanded(
                         flex: 2,
                         child: DropdownButtonFormField<MealType>(
-                          key: ValueKey('meal-type-$i'),
+                          key: ValueKey('meal-type-${slot.id}'),
                           initialValue: slot.mealType,
                           decoration: const InputDecoration(labelText: 'Meal'),
                           items: MealType.values
@@ -314,7 +329,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       Expanded(
                         flex: 2,
                         child: TextFormField(
-                          key: ValueKey('protein-$i'),
+                          key: ValueKey('protein-${slot.id}'),
                           initialValue: slot.protein,
                           decoration: const InputDecoration(labelText: 'Protein'),
                           onChanged: (value) {
@@ -327,7 +342,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: TextFormField(
-                          key: ValueKey('count-$i'),
+                          key: ValueKey('count-${slot.id}'),
                           initialValue: '${slot.count}',
                           keyboardType: TextInputType.number,
                           decoration: const InputDecoration(labelText: 'Count'),

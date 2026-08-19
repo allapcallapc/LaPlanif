@@ -46,7 +46,10 @@ void main() {
     final updated = config.copyWith(
       portionsPerMeal: 4,
       diversityWindowDays: 21,
-      mealSlots: [...config.mealSlots, const MealSlot(mealType: MealType.lunch, protein: 'fish', count: 1)],
+      mealSlots: [
+        ...config.mealSlots,
+        const MealSlot(id: 'extra-fish', mealType: MealType.lunch, protein: 'fish', count: 1),
+      ],
     );
     await repo.save(updated);
 

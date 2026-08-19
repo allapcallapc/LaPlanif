@@ -10,21 +10,28 @@ enum MealType {
 /// an enum so new protein types (fish, vegetarian-other, ...) can be added
 /// from the config screen without a code change.
 class MealSlot {
-  const MealSlot({required this.mealType, required this.protein, required this.count});
+  // A stable identity separate from list position, so the config screen can
+  // key each row's fields on it - keying by index instead makes Flutter
+  // reuse a text field's Element/State for whichever row now sits at that
+  // index after a row above it is removed, leaving stale text on screen.
+  const MealSlot({required this.id, required this.mealType, required this.protein, required this.count});
 
+  final String id;
   final MealType mealType;
   final String protein;
   final int count;
 
   MealSlot copyWith({MealType? mealType, String? protein, int? count}) => MealSlot(
+    id: id,
     mealType: mealType ?? this.mealType,
     protein: protein ?? this.protein,
     count: count ?? this.count,
   );
 
-  Map<String, dynamic> toJson() => {'mealType': mealType.name, 'protein': protein, 'count': count};
+  Map<String, dynamic> toJson() => {'id': id, 'mealType': mealType.name, 'protein': protein, 'count': count};
 
   factory MealSlot.fromJson(Map<String, dynamic> json) => MealSlot(
+    id: json['id'] as String,
     mealType: MealType.fromName(json['mealType'] as String),
     protein: json['protein'] as String,
     count: json['count'] as int,

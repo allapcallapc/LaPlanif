@@ -11,9 +11,9 @@ class MealPlanConfigRepository {
     portionsPerMeal: 3,
     diversityWindowDays: 28,
     mealSlots: [
-      MealSlot(mealType: MealType.lunch, protein: 'meat', count: 5),
-      MealSlot(mealType: MealType.supper, protein: 'meat', count: 2),
-      MealSlot(mealType: MealType.supper, protein: 'tofu', count: 4),
+      MealSlot(id: 'default-lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5),
+      MealSlot(id: 'default-supper-meat', mealType: MealType.supper, protein: 'meat', count: 2),
+      MealSlot(id: 'default-supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4),
     ],
   );
 

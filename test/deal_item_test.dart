@@ -75,6 +75,22 @@ void main() {
     expect(item.preference, DealPreference.neutral, reason: 'original item is unchanged');
   });
 
+  test('copyWith with no preference argument keeps the existing preference', () {
+    const item = DealItem(
+      name: 'Poulet',
+      price: '3.99\$',
+      unit: 'lb',
+      category: DealCategory.protein,
+      storeName: 'IGA',
+      pageIndex: 2,
+      preference: DealPreference.priority,
+    );
+
+    final updated = item.copyWith();
+
+    expect(updated.preference, DealPreference.priority);
+  });
+
   group('DealPreferenceCycle', () {
     test('cycles neutral -> priority -> excluded -> neutral', () {
       expect(DealPreference.neutral.next, DealPreference.priority);

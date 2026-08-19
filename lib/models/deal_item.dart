@@ -53,9 +53,13 @@ class DealItem {
   /// are numbered when sent for extraction.
   bool get isCoverPage => pageIndex == 1;
 
-  /// Flyer items don't have a stable ID, so store+name stands in for one
-  /// when persisting a preference across re-fetches of the same flyer.
-  String get preferenceKey => '$storeName::$name';
+  /// Flyer items don't have a stable ID, so store+name+price+unit stands in
+  /// for one when persisting a preference across re-fetches of the same
+  /// flyer. Price and unit are included because a flyer can list the same
+  /// product name more than once at different prices (e.g. whole chicken vs.
+  /// chicken thighs both named "Poulet") - name alone would collapse those
+  /// into a single persisted preference.
+  String get preferenceKey => '$storeName::$name::$price::$unit';
 
   DealItem copyWith({DealPreference? preference}) => DealItem(
     name: name,

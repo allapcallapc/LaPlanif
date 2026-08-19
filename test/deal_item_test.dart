@@ -43,7 +43,7 @@ void main() {
     expect(notCover.isCoverPage, isFalse);
   });
 
-  test('preferenceKey combines store and name', () {
+  test('preferenceKey combines store, name, price and unit', () {
     const item = DealItem(
       name: 'Poulet',
       price: '3.99\$',
@@ -53,7 +53,28 @@ void main() {
       pageIndex: 2,
     );
 
-    expect(item.preferenceKey, 'IGA::Poulet');
+    expect(item.preferenceKey, 'IGA::Poulet::3.99\$::lb');
+  });
+
+  test('preferenceKey disambiguates same-name items at different prices', () {
+    const wholeChicken = DealItem(
+      name: 'Poulet',
+      price: '3.99\$',
+      unit: 'lb',
+      category: DealCategory.protein,
+      storeName: 'IGA',
+      pageIndex: 1,
+    );
+    const thighs = DealItem(
+      name: 'Poulet',
+      price: '5.99\$',
+      unit: 'lb',
+      category: DealCategory.protein,
+      storeName: 'IGA',
+      pageIndex: 4,
+    );
+
+    expect(wholeChicken.preferenceKey, isNot(thighs.preferenceKey));
   });
 
   test('copyWith replaces the preference and keeps other fields', () {

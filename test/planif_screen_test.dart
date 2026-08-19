@@ -273,7 +273,7 @@ void main() {
     expect(find.text('0 priority, 1 excluded'), findsOneWidget);
     expect(find.byIcon(Icons.star), findsNothing);
 
-    expect(await preferenceRepository.loadAll(), {'IGA::Poulet': DealPreference.excluded});
+    expect(await preferenceRepository.loadAll(), {'IGA::Poulet::3.99\$::': DealPreference.excluded});
 
     // Re-fetching (e.g. after reopening the app) re-applies the persisted
     // exclusion instead of resetting every item back to neutral.

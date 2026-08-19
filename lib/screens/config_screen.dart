@@ -2,17 +2,25 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../models/meal_plan_config.dart';
 import '../models/store_config.dart';
 import '../services/ai_config_repository.dart';
+import '../services/meal_plan_config_repository.dart';
 import '../services/store_config_repository.dart';
 import 'ai_usage_screen.dart';
 
 class ConfigScreen extends StatefulWidget {
-  ConfigScreen({super.key, required this.repository, AiConfigRepository? aiConfigRepository})
-    : aiConfigRepository = aiConfigRepository ?? AiConfigRepository();
+  ConfigScreen({
+    super.key,
+    required this.repository,
+    AiConfigRepository? aiConfigRepository,
+    MealPlanConfigRepository? mealPlanConfigRepository,
+  }) : aiConfigRepository = aiConfigRepository ?? AiConfigRepository(),
+       mealPlanConfigRepository = mealPlanConfigRepository ?? MealPlanConfigRepository();
 
   final StoreConfigRepository repository;
   final AiConfigRepository aiConfigRepository;
+  final MealPlanConfigRepository mealPlanConfigRepository;
 
   @override
   State<ConfigScreen> createState() => _ConfigScreenState();
@@ -21,9 +29,13 @@ class ConfigScreen extends StatefulWidget {
 class _ConfigScreenState extends State<ConfigScreen> {
   List<StoreConfig>? _stores;
   List<String>? _models;
+  MealPlanConfig? _mealPlanConfig;
   final _apiKeyController = TextEditingController();
+  final _portionsController = TextEditingController();
+  final _diversityController = TextEditingController();
   bool _obscureApiKey = true;
   Timer? _apiKeySaveDebounce;
+  Timer? _mealPlanSaveDebounce;
 
   @override
   void initState() {
@@ -31,6 +43,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _load();
     _loadApiKey();
     _loadModels();
+    _loadMealPlanConfig();
   }
 
   @override
@@ -41,7 +54,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
       widget.aiConfigRepository.saveApiKey(_apiKeyController.text);
     }
     _apiKeySaveDebounce?.cancel();
+    // Same reasoning as the API key flush above: a pending meal-plan
+    // debounce means the last edit was never written to SharedPreferences.
+    if ((_mealPlanSaveDebounce?.isActive ?? false) && _mealPlanConfig != null) {
+      widget.mealPlanConfigRepository.save(_mealPlanConfig!);
+    }
+    _mealPlanSaveDebounce?.cancel();
     _apiKeyController.dispose();
+    _portionsController.dispose();
+    _diversityController.dispose();
     super.dispose();
   }
 
@@ -72,6 +93,58 @@ class _ConfigScreenState extends State<ConfigScreen> {
     final models = await widget.aiConfigRepository.loadModels();
     if (!mounted) return;
     setState(() => _models = models);
+  }
+
+  Future<void> _loadMealPlanConfig() async {
+    final config = await widget.mealPlanConfigRepository.load();
+    if (!mounted) return;
+    _portionsController.text = '${config.portionsPerMeal}';
+    _diversityController.text = '${config.diversityWindowDays}';
+    setState(() => _mealPlanConfig = config);
+  }
+
+  // Mirrors _onApiKeyChanged: the model update (setState) happens
+  // immediately so the UI stays responsive, but the SharedPreferences write
+  // is debounced so a burst of edits (typing, or several field changes in
+  // quick succession) collapses into one round trip.
+  void _saveMealPlanConfig(MealPlanConfig updated) {
+    setState(() => _mealPlanConfig = updated);
+    _mealPlanSaveDebounce?.cancel();
+    _mealPlanSaveDebounce = Timer(
+      const Duration(milliseconds: 500),
+      () => widget.mealPlanConfigRepository.save(updated),
+    );
+  }
+
+  void _onPortionsChanged(String value) {
+    final parsed = int.tryParse(value);
+    if (parsed == null || parsed <= 0) return;
+    _saveMealPlanConfig(_mealPlanConfig!.copyWith(portionsPerMeal: parsed));
+  }
+
+  void _onDiversityChanged(String value) {
+    final parsed = int.tryParse(value);
+    if (parsed == null || parsed <= 0) return;
+    _saveMealPlanConfig(_mealPlanConfig!.copyWith(diversityWindowDays: parsed));
+  }
+
+  void _addMealSlot() {
+    final slots = [
+      ..._mealPlanConfig!.mealSlots,
+      MealSlot(id: '${DateTime.now().millisecondsSinceEpoch}', mealType: MealType.lunch, protein: 'meat', count: 1),
+    ];
+    _saveMealPlanConfig(_mealPlanConfig!.copyWith(mealSlots: slots));
+  }
+
+  void _updateMealSlot(int index, MealSlot slot) {
+    final slots = [..._mealPlanConfig!.mealSlots];
+    slots[index] = slot;
+    _saveMealPlanConfig(_mealPlanConfig!.copyWith(mealSlots: slots));
+  }
+
+  void _removeMealSlot(int index) {
+    final slots = [..._mealPlanConfig!.mealSlots]..removeAt(index);
+    _saveMealPlanConfig(_mealPlanConfig!.copyWith(mealSlots: slots));
   }
 
   Future<void> _openModelEditor({String? existing, int? index}) async {
@@ -139,6 +212,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   Widget build(BuildContext context) {
     final stores = _stores;
     final models = _models;
+    final mealPlanConfig = _mealPlanConfig;
     return Scaffold(
       appBar: AppBar(title: const Text('Config')),
       // The whole page scrolls as one region rather than giving the store
@@ -182,6 +256,120 @@ class _ConfigScreenState extends State<ConfigScreen> {
                 );
               }, childCount: stores.length),
             ),
+          const SliverToBoxAdapter(child: Divider(height: 1)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+              child: Row(
+                children: [
+                  Expanded(child: Text('Meal plan', style: Theme.of(context).textTheme.titleMedium)),
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Add meal slot',
+                    onPressed: mealPlanConfig == null ? null : _addMealSlot,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (mealPlanConfig == null)
+            const SliverToBoxAdapter(
+              child: Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+            )
+          else ...[
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _portionsController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Portions per meal'),
+                        onChanged: _onPortionsChanged,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _diversityController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Diversity window (days)'),
+                        onChanged: _onDiversityChanged,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SliverList(
+              delegate: SliverChildBuilderDelegate((context, i) {
+                final slot = mealPlanConfig.mealSlots[i];
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: DropdownButtonFormField<MealType>(
+                          key: ValueKey('meal-type-${slot.id}'),
+                          initialValue: slot.mealType,
+                          decoration: const InputDecoration(labelText: 'Meal'),
+                          items: MealType.values
+                              .map((t) => DropdownMenuItem(value: t, child: Text(t.name)))
+                              .toList(),
+                          onChanged: (value) {
+                            if (value == null) return;
+                            _updateMealSlot(i, slot.copyWith(mealType: value));
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: TextFormField(
+                          key: ValueKey('protein-${slot.id}'),
+                          initialValue: slot.protein,
+                          decoration: const InputDecoration(labelText: 'Protein'),
+                          onChanged: (value) {
+                            final trimmed = value.trim();
+                            if (trimmed.isEmpty) return;
+                            _updateMealSlot(i, slot.copyWith(protein: trimmed));
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextFormField(
+                          key: ValueKey('count-${slot.id}'),
+                          initialValue: '${slot.count}',
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Count'),
+                          onChanged: (value) {
+                            final parsed = int.tryParse(value);
+                            if (parsed == null || parsed < 0) return;
+                            _updateMealSlot(i, slot.copyWith(count: parsed));
+                          },
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Remove meal slot',
+                        onPressed: mealPlanConfig.mealSlots.length == 1 ? null : () => _removeMealSlot(i),
+                      ),
+                    ],
+                  ),
+                );
+              }, childCount: mealPlanConfig.mealSlots.length),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Text('${mealPlanConfig.mealsPerWeek} meals / week', style: Theme.of(context).textTheme.bodySmall),
+              ),
+            ),
+          ],
           const SliverToBoxAdapter(child: Divider(height: 1)),
           SliverToBoxAdapter(
             child: Padding(

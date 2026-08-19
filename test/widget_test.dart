@@ -43,7 +43,7 @@ void main() {
     await tester.tap(navDestination('Config'));
     await tester.pumpAndSettle();
 
-    final stack = tester.widget<IndexedStack>(find.byType(IndexedStack));
+    final stack = tester.widget<IndexedStack>(find.byKey(const Key('home_tab_stack')));
     expect(stack.index, 1);
   });
 }

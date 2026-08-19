@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:laplanif/models/store_config.dart';
 import 'package:laplanif/screens/config_screen.dart';
 import 'package:laplanif/services/ai_config_repository.dart';
+import 'package:laplanif/services/meal_plan_config_repository.dart';
 import 'package:laplanif/services/store_config_repository.dart';
 
 class _SlowStoreConfigRepository extends StoreConfigRepository {
@@ -44,6 +45,7 @@ void main() {
     WidgetTester tester,
     StoreConfigRepository repo, {
     AiConfigRepository? aiConfigRepository,
+    MealPlanConfigRepository? mealPlanConfigRepository,
   }) async {
     tester.view.physicalSize = const Size(800, 2200);
     tester.view.devicePixelRatio = 1.0;
@@ -51,7 +53,13 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
-      MaterialApp(home: ConfigScreen(repository: repo, aiConfigRepository: aiConfigRepository)),
+      MaterialApp(
+        home: ConfigScreen(
+          repository: repo,
+          aiConfigRepository: aiConfigRepository,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+        ),
+      ),
     );
     await tester.pumpAndSettle();
   }
@@ -382,5 +390,68 @@ void main() {
 
     expect(find.text('gemini-a'), findsNothing);
     expect(await aiConfigRepo.loadModels(), ['gemini-b']);
+  });
+
+  testWidgets('shows the default meal plan config and computed meals per week', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    expect(find.widgetWithText(TextField, 'Portions per meal'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('28'), findsOneWidget);
+    expect(find.text('11 meals / week'), findsOneWidget);
+  });
+
+  testWidgets('adding a meal slot appends a default row and updates the weekly total', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    await tester.tap(find.byTooltip('Add meal slot'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('12 meals / week'), findsOneWidget);
+    final saved = await mealPlanRepo.load();
+    expect(saved.mealSlots.length, 4);
+    expect(saved.mealsPerWeek, 12);
+  });
+
+  testWidgets('removing a meal slot deletes it and persists', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    await tester.tap(find.byTooltip('Remove meal slot').first);
+    await tester.pumpAndSettle();
+
+    final saved = await mealPlanRepo.load();
+    expect(saved.mealSlots.length, 2);
+    expect(saved.mealsPerWeek, 6);
+  });
+
+  testWidgets('editing the count field persists the new value and total', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Count').first, '7');
+    await tester.pumpAndSettle();
+
+    expect(find.text('13 meals / week'), findsOneWidget);
+    final saved = await mealPlanRepo.load();
+    expect(saved.mealSlots.first.count, 7);
+  });
+
+  testWidgets('editing portions per meal persists the new value', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    await tester.enterText(find.widgetWithText(TextField, 'Portions per meal'), '5');
+    await tester.pumpAndSettle();
+
+    final saved = await mealPlanRepo.load();
+    expect(saved.portionsPerMeal, 5);
   });
 }

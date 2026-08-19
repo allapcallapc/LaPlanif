@@ -111,6 +111,16 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
+  testWidgets('falls back to default scraper/extraction/config services when none are provided', (tester) async {
+    final repository = StoreConfigRepository();
+    await tester.pumpWidget(MaterialApp(home: PlanifScreen(repository: repository)));
+    await tester.pumpAndSettle();
+
+    // Never taps "Fetch deals" - just confirms the widget builds fine off
+    // its own default-constructed services, without a fake standing in.
+    expect(find.textContaining('Press "Fetch'), findsOneWidget);
+  });
+
   testWidgets('groups results into category sections with a cover-page marker', (tester) async {
     // Tall enough that every section/row is mounted without needing to
     // scroll - find.* only sees widgets that are actually built.

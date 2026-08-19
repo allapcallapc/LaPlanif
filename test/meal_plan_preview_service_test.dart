@@ -206,4 +206,117 @@ void main() {
     expect(logs[0].success, isFalse);
     expect(logs[0].errorMessage, contains('HTTP 500'));
   });
+
+  test('throws and logs a failure when the connection itself fails', () async {
+    final client = MockClient((request) async => throw Exception('network down'));
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanPreviewService(client: client, logRepository: logRepository);
+
+    await expectLater(
+      service.previewMealPlan(apiKey: 'test-key', mealSlots: mealSlots, portionsPerMeal: 3, items: items),
+      throwsException,
+    );
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('Could not reach the AI API'));
+  });
+
+  test('throws and logs a failure when the response body is not valid JSON', () async {
+    final client = MockClient((request) async => http.Response('not json', 200));
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanPreviewService(client: client, logRepository: logRepository);
+
+    await expectLater(
+      service.previewMealPlan(apiKey: 'test-key', mealSlots: mealSlots, portionsPerMeal: 3, items: items),
+      throwsException,
+    );
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('Invalid JSON'));
+  });
+
+  test('throws and logs a failure when no candidates are returned', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({
+          'candidates': <dynamic>[],
+          'promptFeedback': {'blockReason': 'SAFETY'},
+          'usageMetadata': {'promptTokenCount': 8, 'candidatesTokenCount': 0},
+        }),
+        200,
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanPreviewService(client: client, logRepository: logRepository);
+
+    await expectLater(
+      service.previewMealPlan(apiKey: 'test-key', mealSlots: mealSlots, portionsPerMeal: 3, items: items),
+      throwsA(anything),
+    );
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('no candidates returned (blockReason: SAFETY)'));
+  });
+
+  test('throws and logs a failure when a candidate has no content', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({
+          'candidates': [
+            {'finishReason': 'MAX_TOKENS'},
+          ],
+          'usageMetadata': {'promptTokenCount': 8, 'candidatesTokenCount': 0},
+        }),
+        200,
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanPreviewService(client: client, logRepository: logRepository);
+
+    await expectLater(
+      service.previewMealPlan(apiKey: 'test-key', mealSlots: mealSlots, portionsPerMeal: 3, items: items),
+      throwsA(anything),
+    );
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('no content in response (finishReason: MAX_TOKENS)'));
+  });
+
+  test('throws and logs a failure when the response has no functionCall part', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({
+          'candidates': [
+            {
+              'content': {
+                'parts': [
+                  {'text': 'Sorry, nothing found.'},
+                ],
+                'role': 'model',
+              },
+            },
+          ],
+          'usageMetadata': {'promptTokenCount': 10, 'candidatesTokenCount': 5},
+        }),
+        200,
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanPreviewService(client: client, logRepository: logRepository);
+
+    await expectLater(
+      service.previewMealPlan(apiKey: 'test-key', mealSlots: mealSlots, portionsPerMeal: 3, items: items),
+      throwsA(anything),
+    );
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('no functionCall in response'));
+    expect(log.inputTokens, 10);
+    expect(log.outputTokens, 5);
+  });
 }

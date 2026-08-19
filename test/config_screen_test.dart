@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:laplanif/models/meal_plan_config.dart';
 import 'package:laplanif/models/store_config.dart';
 import 'package:laplanif/screens/config_screen.dart';
 import 'package:laplanif/services/ai_config_repository.dart';
@@ -453,5 +454,44 @@ void main() {
 
     final saved = await mealPlanRepo.load();
     expect(saved.portionsPerMeal, 5);
+  });
+
+  testWidgets('editing the diversity window persists the new value', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    await tester.enterText(find.widgetWithText(TextField, 'Diversity window (days)'), '21');
+    await tester.pumpAndSettle();
+
+    final saved = await mealPlanRepo.load();
+    expect(saved.diversityWindowDays, 21);
+  });
+
+  testWidgets('editing the protein field persists the new value', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    await tester.enterText(find.byKey(const ValueKey('protein-0')), 'fish');
+    await tester.pumpAndSettle();
+
+    final saved = await mealPlanRepo.load();
+    expect(saved.mealSlots.first.protein, 'fish');
+  });
+
+  testWidgets('changing the meal type dropdown persists the new value', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    final dropdown = tester.widget<DropdownButtonFormField<MealType>>(
+      find.byKey(const ValueKey('meal-type-0')),
+    );
+    dropdown.onChanged!(MealType.supper);
+    await tester.pumpAndSettle();
+
+    final saved = await mealPlanRepo.load();
+    expect(saved.mealSlots.first.mealType, MealType.supper);
   });
 }

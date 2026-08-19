@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:laplanif/models/deal_item.dart';
 import 'package:laplanif/models/meal_plan_config.dart';
+import 'package:laplanif/models/meal_plan_preview.dart';
 import 'package:laplanif/services/ai_call_activity.dart';
 import 'package:laplanif/services/ai_call_log_repository.dart';
 import 'package:laplanif/services/meal_plan_preview_service.dart';
@@ -146,6 +147,59 @@ void main() {
     expect(logs[0].model, 'gemini-3.5-flash-lite');
     expect(logs[0].inputTokens, 100);
     expect(logs[0].outputTokens, 50);
+  });
+
+  test('tells the AI which anchors are already used elsewhere in the plan', () async {
+    final client = MockClient((request) async {
+      expect(request.body, contains('Chicken thighs (IGA)'));
+      expect(request.body, contains('already used as anchors elsewhere'));
+
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'Big-batch tofu curry.',
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+      alreadyUsedAnchors: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+    );
+  });
+
+  test('omitting alreadyUsedAnchors sends an empty list, not a missing section', () async {
+    final client = MockClient((request) async {
+      expect(request.body, contains('already used as anchors elsewhere'));
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'note',
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+    );
   });
 
   test('throws and logs a failure when the response has the wrong number of slot previews', () async {

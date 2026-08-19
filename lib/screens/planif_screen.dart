@@ -196,6 +196,16 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
     setState(() => _regeneratingSlots.add(index));
 
+    // Every other slot's current anchors, so the regenerated slot doesn't
+    // duplicate an ingredient another slot is already using - the AI only
+    // sees the one slot being regenerated, unlike the full-plan generate
+    // call where every slot (and thus every other slot's picks) is visible
+    // in the same request.
+    final alreadyUsedAnchors = [
+      for (var i = 0; i < _preview!.slots.length; i++)
+        if (i != index) ..._preview!.slots[i].anchorItems,
+    ];
+
     final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
     try {
       final result = await controller.run(
@@ -204,6 +214,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
           mealSlots: [config.mealSlots[index]],
           portionsPerMeal: config.portionsPerMeal,
           items: _items,
+          alreadyUsedAnchors: alreadyUsedAnchors,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
@@ -227,8 +238,20 @@ class _PlanifScreenState extends State<PlanifScreen> {
     }
   }
 
+  // Every anchor item currently used anywhere in the preview, across every
+  // slot - an ingredient shouldn't anchor more than one slot, so neither the
+  // swap nor the add picker should offer one already spoken for elsewhere.
+  Set<String> _usedAnchorKeys() => {
+    for (final slot in _preview!.slots)
+      for (final anchor in slot.anchorItems) '${anchor.name}::${anchor.store}',
+  };
+
   Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
-    final available = _items.where((item) => item.preference != DealPreference.excluded).toList();
+    final usedKeys = _usedAnchorKeys();
+    final available = _items
+        .where((item) => item.preference != DealPreference.excluded)
+        .where((item) => !usedKeys.contains('${item.name}::${item.storeName}'))
+        .toList();
     final selected = await showDialog<DealItem>(context: context, builder: (_) => _AnchorPickerDialog(items: available));
     if (selected == null) return;
 
@@ -244,11 +267,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Future<void> _addAnchorItem(int slotIndex) async {
-    final slot = _preview!.slots[slotIndex];
-    final existingKeys = slot.anchorItems.map((a) => '${a.name}::${a.store}').toSet();
+    final usedKeys = _usedAnchorKeys();
     final available = _items
         .where((item) => item.preference != DealPreference.excluded)
-        .where((item) => !existingKeys.contains('${item.name}::${item.storeName}'))
+        .where((item) => !usedKeys.contains('${item.name}::${item.storeName}'))
         .toList();
     final selected = await showDialog<DealItem>(
       context: context,

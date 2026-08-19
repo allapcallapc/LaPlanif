@@ -36,11 +36,20 @@ class MealPlanPreviewService {
   /// items with [DealPreference.excluded] are told apart from the rest so
   /// the AI never proposes them; the rest (priority first) are offered as
   /// candidates.
+  ///
+  /// [alreadyUsedAnchors] lists anchor items already committed to OTHER
+  /// slots of the same plan that aren't part of this call - e.g. every
+  /// other slot's anchors when regenerating a single slot. The AI is told
+  /// not to reuse them, since an ingredient shouldn't anchor more than one
+  /// slot even when it's a priority item. When every slot is generated in
+  /// one call, cross-slot uniqueness is instead enforced by the prompt
+  /// alone, since the AI sees every slot at once.
   Future<MealPlanPreview> previewMealPlan({
     required String apiKey,
     required List<MealSlot> mealSlots,
     required int portionsPerMeal,
     required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
     String? model,
   }) async {
     final effectiveModel = model ?? this.model;
@@ -51,6 +60,7 @@ class MealPlanPreviewService {
         mealSlots: mealSlots,
         portionsPerMeal: portionsPerMeal,
         items: items,
+        alreadyUsedAnchors: alreadyUsedAnchors,
         model: effectiveModel,
       );
     } finally {
@@ -63,11 +73,12 @@ class MealPlanPreviewService {
     required List<MealSlot> mealSlots,
     required int portionsPerMeal,
     required List<DealItem> items,
+    required List<AnchorItem> alreadyUsedAnchors,
     required String model,
   }) async {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
-    final body = jsonEncode(_buildRequestBody(mealSlots, portionsPerMeal, items));
+    final body = jsonEncode(_buildRequestBody(mealSlots, portionsPerMeal, items, alreadyUsedAnchors));
 
     final http.Response response;
     try {
@@ -135,7 +146,12 @@ class MealPlanPreviewService {
     );
   }
 
-  Map<String, dynamic> _buildRequestBody(List<MealSlot> mealSlots, int portionsPerMeal, List<DealItem> items) {
+  Map<String, dynamic> _buildRequestBody(
+    List<MealSlot> mealSlots,
+    int portionsPerMeal,
+    List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors,
+  ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
     final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
     final available = items.where((i) => i.preference != DealPreference.excluded).toList();
@@ -155,7 +171,9 @@ class MealPlanPreviewService {
         'Meal slots to propose anchors for, in order:\n$slotsText\n\n'
         'Priority deal items (prefer these first):\n${_itemsText(priority)}\n\n'
         'Excluded deal items (never propose these):\n${_itemsText(excluded)}\n\n'
-        'All other available deal items:\n${_itemsText(available)}';
+        'All other available deal items:\n${_itemsText(available)}\n\n'
+        'Deal items already used as anchors elsewhere in this plan - never propose any of these '
+        'for the slot(s) below, even if they are priority items:\n${_anchorItemsText(alreadyUsedAnchors)}';
 
     return {
       'systemInstruction': {
@@ -187,6 +205,11 @@ class MealPlanPreviewService {
     return list
         .map((i) => '- ${i.name} (${i.storeName}, ${i.category.label}, ${i.price}${i.unit.isEmpty ? '' : '/${i.unit}'})')
         .join('\n');
+  }
+
+  String _anchorItemsText(List<AnchorItem> list) {
+    if (list.isEmpty) return '(none)';
+    return list.map((a) => '- ${a.name} (${a.store})').join('\n');
   }
 
   MealPlanPreview _parsePreview(Map<String, dynamic> decoded, List<MealSlot> mealSlots, int portionsPerMeal) {
@@ -255,6 +278,8 @@ You are planning a non-binding meal-plan preview: a checkpoint before full recip
 Each meal slot represents ONE recipe, batch-cooked once, that must yield enough portions to cover every meal instance in that slot - not one recipe per instance. A slot with count=5 and portionsPerMeal=3 needs one recipe that yields 15 portions total, batch-cooked once and portioned out across the week.
 
 For each meal slot, propose the anchor item(s) that define this slot's big-batch recipe: always the main protein item, plus a vegetable or carb side when one naturally fits that direction (e.g. rice alongside a stir-fry, potatoes alongside a roast) or when a priority item in that category is available and fits - don't force a vegetable/carb pick just to fill a slot when nothing fits well. Prioritize items marked as priority over other available deal items whenever one reasonably fits the slot, across every category (protein, vegetables, carbs) - always try to work a priority item into the anchor set when possible, not just for the protein. Draw from priority items first, then the other available deal items. Never propose an excluded item. Size the selection conceptually for a big-batch recipe covering the slot's total portions needed - do not invent a recipe name or instructions yet.
+
+No deal item may anchor more than one slot in this plan, even a priority item that would otherwise fit several slots well - each slot's anchors must be entirely distinct from every other slot's. When multiple slots are given in the same call, check your own choices for cross-slot duplicates as you go. A list of deal items already used as anchors elsewhere in this plan may also be given below - never reuse any of those either, and pick a different item for any slot that would otherwise repeat one.
 
 Also write a one-line note describing the direction for that slot's recipe (e.g. "Big-batch chicken thigh stir-fry with rice, portioned across the week.").
 

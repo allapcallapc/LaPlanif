@@ -123,15 +123,22 @@ class _FakePreviewService extends MealPlanPreviewService {
   /// tests assert a regenerate call only asked for the one slot it targets.
   final List<List<MealSlot>> calls = [];
 
+  /// Every alreadyUsedAnchors list passed to previewMealPlan, in call order -
+  /// lets tests assert a regenerate call told the AI which anchors the other
+  /// slots already claimed.
+  final List<List<AnchorItem>> usedAnchorsCalls = [];
+
   @override
   Future<MealPlanPreview> previewMealPlan({
     required String apiKey,
     required List<MealSlot> mealSlots,
     required int portionsPerMeal,
     required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
     String? model,
   }) {
     calls.add(mealSlots);
+    usedAnchorsCalls.add(alreadyUsedAnchors);
     return _handler(mealSlots, portionsPerMeal, items);
   }
 }
@@ -149,6 +156,7 @@ class _FakeDeferredPreviewService extends MealPlanPreviewService {
     required List<MealSlot> mealSlots,
     required int portionsPerMeal,
     required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
     String? model,
   }) {
     final completer = Completer<MealPlanPreview>();
@@ -170,6 +178,7 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     required List<MealSlot> mealSlots,
     required int portionsPerMeal,
     required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
     String? model,
   }) {
     return _byModel(model!);
@@ -1760,6 +1769,9 @@ void main() {
     expect(previewService.calls.length, 2);
     expect(previewService.calls[1].length, 1);
     expect(previewService.calls[1].single.mealType, MealType.lunch);
+    // The regenerate call is told the supper slot's current anchor, so the
+    // AI doesn't reuse an ingredient another slot is already using.
+    expect(previewService.usedAnchorsCalls[1].map((a) => a.name), ['Tofu']);
 
     // Only the regenerated slot changed.
     expect(find.text('Regenerated lunch note.'), findsOneWidget);
@@ -2304,5 +2316,119 @@ void main() {
     expect(promptCalls, 2, reason: 'the regenerate call goes through its own rate-limit retry flow');
     expect(promptedCurrent, 'model-a');
     expect(promptedNext, 'model-b');
+  });
+
+  testWidgets('does not offer an anchor already used by another slot in the swap or add picker', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [
+          MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5),
+          MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4),
+        ],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(
+          name: 'Ground pork',
+          price: '4.49\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(
+          name: 'Tofu',
+          price: '2.29\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 5,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Lunch note.',
+          ),
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'tofu',
+            count: 4,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Tofu', store: 'IGA')],
+            note: 'Supper note.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    // Swap on the supper slot's Tofu anchor: Chicken thighs is already used
+    // by the lunch slot, so only Ground pork should be offered.
+    await tester.tap(find.textContaining('Tofu'));
+    await tester.pumpAndSettle();
+    expect(find.text('Swap anchor item'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Ground pork'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    // Add on the lunch slot: Tofu is already used by the supper slot, so
+    // only Ground pork should be offered there too.
+    final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
+    await tester.tap(find.descendant(of: lunchCard, matching: find.text('Add item')));
+    await tester.pumpAndSettle();
+    expect(find.text('Add anchor item'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Tofu'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing, reason: 'already an anchor on this slot');
+    expect(find.widgetWithText(ListTile, 'Ground pork'), findsOneWidget);
   });
 }

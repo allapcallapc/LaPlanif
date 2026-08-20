@@ -1087,13 +1087,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
+  // Only ever called for link/aiRecipe/simpleSide: _buildComponentBlock
+  // intercepts coveredByProtein before delegating here, so that case isn't
+  // handled - a fourth chip label for it would be dead code.
   Widget _buildTypeChip(MealComponentType type) {
-    final (label, icon) = switch (type) {
-      MealComponentType.link => ('Recipe link', Icons.link),
-      MealComponentType.aiRecipe => ('AI recipe', Icons.auto_awesome),
-      MealComponentType.simpleSide => ('Simple side', Icons.eco_outlined),
-      MealComponentType.coveredByProtein => ('Included above', Icons.merge_type),
-    };
+    final (label, icon) = type == MealComponentType.link
+        ? ('Recipe link', Icons.link)
+        : type == MealComponentType.aiRecipe
+        ? ('AI recipe', Icons.auto_awesome)
+        : ('Simple side', Icons.eco_outlined);
     return Chip(
       avatar: Icon(icon, size: 14),
       label: Text(label, style: const TextStyle(fontSize: 11)),

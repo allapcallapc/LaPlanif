@@ -353,9 +353,13 @@ void main() {
 
       expect(await preferenceRepository.loadAll(), {'IGA::Poulet::3.99\$::': DealPreference.excluded});
 
-      // Reopening the screen (a fresh widget instance, as if the app were
-      // relaunched) shows the cached items straight away, with the
-      // persisted exclusion still applied - no "Fetch deals" tap needed.
+      // Reopening the screen (a fresh State, as if the app were relaunched)
+      // shows the cached items straight away, with the persisted exclusion
+      // still applied - no "Fetch deals" tap needed. Pumping an unrelated
+      // widget first fully unmounts PlanifScreen so the next pumpScreen()
+      // creates a brand new State (and re-runs initState) instead of
+      // Flutter's element diffing reusing the existing one in place.
+      await tester.pumpWidget(Container());
       await pumpScreen();
       await tester.pumpAndSettle();
       expect(find.text('Poulet'), findsOneWidget);

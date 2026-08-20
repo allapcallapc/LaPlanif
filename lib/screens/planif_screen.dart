@@ -112,6 +112,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   bool _isRunning = false;
   bool _hasRun = false;
   String? _storeFilter;
+  DealCategory? _categoryFilter;
   String? _apiKey;
   List<String> _models = [];
   List<String> _groundingModels = [];
@@ -123,13 +124,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
   final Set<int> _regeneratingSlots = {};
   MealPlanFull? _fullPlan;
   bool _isGeneratingFullPlan = false;
-
-  // One stable key per category, so a quick-jump chip can scroll the deals
-  // list to that section's header regardless of how many/which categories
-  // are actually present in a given fetch.
-  final Map<DealCategory, GlobalKey> _sectionKeys = {
-    for (final category in DealCategory.values) category: GlobalKey(),
-  };
 
   @override
   void initState() {
@@ -186,6 +180,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _isRunning = true;
       _hasRun = false;
       _storeFilter = null;
+      _categoryFilter = null;
       _apiKey = apiKey;
       _models = models;
       _groundingModels = groundingModels;
@@ -483,11 +478,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
     if (!mounted) return;
     setState(() {
       _items = merged;
-      // A retry can drop the filtered store to zero items, which would
-      // otherwise leave _storeFilter pointing at a name _buildResults can no
-      // longer find - reset it rather than showing an unexplained empty list.
+      // A retry can drop the filtered store/category to zero items, which
+      // would otherwise leave a filter pointing at something _buildResults
+      // can no longer find - reset it rather than showing an unexplained
+      // empty list.
       if (_storeFilter != null && !_items.any((item) => item.storeName == _storeFilter)) {
         _storeFilter = null;
+      }
+      if (_categoryFilter != null && !_items.any((item) => item.category == _categoryFilter)) {
+        _categoryFilter = null;
       }
       _isRunning = false;
     });
@@ -824,25 +823,26 @@ class _PlanifScreenState extends State<PlanifScreen> {
       return const Center(child: Text('No items found.'));
     }
 
-    final filtered = _filteredByStore();
+    final filtered = _filteredItems;
+    // Both filters together can leave nothing to show (e.g. a store that
+    // never carries any deals in the selected category) - unlike the old
+    // jump-to-category behavior, an actual filter can legitimately empty
+    // the list, so this has its own message rather than assuming filtered
+    // is never empty.
+    if (filtered.isEmpty) {
+      return const Center(child: Text('No items match the current filters.'));
+    }
+
     final grouped = <DealCategory, List<DealItem>>{};
     for (final item in filtered) {
       grouped.putIfAbsent(item.category, () => []).add(item);
     }
     final presentCategories = _presentCategories(filtered);
 
-    // filtered can't be empty here: _storeFilter is only ever set to a name
-    // drawn from _storeNames, which is itself derived from _items, so at
-    // least one item always matches. Store/priority filtering and category
-    // navigation now live in the filter sheet (see _openFilterSheet) instead
-    // of always-on rows above the list, so this is just the list itself.
+    // Store/category/priority filtering now lives in the filter sheet (see
+    // _openFilterSheet) instead of always-on rows above the list, so this
+    // is just the list itself.
     return ListView(
-      // A generous cacheExtent keeps every section built up front (not just
-      // what's near the viewport) - otherwise jumping to a section far below
-      // the fold would find no context to scroll to, since Flutter's
-      // default sliver caching only builds children close to what's
-      // currently visible.
-      cacheExtent: 10000,
       children: [
         for (final category in presentCategories) ...[
           _buildSectionHeader(category),
@@ -854,8 +854,19 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   List<String> get _storeNames => _items.map((item) => item.storeName).toSet().toList()..sort();
 
-  List<DealItem> _filteredByStore() =>
+  List<DealItem> get _storeFiltered =>
       _storeFilter == null ? _items : _items.where((item) => item.storeName == _storeFilter).toList();
+
+  // Store and category filters compose: the category filter narrows
+  // whatever the store filter already narrowed down to, the same way the
+  // category options offered in the sheet are themselves scoped to the
+  // current store filter.
+  List<DealItem> get _filteredItems {
+    final storeFiltered = _storeFiltered;
+    return _categoryFilter == null
+        ? storeFiltered
+        : storeFiltered.where((item) => item.category == _categoryFilter).toList();
+  }
 
   List<DealCategory> _presentCategories(List<DealItem> filtered) {
     final grouped = <DealCategory, List<DealItem>>{};
@@ -869,22 +880,24 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   // Opens the filter sheet: priority/excluded summary, store filter and
-  // category jump-list all live here now instead of always-on rows above
-  // the deals list - they only cost screen space while actually in use.
+  // category filter all live here now instead of always-on rows above the
+  // deals list - they only cost screen space while actually in use.
   void _openFilterSheet() {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) =>
-          StatefulBuilder(builder: (context, setModalState) => _buildFilterSheetContent(sheetContext, setModalState)),
+      builder: (sheetContext) => StatefulBuilder(builder: (context, setModalState) => _buildFilterSheetContent(setModalState)),
     );
   }
 
-  Widget _buildFilterSheetContent(BuildContext sheetContext, StateSetter setModalState) {
+  Widget _buildFilterSheetContent(StateSetter setModalState) {
     final priorityCount = _items.where((item) => item.preference == DealPreference.priority).length;
     final excludedCount = _items.where((item) => item.preference == DealPreference.excluded).length;
     final storeNames = _storeNames;
-    final presentCategories = _presentCategories(_filteredByStore());
+    // Scoped to the current store filter, same as the store options below
+    // are scoped to every store regardless of the current category filter -
+    // each filter offers choices independent of the other one's selection.
+    final availableCategories = _presentCategories(_storeFiltered);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
@@ -926,40 +939,38 @@ class _PlanifScreenState extends State<PlanifScreen> {
                 ],
               ),
             ],
-            if (presentCategories.length > 1) ...[
+            if (availableCategories.length > 1) ...[
               const SizedBox(height: 16),
-              Text(
-                'Jump to category',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
+              Text('Category', style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('All'),
+                    selected: _categoryFilter == null,
+                    onSelected: (_) {
+                      setState(() => _categoryFilter = null);
+                      setModalState(() {});
+                    },
+                  ),
+                  for (final category in availableCategories)
+                    ChoiceChip(
+                      label: Text(category.label),
+                      selected: _categoryFilter == category,
+                      onSelected: (_) {
+                        setState(() => _categoryFilter = category);
+                        setModalState(() {});
+                      },
+                    ),
+                ],
               ),
-              for (final category in presentCategories)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(_categoryIcon(category)),
-                  title: Text(category.label),
-                  onTap: () {
-                    Navigator.of(sheetContext).pop();
-                    _scrollToSection(category);
-                  },
-                ),
             ],
           ],
         ),
       ),
     );
-  }
-
-  IconData _categoryIcon(DealCategory category) => switch (category) {
-    DealCategory.protein => Icons.set_meal_outlined,
-    DealCategory.vegetables => Icons.eco_outlined,
-    DealCategory.carbs => Icons.bakery_dining_outlined,
-    DealCategory.uncategorized => Icons.category_outlined,
-  };
-
-  void _scrollToSection(DealCategory category) {
-    final sectionContext = _sectionKeys[category]?.currentContext;
-    if (sectionContext == null) return;
-    Scrollable.ensureVisible(sectionContext, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
   }
 
   List<DealItem> _coverFirst(List<DealItem> items) {
@@ -970,7 +981,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   Widget _buildSectionHeader(DealCategory category) {
     return Padding(
-      key: _sectionKeys[category],
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Text(
         category.label,

@@ -437,23 +437,35 @@ void main() {
         ),
       );
 
+      // The priority/excluded summary now lives in the filter sheet (opened
+      // via the app bar's filter icon) instead of an always-on row, so
+      // checking it means opening the sheet, then dismissing it (tapping the
+      // scrim, above where the sheet itself sits) to get back to the list.
+      Future<void> expectSummary(String text) async {
+        await tester.tap(find.byTooltip('Filters'));
+        await tester.pumpAndSettle();
+        expect(find.text(text), findsOneWidget);
+        await tester.tapAt(const Offset(200, 50));
+        await tester.pumpAndSettle();
+      }
+
       await pumpScreen();
       await tester.pumpAndSettle();
       await tester.tap(find.text('Fetch deals'));
       await tester.pumpAndSettle();
 
-      expect(find.text('0 priority, 0 excluded'), findsOneWidget);
+      await expectSummary('0 priority, 0 excluded');
 
       // neutral -> priority
       await tester.tap(find.text('Poulet'));
       await tester.pumpAndSettle();
-      expect(find.text('1 priority, 0 excluded'), findsOneWidget);
+      await expectSummary('1 priority, 0 excluded');
       expect(find.byIcon(Icons.star), findsOneWidget);
 
       // priority -> excluded
       await tester.tap(find.text('Poulet'));
       await tester.pumpAndSettle();
-      expect(find.text('0 priority, 1 excluded'), findsOneWidget);
+      await expectSummary('0 priority, 1 excluded');
       expect(find.byIcon(Icons.star), findsNothing);
 
       expect(await preferenceRepository.loadAll(), {'IGA::Poulet::3.99\$::': DealPreference.excluded});
@@ -468,7 +480,7 @@ void main() {
       await pumpScreen();
       await tester.pumpAndSettle();
       expect(find.text('Poulet'), findsOneWidget);
-      expect(find.text('0 priority, 1 excluded'), findsOneWidget);
+      await expectSummary('0 priority, 1 excluded');
 
       // Explicitly reloading (stepping back to the fetch step, then tapping
       // "Fetch deals" again) is a deliberate reset: it clears the persisted
@@ -478,7 +490,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Fetch deals'));
       await tester.pumpAndSettle();
-      expect(find.text('0 priority, 0 excluded'), findsOneWidget);
+      await expectSummary('0 priority, 0 excluded');
       expect(await preferenceRepository.loadAll(), isEmpty);
     },
   );
@@ -665,13 +677,23 @@ void main() {
     expect(find.text('Poulet'), findsOneWidget);
     expect(find.text('Fromage'), findsOneWidget);
 
+    // The store filter now lives in the filter sheet (opened via the app
+    // bar's filter icon) instead of an always-on row.
+    await tester.tap(find.byTooltip('Filters'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'IGA'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(200, 50));
     await tester.pumpAndSettle();
 
     expect(find.text('Poulet'), findsOneWidget);
     expect(find.text('Fromage'), findsNothing);
 
+    await tester.tap(find.byTooltip('Filters'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'All'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(200, 50));
     await tester.pumpAndSettle();
 
     expect(find.text('Poulet'), findsOneWidget);
@@ -742,7 +764,12 @@ void main() {
     // for this before/after position comparison.
     final dyBefore = tester.getTopLeft(find.text('Carbs', skipOffstage: false)).dy;
 
-    await tester.tap(find.byIcon(Icons.bakery_dining_outlined));
+    // The category quick-jump now lives in the filter sheet's "Jump to
+    // category" list instead of an always-on icon row - tapping the entry
+    // there both closes the sheet and scrolls to that section.
+    await tester.tap(find.byTooltip('Filters'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'Carbs'));
     await tester.pumpAndSettle();
 
     final dyAfter = tester.getTopLeft(find.text('Carbs', skipOffstage: false)).dy;
@@ -790,6 +817,10 @@ void main() {
     await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
 
+    // The store filter now lives in the filter sheet - open it to check
+    // there's nothing to select from with only one retailer.
+    await tester.tap(find.byTooltip('Filters'));
+    await tester.pumpAndSettle();
     expect(find.byType(ChoiceChip), findsNothing);
   });
 
@@ -1468,11 +1499,16 @@ void main() {
     await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
 
-    // Both stores have items, so the filter row is showing.
+    // Both stores have items, so the filter sheet's store row has something
+    // to select from.
     expect(find.text('Poulet'), findsOneWidget);
     expect(find.text('Fromage'), findsOneWidget);
 
+    await tester.tap(find.byTooltip('Filters'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'IGA'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(200, 50));
     await tester.pumpAndSettle();
 
     expect(find.text('Poulet'), findsOneWidget);
@@ -1627,12 +1663,13 @@ void main() {
     expect(find.text('Steamed green beans'), findsOneWidget);
     expect(find.text('Steam 5 min, toss with butter.'), findsOneWidget);
 
-    // The view switcher now offers the full plan alongside the other two.
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Meal plan preview'));
+    // The view switcher (now a compact icon toggle in the app bar) offers
+    // the full plan alongside the other two.
+    await tester.tap(find.byTooltip('Meal plan preview'));
     await tester.pumpAndSettle();
     expect(find.text('Looks good, generate full plan →'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Full meal plan'));
+    await tester.tap(find.byTooltip('Full meal plan'));
     await tester.pumpAndSettle();
     expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
   });
@@ -2248,12 +2285,12 @@ void main() {
     // Generating a preview switches straight into it.
     expect(find.text('Lunch · meat'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Deal items'));
+    await tester.tap(find.byTooltip('Deal items'));
     await tester.pumpAndSettle();
     expect(find.text('Chicken thighs'), findsOneWidget);
     expect(find.text('Lunch · meat'), findsNothing);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Meal plan preview'));
+    await tester.tap(find.byTooltip('Meal plan preview'));
     await tester.pumpAndSettle();
     expect(find.text('Lunch · meat'), findsOneWidget);
   });

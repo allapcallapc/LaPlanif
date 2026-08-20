@@ -563,10 +563,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
   Widget build(BuildContext context) {
     // The full-plan CTA lives in a persistent footer instead of at the
     // bottom of the preview list - it stays reachable without scrolling and
-    // sits far enough from the (deliberately smaller/outlined) "Regenerate
-    // preview" button up top that the two are no longer easy to mix up.
+    // sits far enough from the regenerate action up in the app bar that the
+    // two are no longer easy to mix up.
     final showGenerateFullPlanBar =
         _phase == _Phase.browse && _viewMode == _ViewMode.preview && _preview != null;
+    // The preview FAB only exists to get a first preview started - once one
+    // exists, getting back to it (or regenerating it) goes through the app
+    // bar's view toggle and regenerate action instead.
+    final showPreviewFab =
+        _phase == _Phase.browse && _viewMode == _ViewMode.deals && _items.isNotEmpty && _preview == null;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Planif'),
@@ -581,9 +586,86 @@ class _PlanifScreenState extends State<PlanifScreen> {
                 onPressed: () => setState(() => _phase = _Phase.fetch),
               )
             : null,
+        actions: _phase == _Phase.browse ? _buildAppBarActions() : null,
       ),
       body: _phase == _Phase.fetch ? _buildFetchStep() : _buildBrowseStep(),
+      floatingActionButton: showPreviewFab ? _buildPreviewFab() : null,
       bottomNavigationBar: showGenerateFullPlanBar ? _buildGenerateFullPlanBar() : null,
+    );
+  }
+
+  // Everything that used to live in a second chrome row now lives here
+  // instead: a compact view-mode toggle once there's a preview to switch
+  // to, a filter action (badged when a filter is active) while browsing
+  // deals, and a regenerate action while looking at the preview.
+  List<Widget> _buildAppBarActions() {
+    return [
+      if (_preview != null) _buildViewModeToggle(),
+      if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildFilterButton(),
+      if (_viewMode == _ViewMode.preview && _preview != null) _buildRegenerateButton(),
+      const SizedBox(width: 4),
+    ];
+  }
+
+  Widget _buildViewModeToggle() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: SegmentedButton<_ViewMode>(
+        segments: [
+          const ButtonSegment(value: _ViewMode.deals, icon: Icon(Icons.shopping_bag_outlined), tooltip: 'Deal items'),
+          const ButtonSegment(
+            value: _ViewMode.preview,
+            icon: Icon(Icons.restaurant_menu),
+            tooltip: 'Meal plan preview',
+          ),
+          if (_fullPlan != null)
+            const ButtonSegment(value: _ViewMode.full, icon: Icon(Icons.menu_book_outlined), tooltip: 'Full meal plan'),
+        ],
+        selected: {_viewMode},
+        showSelectedIcon: false,
+        onSelectionChanged: (selected) => setState(() => _viewMode = selected.first),
+        style: SegmentedButton.styleFrom(visualDensity: VisualDensity.compact),
+      ),
+    );
+  }
+
+  Widget _buildFilterButton() {
+    final active = _storeFilter != null || _items.any((item) => item.preference != DealPreference.neutral);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(icon: const Icon(Icons.tune), tooltip: 'Filters', onPressed: _openFilterSheet),
+        if (active)
+          Positioned(
+            top: 10,
+            right: 10,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(color: Theme.of(context).colorScheme.error, shape: BoxShape.circle),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildRegenerateButton() {
+    return IconButton(
+      icon: _isPreviewLoading
+          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.refresh),
+      tooltip: 'Regenerate preview',
+      onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _generatePreview,
+    );
+  }
+
+  Widget _buildPreviewFab() {
+    return FloatingActionButton.extended(
+      onPressed: _isPreviewLoading ? null : _generatePreview,
+      icon: _isPreviewLoading
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.restaurant_menu),
+      label: Text(_isPreviewLoading ? 'Generating…' : 'Preview meal plan'),
     );
   }
 
@@ -630,7 +712,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
     return Column(
       children: [
         if (_states.isNotEmpty) ...[_buildStatusSummary(), const Divider(height: 1)],
-        if (_items.isNotEmpty) ...[_buildStep2Bar(), const Divider(height: 1)],
         Expanded(child: _buildBody()),
       ],
     );
@@ -721,119 +802,124 @@ class _PlanifScreenState extends State<PlanifScreen> {
       return const Center(child: Text('No items found.'));
     }
 
-    final storeNames = _items.map((item) => item.storeName).toSet().toList()..sort();
-    final filtered = _storeFilter == null
-        ? _items
-        : _items.where((item) => item.storeName == _storeFilter).toList();
-
+    final filtered = _filteredByStore();
     final grouped = <DealCategory, List<DealItem>>{};
     for (final item in filtered) {
       grouped.putIfAbsent(item.category, () => []).add(item);
     }
-
-    final presentCategories = [
-      for (final category in _sectionOrder)
-        if ((grouped[category] ?? const []).isNotEmpty) category,
-    ];
+    final presentCategories = _presentCategories(filtered);
 
     // filtered can't be empty here: _storeFilter is only ever set to a name
-    // drawn from storeNames, which is itself derived from _items, so at
-    // least one item always matches.
-    return Column(
+    // drawn from _storeNames, which is itself derived from _items, so at
+    // least one item always matches. Store/priority filtering and category
+    // navigation now live in the filter sheet (see _openFilterSheet) instead
+    // of always-on rows above the list, so this is just the list itself.
+    return ListView(
+      // A generous cacheExtent keeps every section built up front (not just
+      // what's near the viewport) - otherwise jumping to a section far below
+      // the fold would find no context to scroll to, since Flutter's
+      // default sliver caching only builds children close to what's
+      // currently visible.
+      cacheExtent: 10000,
       children: [
-        _buildFilterBar(storeNames),
-        if (presentCategories.length > 1) _buildCategoryJumpRow(presentCategories),
-        Expanded(
-          child: ListView(
-            // A generous cacheExtent keeps every section built up front (not
-            // just what's near the viewport) - otherwise a category jump chip
-            // for a section far below the fold would find no context to
-            // scroll to, since Flutter's default sliver caching only builds
-            // children close to what's currently visible.
-            cacheExtent: 10000,
-            children: [
-              for (final category in presentCategories) ...[
-                _buildSectionHeader(category),
-                ..._coverFirst(grouped[category]!).map(_buildItemTile),
-              ],
-            ],
-          ),
-        ),
+        for (final category in presentCategories) ...[
+          _buildSectionHeader(category),
+          ..._coverFirst(grouped[category]!).map(_buildItemTile),
+        ],
       ],
     );
   }
 
-  // Preference summary and store filter share one compact row instead of
-  // two stacked ones, so switching stores/categories doesn't cost as much
-  // vertical space before the actual deal list starts. The store chips
-  // scroll horizontally rather than wrapping, so this row is always exactly
-  // one line tall regardless of how many stores there are.
-  Widget _buildFilterBar(List<String> storeNames) {
-    final priorityCount = _items.where((item) => item.preference == DealPreference.priority).length;
-    final excludedCount = _items.where((item) => item.preference == DealPreference.excluded).length;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Row(
-        children: [
-          Text(
-            '$priorityCount priority, $excludedCount excluded',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          if (storeNames.length > 1) ...[
-            const SizedBox(width: 12),
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    ChoiceChip(
-                      label: const Text('All'),
-                      selected: _storeFilter == null,
-                      onSelected: (_) => setState(() => _storeFilter = null),
-                    ),
-                    for (final name in storeNames) ...[
-                      const SizedBox(width: 8),
-                      ChoiceChip(
-                        label: Text(name),
-                        selected: _storeFilter == name,
-                        onSelected: (_) => setState(() => _storeFilter = name),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+  List<String> get _storeNames => _items.map((item) => item.storeName).toSet().toList()..sort();
+
+  List<DealItem> _filteredByStore() =>
+      _storeFilter == null ? _items : _items.where((item) => item.storeName == _storeFilter).toList();
+
+  List<DealCategory> _presentCategories(List<DealItem> filtered) {
+    final grouped = <DealCategory, List<DealItem>>{};
+    for (final item in filtered) {
+      grouped.putIfAbsent(item.category, () => []).add(item);
+    }
+    return [
+      for (final category in _sectionOrder)
+        if ((grouped[category] ?? const []).isNotEmpty) category,
+    ];
+  }
+
+  // Opens the filter sheet: priority/excluded summary, store filter and
+  // category jump-list all live here now instead of always-on rows above
+  // the deals list - they only cost screen space while actually in use.
+  void _openFilterSheet() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) =>
+          StatefulBuilder(builder: (context, setModalState) => _buildFilterSheetContent(sheetContext, setModalState)),
     );
   }
 
-  // A row of icon-only chips (no category label text - the section headers
-  // already own that text, and duplicating it would just be more clutter)
-  // that jump the deals list straight to a category, so finding e.g. carbs
-  // doesn't mean scrolling past everything ahead of it.
-  Widget _buildCategoryJumpRow(List<DealCategory> categories) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
+  Widget _buildFilterSheetContent(BuildContext sheetContext, StateSetter setModalState) {
+    final priorityCount = _items.where((item) => item.preference == DealPreference.priority).length;
+    final excludedCount = _items.where((item) => item.preference == DealPreference.excluded).length;
+    final storeNames = _storeNames;
+    final presentCategories = _presentCategories(_filteredByStore());
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            for (final category in categories) ...[
-              Tooltip(
-                message: category.label,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => _scrollToSection(category),
-                  child: CircleAvatar(
-                    radius: 16,
-                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    child: Icon(_categoryIcon(category), size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            Text('Filters', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Text(
+              '$priorityCount priority, $excludedCount excluded',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            if (storeNames.length > 1) ...[
+              const SizedBox(height: 16),
+              Text('Store', style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('All'),
+                    selected: _storeFilter == null,
+                    onSelected: (_) {
+                      setState(() => _storeFilter = null);
+                      setModalState(() {});
+                    },
                   ),
-                ),
+                  for (final name in storeNames)
+                    ChoiceChip(
+                      label: Text(name),
+                      selected: _storeFilter == name,
+                      onSelected: (_) {
+                        setState(() => _storeFilter = name);
+                        setModalState(() {});
+                      },
+                    ),
+                ],
               ),
-              const SizedBox(width: 8),
+            ],
+            if (presentCategories.length > 1) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Jump to category',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              for (final category in presentCategories)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(_categoryIcon(category)),
+                  title: Text(category.label),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    _scrollToSection(category);
+                  },
+                ),
             ],
           ],
         ),
@@ -905,65 +991,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
       child: Text(
         'COVER',
         style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber.shade900),
-      ),
-    );
-  }
-
-  // View-mode chips and the preview/regenerate action share one compact row.
-  // The regenerate action is deliberately a small outlined button here -
-  // not a big filled pill like "Fetch deals" or the full-plan CTA - so it
-  // reads as a secondary action and isn't easy to mistake for the primary
-  // "generate full plan" button in the footer.
-  Widget _buildStep2Bar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: _preview == null
-                ? const SizedBox.shrink()
-                // Wrap instead of a Row: at narrow widths the chips together
-                // can outgrow the line, and Wrap drops the overflow to a new
-                // line instead of overflowing or needing a scroll gesture.
-                : Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('Deal items'),
-                        selected: _viewMode == _ViewMode.deals,
-                        onSelected: (_) => setState(() => _viewMode = _ViewMode.deals),
-                      ),
-                      ChoiceChip(
-                        label: const Text('Meal plan preview'),
-                        selected: _viewMode == _ViewMode.preview,
-                        onSelected: (_) => setState(() => _viewMode = _ViewMode.preview),
-                      ),
-                      if (_fullPlan != null)
-                        ChoiceChip(
-                          label: const Text('Full meal plan'),
-                          selected: _viewMode == _ViewMode.full,
-                          onSelected: (_) => setState(() => _viewMode = _ViewMode.full),
-                        ),
-                    ],
-                  ),
-          ),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _generatePreview,
-            icon: _isPreviewLoading
-                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.restaurant_menu, size: 16),
-            label: Text(
-              _isPreviewLoading ? 'Generating…' : (_preview == null ? 'Preview meal plan' : 'Regenerate preview'),
-              style: const TextStyle(fontSize: 13),
-            ),
-            style: OutlinedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            ),
-          ),
-        ],
       ),
     );
   }

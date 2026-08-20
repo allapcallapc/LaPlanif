@@ -22,6 +22,11 @@ import '../widgets/rate_limit_dialog.dart';
 /// Which of Step 2's results the screen is currently showing.
 enum _ViewMode { deals, preview, full }
 
+/// Which top-level step the screen is currently showing: the dedicated
+/// "fetch deals" step, or the browse step (deals/preview/full plan) reached
+/// once there's something to browse.
+enum _Phase { fetch, browse }
+
 /// Opens a recipe link. Injectable so tests can avoid driving a real
 /// platform URL launcher.
 typedef RecipeLinkLauncher = Future<void> Function(Uri uri);
@@ -114,6 +119,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   MealPlanConfig? _mealPlanConfig;
   bool _isPreviewLoading = false;
   _ViewMode _viewMode = _ViewMode.deals;
+  _Phase _phase = _Phase.fetch;
   final Set<int> _regeneratingSlots = {};
   MealPlanFull? _fullPlan;
   bool _isGeneratingFullPlan = false;
@@ -151,6 +157,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     setState(() {
       _items = withPreferences;
       _hasRun = true;
+      _phase = _Phase.browse;
       if (apiKey.isNotEmpty) {
         _apiKey = apiKey;
         _models = models;
@@ -215,6 +222,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _items = withPreferences;
       _isRunning = false;
       _hasRun = true;
+      _phase = _Phase.browse;
     });
   }
 
@@ -557,40 +565,74 @@ class _PlanifScreenState extends State<PlanifScreen> {
     // bottom of the preview list - it stays reachable without scrolling and
     // sits far enough from the (deliberately smaller/outlined) "Regenerate
     // preview" button up top that the two are no longer easy to mix up.
-    final showGenerateFullPlanBar = _viewMode == _ViewMode.preview && _preview != null;
+    final showGenerateFullPlanBar =
+        _phase == _Phase.browse && _viewMode == _ViewMode.preview && _preview != null;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Planif'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Center(
-              child: FilledButton.icon(
+        // Only the browse step gets a back arrow: fetching is its own step,
+        // reached only through that step's own "Fetch deals" button, and
+        // left only by explicitly stepping back to it - not by a button that
+        // sits permanently in the header regardless of what's on screen.
+        leading: _phase == _Phase.browse
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                tooltip: 'Back to fetch deals',
+                onPressed: () => setState(() => _phase = _Phase.fetch),
+              )
+            : null,
+      ),
+      body: _phase == _Phase.fetch ? _buildFetchStep() : _buildBrowseStep(),
+      bottomNavigationBar: showGenerateFullPlanBar ? _buildGenerateFullPlanBar() : null,
+    );
+  }
+
+  // Step 1: fetching deals is its own screen, not a button sharing space
+  // with everything else - so there's nothing above it competing for room,
+  // and nothing to fetch again until the user explicitly steps back to it.
+  Widget _buildFetchStep() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_states.isNotEmpty && _isRunning)
+                ..._states.map(_buildStatusRow)
+              else ...[
+                Icon(Icons.storefront_outlined, size: 40, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(height: 12),
+                const Text('Press "Fetch deals" to load flyer items.', textAlign: TextAlign.center),
+              ],
+              const SizedBox(height: 20),
+              FilledButton.icon(
                 onPressed: _isRunning ? null : _fetchAll,
                 icon: _isRunning
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.refresh, size: 18),
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.refresh),
                 label: Text(_isRunning ? 'Fetching…' : 'Fetch deals'),
-                style: FilledButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                ),
+                style: FilledButton.styleFrom(minimumSize: const Size(220, 48)),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
-      body: Column(
-        children: [
-          if (_states.isNotEmpty) ...[
-            if (_hasRun) _buildStatusSummary() else ..._states.map(_buildStatusRow),
-            const Divider(height: 1),
-          ],
-          if (_hasRun && _items.isNotEmpty) ...[_buildStep2Bar(), const Divider(height: 1)],
-          Expanded(child: _buildBody()),
-        ],
-      ),
-      bottomNavigationBar: showGenerateFullPlanBar ? _buildGenerateFullPlanBar() : null,
+    );
+  }
+
+  // Step 2: browsing what was fetched (deals/preview/full plan). Reached
+  // once there's something to browse, either from a completed fetch or from
+  // cache - _hasRun is always true here, so unlike the old single-screen
+  // layout this no longer needs to branch on it.
+  Widget _buildBrowseStep() {
+    return Column(
+      children: [
+        if (_states.isNotEmpty) ...[_buildStatusSummary(), const Divider(height: 1)],
+        if (_items.isNotEmpty) ...[_buildStep2Bar(), const Divider(height: 1)],
+        Expanded(child: _buildBody()),
+      ],
     );
   }
 
@@ -723,33 +765,44 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   // Preference summary and store filter share one compact row instead of
   // two stacked ones, so switching stores/categories doesn't cost as much
-  // vertical space before the actual deal list starts.
+  // vertical space before the actual deal list starts. The store chips
+  // scroll horizontally rather than wrapping, so this row is always exactly
+  // one line tall regardless of how many stores there are.
   Widget _buildFilterBar(List<String> storeNames) {
     final priorityCount = _items.where((item) => item.preference == DealPreference.priority).length;
     final excludedCount = _items.where((item) => item.preference == DealPreference.excluded).length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 8,
-        runSpacing: 8,
+      child: Row(
         children: [
           Text(
             '$priorityCount priority, $excludedCount excluded',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
           if (storeNames.length > 1) ...[
-            ChoiceChip(
-              label: const Text('All'),
-              selected: _storeFilter == null,
-              onSelected: (_) => setState(() => _storeFilter = null),
-            ),
-            for (final name in storeNames)
-              ChoiceChip(
-                label: Text(name),
-                selected: _storeFilter == name,
-                onSelected: (_) => setState(() => _storeFilter = name),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('All'),
+                      selected: _storeFilter == null,
+                      onSelected: (_) => setState(() => _storeFilter = null),
+                    ),
+                    for (final name in storeNames) ...[
+                      const SizedBox(width: 8),
+                      ChoiceChip(
+                        label: Text(name),
+                        selected: _storeFilter == name,
+                        onSelected: (_) => setState(() => _storeFilter = name),
+                      ),
+                    ],
+                  ],
+                ),
               ),
+            ),
           ],
         ],
       ),

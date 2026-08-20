@@ -248,6 +248,63 @@ void main() {
     expect(find.textContaining('Press "Fetch'), findsOneWidget);
   });
 
+  testWidgets('steps forward to browse once deals are fetched, and back to fetch on demand', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Poulet',
+          price: '3.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // On the fetch step, there's nothing to step back from.
+    expect(find.byTooltip('Back to fetch deals'), findsNothing);
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    // A completed fetch lands on the browse step automatically - the deal
+    // is visible, and the fetch step's own button is off screen.
+    expect(find.text('Poulet'), findsOneWidget);
+    expect(find.text('Fetch deals'), findsNothing);
+    expect(find.byTooltip('Back to fetch deals'), findsOneWidget);
+
+    // Stepping back returns to the fetch step - browsing controls are gone,
+    // and "Fetch deals" is there to reload with.
+    await tester.tap(find.byTooltip('Back to fetch deals'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Poulet'), findsNothing);
+    expect(find.text('Fetch deals'), findsOneWidget);
+    expect(find.byTooltip('Back to fetch deals'), findsNothing);
+  });
+
   testWidgets('groups results into category sections with a cover-page marker', (tester) async {
     // Tall enough that every section/row is mounted without needing to
     // scroll - find.* only sees widgets that are actually built.
@@ -413,9 +470,12 @@ void main() {
       expect(find.text('Poulet'), findsOneWidget);
       expect(find.text('0 priority, 1 excluded'), findsOneWidget);
 
-      // Explicitly reloading (tapping "Fetch deals" again) is a deliberate
-      // reset: it clears the persisted priority/excluded selections rather
-      // than re-applying them to the freshly fetched items.
+      // Explicitly reloading (stepping back to the fetch step, then tapping
+      // "Fetch deals" again) is a deliberate reset: it clears the persisted
+      // priority/excluded selections rather than re-applying them to the
+      // freshly fetched items.
+      await tester.tap(find.byTooltip('Back to fetch deals'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Fetch deals'));
       await tester.pumpAndSettle();
       expect(find.text('0 priority, 0 excluded'), findsOneWidget);
@@ -979,7 +1039,9 @@ void main() {
     expect(find.text('Fromage'), findsOneWidget);
   });
 
-  testWidgets('shows a retrying chip and disables Fetch deals while a single store retries', (tester) async {
+  testWidgets('shows a retrying chip, and disables Fetch deals on the fetch step, while a single store retries', (
+    tester,
+  ) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -1023,7 +1085,19 @@ void main() {
     await tester.pump();
 
     expect(find.text('IGA · retrying…'), findsOneWidget);
-    expect(find.text('Fetching…'), findsOneWidget);
+
+    // The retry is a browse-step action (retrying one already-fetched
+    // store), so "Fetch deals" itself isn't on screen right now - it only
+    // lives on the fetch step. Stepping back to that step while the retry
+    // is still in flight should still show it disabled, since a second
+    // concurrent fetch is guarded against regardless of which step exposes
+    // the button.
+    await tester.tap(find.byTooltip('Back to fetch deals'));
+    await tester.pump();
+
+    // "Fetching…" now shows twice: once as the still-in-progress IGA row's
+    // status, once as the disabled Fetch deals button's own label.
+    expect(find.text('Fetching…'), findsNWidgets(2));
     final fetchButton = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Fetching…'));
     expect(fetchButton.onPressed, isNull);
 
@@ -1039,8 +1113,13 @@ void main() {
     ]);
     await tester.pumpAndSettle();
 
-    expect(find.text('IGA · 1'), findsOneWidget);
-    expect(find.text('Poulet'), findsOneWidget);
+    // The retry finishing re-enables the fetch step's button - the guard
+    // was only ever about a concurrent fetch, not about staying on this
+    // step. (The retried item itself landing back in the browse step's
+    // results is covered by "retries a single failed store without
+    // re-fetching the others".)
+    expect(find.text('Fetch deals'), findsOneWidget);
+    expect(find.text('Fetching…'), findsNothing);
   });
 
   testWidgets('splits a store with more pages than maxPagesPerCall into multiple extraction calls', (tester) async {

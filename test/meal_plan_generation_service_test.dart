@@ -376,6 +376,16 @@ void main() {
     expect(() => MealPlanGenerationService(groundingModels: const []), throwsA(isA<AssertionError>()));
   });
 
+  test('throws ArgumentError when an empty groundingModels list is passed per-call, bypassing the constructor assert', () async {
+    final client = MockClient((request) async => throw Exception('should never be called - groundingModels is empty'));
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+    await expectLater(
+      service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items, groundingModels: const []),
+      throwsA(isA<ArgumentError>()),
+    );
+  });
+
   test('throws and logs an extraction-phase failure on HTTP 429 after a successful research call', () async {
     var callCount = 0;
     final client = MockClient((request) async {

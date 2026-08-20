@@ -12,6 +12,7 @@ import 'package:laplanif/models/store_config.dart';
 import 'package:laplanif/screens/planif_screen.dart';
 import 'package:laplanif/services/ai_config_repository.dart';
 import 'package:laplanif/services/ai_deal_extraction_service.dart';
+import 'package:laplanif/services/deal_cache_repository.dart';
 import 'package:laplanif/services/deal_preference_repository.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
 import 'package:laplanif/services/meal_plan_config_repository.dart';
@@ -372,6 +373,45 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('0 priority, 0 excluded'), findsOneWidget);
       expect(await preferenceRepository.loadAll(), isEmpty);
+    },
+  );
+
+  testWidgets(
+    'shows a reminder instead of silently doing nothing when previewing cached items with no API key set',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+      // No API key saved this time - the cache was populated by an earlier
+      // session/browser profile that did have one configured.
+      final cacheRepository = DealCacheRepository();
+      await cacheRepository.save(const [
+        DealItem(
+          name: 'Poulet',
+          price: '3.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(repository: repository, cacheRepository: cacheRepository),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The cached item shows up immediately, with Step 2's preview button,
+      // even though no API key is configured for this session.
+      expect(find.text('Poulet'), findsOneWidget);
+      expect(find.text('Preview meal plan'), findsOneWidget);
+
+      await tester.tap(find.text('Preview meal plan'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Set your Google AI API key in Config first.'), findsOneWidget);
     },
   );
 

@@ -703,6 +703,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
         if (presentCategories.length > 1) _buildCategoryJumpRow(presentCategories),
         Expanded(
           child: ListView(
+            // A generous cacheExtent keeps every section built up front (not
+            // just what's near the viewport) - otherwise a category jump chip
+            // for a section far below the fold would find no context to
+            // scroll to, since Flutter's default sliver caching only builds
+            // children close to what's currently visible.
+            cacheExtent: 10000,
             children: [
               for (final category in presentCategories) ...[
                 _buildSectionHeader(category),

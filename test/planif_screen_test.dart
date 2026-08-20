@@ -618,6 +618,80 @@ void main() {
     expect(find.text('Fromage'), findsOneWidget);
   });
 
+  testWidgets('tapping a category quick-jump chip scrolls the deals list to that section', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+
+    // Enough protein/vegetable items to push "Carbs" well below the default
+    // test viewport, so a real jump reads as different from doing nothing.
+    final extraction = _FakeExtractionService({
+      'IGA': () async => [
+        for (var i = 0; i < 10; i++)
+          DealItem(
+            name: 'Protein item $i',
+            price: '3.99\$',
+            unit: '',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 2,
+          ),
+        for (var i = 0; i < 10; i++)
+          DealItem(
+            name: 'Veg item $i',
+            price: '2.49\$',
+            unit: '',
+            category: DealCategory.vegetables,
+            storeName: 'IGA',
+            pageIndex: 2,
+          ),
+        const DealItem(
+          name: 'Pain baguette',
+          price: '1.99\$',
+          unit: '',
+          category: DealCategory.carbs,
+          storeName: 'IGA',
+          pageIndex: 2,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    // "Carbs" is built (it's within the list's cacheExtent) but not actually
+    // painted on screen yet, so skipOffstage: false is needed to locate it
+    // for this before/after position comparison.
+    final dyBefore = tester.getTopLeft(find.text('Carbs', skipOffstage: false)).dy;
+
+    await tester.tap(find.byIcon(Icons.bakery_dining_outlined));
+    await tester.pumpAndSettle();
+
+    final dyAfter = tester.getTopLeft(find.text('Carbs', skipOffstage: false)).dy;
+    // The jump scrolled "Carbs" much closer to the top instead of leaving it
+    // wherever it started - if the tap did nothing, dyAfter would equal
+    // dyBefore.
+    expect(dyAfter, lessThan(dyBefore - 100));
+  });
+
   testWidgets('does not show a filter row when only one retailer has results', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);

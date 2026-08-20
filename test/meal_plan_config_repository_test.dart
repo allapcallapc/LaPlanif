@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -20,6 +22,9 @@ void main() {
       (MealType.supper, 'meat', 2),
       (MealType.supper, 'tofu', 4),
     ]);
+    expect(config.dietaryNotes, contains('No more than 2 days of fish per week'));
+    expect(config.dietaryNotes, contains('Prefer lunches that can be frozen'));
+    expect(config.dietaryNotes, contains('No red meat'));
   });
 
   test('mealsPerWeek is the sum of the slot counts', () async {
@@ -39,6 +44,23 @@ void main() {
     expect(config.mealSlots.length, 3);
   });
 
+  test('defaults dietaryNotes to empty when loading a config saved before the field existed', () async {
+    SharedPreferences.setMockInitialValues({
+      'meal_plan_config': jsonEncode({
+        'portionsPerMeal': 3,
+        'diversityWindowDays': 28,
+        'mealSlots': [
+          {'id': 'a', 'mealType': 'lunch', 'protein': 'meat', 'count': 1},
+        ],
+      }),
+    });
+
+    final repo = MealPlanConfigRepository();
+    final config = await repo.load();
+
+    expect(config.dietaryNotes, '');
+  });
+
   test('persists changes between loads', () async {
     final repo = MealPlanConfigRepository();
     final config = await repo.load();
@@ -50,6 +72,7 @@ void main() {
         ...config.mealSlots,
         const MealSlot(id: 'extra-fish', mealType: MealType.lunch, protein: 'fish', count: 1),
       ],
+      dietaryNotes: 'No shellfish.',
     );
     await repo.save(updated);
 
@@ -58,5 +81,6 @@ void main() {
     expect(reloaded.diversityWindowDays, 21);
     expect(reloaded.mealSlots.map((s) => s.protein), contains('fish'));
     expect(reloaded.mealsPerWeek, 12);
+    expect(reloaded.dietaryNotes, 'No shellfish.');
   });
 }

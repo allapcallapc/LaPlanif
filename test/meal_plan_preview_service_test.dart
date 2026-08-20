@@ -182,6 +182,60 @@ void main() {
     );
   });
 
+  test('includes non-empty dietaryNotes as standing planning instructions', () async {
+    final client = MockClient((request) async {
+      expect(request.body, contains('Standing planning instructions'));
+      expect(request.body, contains('No more than 2 days of fish per week.'));
+
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'note',
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+      dietaryNotes: 'No more than 2 days of fish per week.',
+    );
+  });
+
+  test('omits the standing-instructions section when dietaryNotes is empty', () async {
+    final client = MockClient((request) async {
+      expect(request.body, isNot(contains('Standing planning instructions')));
+
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'note',
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+    );
+  });
+
   test('omitting alreadyUsedAnchors sends an empty list, not a missing section', () async {
     final client = MockClient((request) async {
       expect(request.body, contains('already used as anchors elsewhere'));

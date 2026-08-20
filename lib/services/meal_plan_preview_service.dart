@@ -50,6 +50,7 @@ class MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
     String? model,
   }) async {
     final effectiveModel = model ?? this.model;
@@ -61,6 +62,7 @@ class MealPlanPreviewService {
         portionsPerMeal: portionsPerMeal,
         items: items,
         alreadyUsedAnchors: alreadyUsedAnchors,
+        dietaryNotes: dietaryNotes,
         model: effectiveModel,
       );
     } finally {
@@ -74,11 +76,12 @@ class MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     required List<AnchorItem> alreadyUsedAnchors,
+    required String dietaryNotes,
     required String model,
   }) async {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
-    final body = jsonEncode(_buildRequestBody(mealSlots, portionsPerMeal, items, alreadyUsedAnchors));
+    final body = jsonEncode(_buildRequestBody(mealSlots, portionsPerMeal, items, alreadyUsedAnchors, dietaryNotes));
 
     final http.Response response;
     try {
@@ -151,6 +154,7 @@ class MealPlanPreviewService {
     int portionsPerMeal,
     List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors,
+    String dietaryNotes,
   ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
     final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
@@ -169,6 +173,7 @@ class MealPlanPreviewService {
 
     final userText =
         'Meal slots to propose anchors for, in order:\n$slotsText\n\n'
+        '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - follow these across every slot:\n${dietaryNotes.trim()}\n\n'}'
         'Priority deal items (prefer these first):\n${_itemsText(priority)}\n\n'
         'Excluded deal items (never propose these):\n${_itemsText(excluded)}\n\n'
         'All other available deal items:\n${_itemsText(available)}\n\n'
@@ -284,6 +289,8 @@ Each meal slot represents ONE recipe, batch-cooked once, that must yield enough 
 For each meal slot, propose the anchor item(s) that define this slot's big-batch recipe: always the main protein item, plus a vegetable or carb side when one naturally fits that direction (e.g. rice alongside a stir-fry, potatoes alongside a roast) or when a priority item in that category is available and fits - don't force a vegetable/carb pick just to fill a slot when nothing fits well. Prioritize items marked as priority over other available deal items whenever one reasonably fits the slot, across every category (protein, vegetables, carbs) - always try to work a priority item into the anchor set when possible, not just for the protein. Items marked [COVER DEAL] are the flyer's featured best deals - prefer one when it reasonably fits a slot, especially for the vegetable/carb side. Draw from priority items first, then the other available deal items. Never propose an excluded item. Size the selection conceptually for a big-batch recipe covering the slot's total portions needed - do not invent a recipe name or instructions yet.
 
 No ingredient may anchor more than one slot in this plan, even a priority item that would otherwise fit several slots well - each slot's anchors must be entirely distinct from every other slot's. This means the same product, not just the same exact listing: don't anchor one slot on broccoli from one store and another slot on broccoli from a different store (or a differently-worded listing of the same thing) - that still counts as reusing the same ingredient. When multiple slots are given in the same call, check your own choices for cross-slot duplicates (by ingredient, not just by exact name/store) as you go. A list of deal items already used as anchors elsewhere in this plan may also be given below - never reuse any of those either, by the same ingredient-level rule, and pick a different item for any slot that would otherwise repeat one.
+
+Standing planning instructions may be given below the meal slots - these are hard constraints from the user that apply across every slot in this plan, and take priority over item preference (priority/cover-deal) when the two conflict. Follow them exactly as written.
 
 Also write a one-line note describing the direction for that slot's recipe (e.g. "Big-batch chicken thigh stir-fry with rice, portioned across the week.").
 

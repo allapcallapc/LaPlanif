@@ -39,27 +39,45 @@ class MealSlot {
 }
 
 class MealPlanConfig {
-  const MealPlanConfig({required this.portionsPerMeal, required this.diversityWindowDays, required this.mealSlots});
+  const MealPlanConfig({
+    required this.portionsPerMeal,
+    required this.diversityWindowDays,
+    required this.mealSlots,
+    this.dietaryNotes = '',
+  });
 
   final int portionsPerMeal;
   final int diversityWindowDays;
   final List<MealSlot> mealSlots;
 
+  /// Free-form standing instructions applied to every future meal plan
+  /// generation (e.g. "no more than 2 days of fish per week", "no red
+  /// meat") - sent to the AI alongside the meal slots rather than encoded
+  /// as structured rules, so the user can phrase new constraints without a
+  /// code change.
+  final String dietaryNotes;
+
   /// Total planned meals per week, derived from the slot counts rather than
   /// stored separately so it can never drift out of sync with them.
   int get mealsPerWeek => mealSlots.fold(0, (sum, slot) => sum + slot.count);
 
-  MealPlanConfig copyWith({int? portionsPerMeal, int? diversityWindowDays, List<MealSlot>? mealSlots}) =>
-      MealPlanConfig(
-        portionsPerMeal: portionsPerMeal ?? this.portionsPerMeal,
-        diversityWindowDays: diversityWindowDays ?? this.diversityWindowDays,
-        mealSlots: mealSlots ?? this.mealSlots,
-      );
+  MealPlanConfig copyWith({
+    int? portionsPerMeal,
+    int? diversityWindowDays,
+    List<MealSlot>? mealSlots,
+    String? dietaryNotes,
+  }) => MealPlanConfig(
+    portionsPerMeal: portionsPerMeal ?? this.portionsPerMeal,
+    diversityWindowDays: diversityWindowDays ?? this.diversityWindowDays,
+    mealSlots: mealSlots ?? this.mealSlots,
+    dietaryNotes: dietaryNotes ?? this.dietaryNotes,
+  );
 
   Map<String, dynamic> toJson() => {
     'portionsPerMeal': portionsPerMeal,
     'diversityWindowDays': diversityWindowDays,
     'mealSlots': mealSlots.map((s) => s.toJson()).toList(),
+    'dietaryNotes': dietaryNotes,
   };
 
   factory MealPlanConfig.fromJson(Map<String, dynamic> json) => MealPlanConfig(
@@ -68,5 +86,8 @@ class MealPlanConfig {
     mealSlots: (json['mealSlots'] as List<dynamic>)
         .map((e) => MealSlot.fromJson(e as Map<String, dynamic>))
         .toList(),
+    // Missing from configs saved before this field existed - default to no
+    // standing instructions rather than failing to parse.
+    dietaryNotes: json['dietaryNotes'] as String? ?? '',
   );
 }

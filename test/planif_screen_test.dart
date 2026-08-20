@@ -206,6 +206,7 @@ class _FakeGenerationService extends MealPlanGenerationService {
     required List<DealItem> items,
     String dietaryNotes = '',
     String? model,
+    List<String>? groundingModels,
   }) {
     return _handler(slots, items);
   }
@@ -226,6 +227,7 @@ class _FakeModelAwareGenerationService extends MealPlanGenerationService {
     required List<DealItem> items,
     String dietaryNotes = '',
     String? model,
+    List<String>? groundingModels,
   }) {
     return _byModel(model!);
   }

@@ -27,31 +27,41 @@ import 'model_fallback_controller.dart';
 ///    for every model family (newer/preview families in particular often
 ///    have none at all on the free tier, failing every grounded call
 ///    outright), so the research step needs its own list of models actually
-///    known to carry a Search grounding allowance.
+///    known to carry a Search grounding allowance. Configurable separately
+///    from the general model list in Config, for exactly that reason.
 /// 2. A structured extraction call (function calling) that converts those
 ///    research notes into the typed component format, without doing any
 ///    search itself - it may only reuse URLs the research call already
 ///    found, never invent new ones. This has no grounding requirement, so it
 ///    uses the caller's chosen [model] like any other call in the app.
 class MealPlanGenerationService {
-  MealPlanGenerationService({http.Client? client, String? model, AiCallLogRepository? logRepository})
-    : model = model ?? AiConfigRepository.defaultModels.first,
-      _client = client ?? http.Client(),
-      _logRepository = logRepository ?? AiCallLogRepository();
+  MealPlanGenerationService({
+    http.Client? client,
+    String? model,
+    List<String>? groundingModels,
+    AiCallLogRepository? logRepository,
+  }) : model = model ?? AiConfigRepository.defaultModels.first,
+       groundingModels = groundingModels ?? AiConfigRepository.defaultGroundingModels,
+       _client = client ?? http.Client(),
+       _logRepository = logRepository ?? AiCallLogRepository(),
+       assert(
+         (groundingModels ?? AiConfigRepository.defaultGroundingModels).isNotEmpty,
+         'groundingModels must not be empty',
+       );
 
   static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
   static const _logStoreName = 'Meal plan generation';
 
-  /// Models to try, in order, for the grounded research call - restricted to
-  /// families confirmed to carry a Search grounding quota, since newer/
-  /// preview model families can have none provisioned at all (every grounded
-  /// call to them fails immediately, no matter how long you wait). Ordered
-  /// newest/most-capable first within that constraint.
-  static const groundingModels = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2-flash-lite', 'gemini-2-flash'];
-
   final http.Client _client;
   final AiCallLogRepository _logRepository;
   final String model;
+
+  /// Models to try, in order, for the grounded research call. Defaults to
+  /// [AiConfigRepository.defaultGroundingModels] when not overridden, and can
+  /// be overridden per call via [generateMealPlan]'s own `groundingModels`
+  /// parameter (e.g. from a value loaded via
+  /// [AiConfigRepository.loadGroundingModels]).
+  final List<String> groundingModels;
 
   Future<MealPlanFull> generateMealPlan({
     required String apiKey,
@@ -59,11 +69,19 @@ class MealPlanGenerationService {
     required List<DealItem> items,
     String dietaryNotes = '',
     String? model,
+    List<String>? groundingModels,
   }) async {
     final effectiveModel = model ?? this.model;
+    final effectiveGroundingModels = groundingModels ?? this.groundingModels;
     final activityId = AiCallActivity.start(storeName: _logStoreName, model: effectiveModel);
     try {
-      final research = await _research(apiKey: apiKey, slots: slots, items: items, dietaryNotes: dietaryNotes);
+      final research = await _research(
+        apiKey: apiKey,
+        slots: slots,
+        items: items,
+        dietaryNotes: dietaryNotes,
+        groundingModels: effectiveGroundingModels,
+      );
       return await _extract(
         apiKey: apiKey,
         slots: slots,
@@ -88,6 +106,7 @@ class MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     required String dietaryNotes,
+    required List<String> groundingModels,
   }) async {
     late RateLimitedException lastRateLimitError;
     for (final groundingModel in groundingModels) {

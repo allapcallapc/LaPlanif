@@ -109,6 +109,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   String? _storeFilter;
   String? _apiKey;
   List<String> _models = [];
+  List<String> _groundingModels = [];
   MealPlanPreview? _preview;
   MealPlanConfig? _mealPlanConfig;
   bool _isPreviewLoading = false;
@@ -134,6 +135,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     // enabled but silently do nothing until an actual fetch runs.
     final apiKey = await widget.aiConfigRepository.loadApiKey();
     final models = apiKey.isEmpty ? <String>[] : await widget.aiConfigRepository.loadModels();
+    final groundingModels = apiKey.isEmpty ? <String>[] : await widget.aiConfigRepository.loadGroundingModels();
     if (!mounted) return;
     // A real fetch that started (and possibly finished) while this cache
     // load was still in flight always wins - applying stale cached data on
@@ -145,6 +147,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       if (apiKey.isNotEmpty) {
         _apiKey = apiKey;
         _models = models;
+        _groundingModels = groundingModels;
       }
     });
   }
@@ -160,6 +163,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     }
 
     final models = await widget.aiConfigRepository.loadModels();
+    final groundingModels = await widget.aiConfigRepository.loadGroundingModels();
     final stores = await widget.repository.load();
     if (!mounted) return;
     setState(() {
@@ -170,6 +174,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _storeFilter = null;
       _apiKey = apiKey;
       _models = models;
+      _groundingModels = groundingModels;
     });
 
     // Fetched one store at a time, not in parallel: every store hits the
@@ -413,6 +418,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
           items: _items,
           dietaryNotes: dietaryNotes,
           model: model,
+          groundingModels: _groundingModels,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
           if (!mounted) return Future.value(RateLimitChoice.retrySame);

@@ -11,6 +11,7 @@ import 'package:laplanif/models/meal_plan_full.dart';
 import 'package:laplanif/models/meal_plan_preview.dart';
 import 'package:laplanif/services/ai_call_activity.dart';
 import 'package:laplanif/services/ai_call_log_repository.dart';
+import 'package:laplanif/services/ai_config_repository.dart';
 import 'package:laplanif/services/meal_plan_generation_service.dart';
 import 'package:laplanif/services/model_fallback_controller.dart';
 
@@ -129,12 +130,12 @@ void main() {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
 
       if (callCount == 1) {
-        // Phase 1: grounded research - tries MealPlanGenerationService.groundingModels
+        // Phase 1: grounded research - tries AiConfigRepository.defaultGroundingModels
         // (a model list confirmed to carry a Search grounding quota), not the
         // caller's chosen model, so it hits the first grounding model.
         expect(
           request.url.toString(),
-          'https://generativelanguage.googleapis.com/v1beta/models/${MealPlanGenerationService.groundingModels.first}:generateContent',
+          'https://generativelanguage.googleapis.com/v1beta/models/${AiConfigRepository.defaultGroundingModels.first}:generateContent',
         );
         final tools = body['tools'] as List;
         expect((tools.single as Map).containsKey('google_search'), isTrue);
@@ -266,10 +267,10 @@ void main() {
     // AiCallLogRepository stores newest first, so the last grounding model
     // tried comes back at index 0 and the first at the end.
     final logs = await logRepository.loadAll();
-    expect(logs.length, MealPlanGenerationService.groundingModels.length);
+    expect(logs.length, AiConfigRepository.defaultGroundingModels.length);
     expect(logs.every((l) => l.storeName == 'Meal plan generation (research)'), isTrue);
     expect(logs.every((l) => l.success == false), isTrue);
-    expect(logs.map((l) => l.model).toList(), MealPlanGenerationService.groundingModels.reversed.toList());
+    expect(logs.map((l) => l.model).toList(), AiConfigRepository.defaultGroundingModels.reversed.toList());
   });
 
   test('falls through to the next grounding model when an earlier one is rate limited', () async {
@@ -277,8 +278,8 @@ void main() {
     final client = MockClient((request) async {
       final model = request.url.pathSegments.last.split(':').first;
       attemptedModels.add(model);
-      if (model == MealPlanGenerationService.groundingModels.first) return http.Response('', 429);
-      if (MealPlanGenerationService.groundingModels.contains(model)) {
+      if (model == AiConfigRepository.defaultGroundingModels.first) return http.Response('', 429);
+      if (AiConfigRepository.defaultGroundingModels.contains(model)) {
         return _researchResponse(text: 'Verified link found via fallback model.');
       }
       // Extraction call, on whatever model the caller chose.
@@ -299,17 +300,78 @@ void main() {
 
     expect(plan.slots.single.proteinComponent.name, 'Chicken curry');
     expect(attemptedModels, [
-      MealPlanGenerationService.groundingModels.first,
-      MealPlanGenerationService.groundingModels[1],
+      AiConfigRepository.defaultGroundingModels.first,
+      AiConfigRepository.defaultGroundingModels[1],
       'gemini-3.5-flash-lite',
     ]);
 
     final logs = await logRepository.loadAll();
     expect(logs.length, 3);
-    expect(logs[2].model, MealPlanGenerationService.groundingModels.first);
+    expect(logs[2].model, AiConfigRepository.defaultGroundingModels.first);
     expect(logs[2].success, isFalse);
-    expect(logs[1].model, MealPlanGenerationService.groundingModels[1]);
+    expect(logs[1].model, AiConfigRepository.defaultGroundingModels[1]);
     expect(logs[1].success, isTrue);
+  });
+
+  test('uses a custom groundingModels list from the constructor instead of the default', () async {
+    final requestedModels = <String>[];
+    final client = MockClient((request) async {
+      final model = request.url.pathSegments.last.split(':').first;
+      requestedModels.add(model);
+      if (model == 'custom-grounding-model') return _researchResponse(text: 'Verified via custom model.');
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Chicken curry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+          },
+        ],
+      );
+    });
+    final service = MealPlanGenerationService(
+      client: client,
+      logRepository: AiCallLogRepository(),
+      groundingModels: const ['custom-grounding-model'],
+    );
+
+    final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+    expect(plan.slots.single.proteinComponent.name, 'Chicken curry');
+    expect(requestedModels.first, 'custom-grounding-model');
+  });
+
+  test('uses a groundingModels list passed to generateMealPlan, overriding the constructor default', () async {
+    final requestedModels = <String>[];
+    final client = MockClient((request) async {
+      final model = request.url.pathSegments.last.split(':').first;
+      requestedModels.add(model);
+      if (model == 'per-call-grounding-model') return _researchResponse(text: 'Verified via per-call model.');
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Chicken curry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+          },
+        ],
+      );
+    });
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+    final plan = await service.generateMealPlan(
+      apiKey: 'test-key',
+      slots: slots,
+      items: items,
+      groundingModels: const ['per-call-grounding-model'],
+    );
+
+    expect(plan.slots.single.proteinComponent.name, 'Chicken curry');
+    expect(requestedModels.first, 'per-call-grounding-model');
+  });
+
+  test('asserts that groundingModels must not be empty', () {
+    expect(() => MealPlanGenerationService(groundingModels: const []), throwsA(isA<AssertionError>()));
   });
 
   test('throws and logs an extraction-phase failure on HTTP 429 after a successful research call', () async {

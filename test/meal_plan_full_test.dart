@@ -74,6 +74,44 @@ void main() {
     expect(slot.vegetableComponent, vegetable);
   });
 
+  test('MealSlotFull.copyWith replaces each component independently and keeps the rest', () {
+    const protein = MealComponent(type: MealComponentType.link, name: 'Chicken stir-fry', usesWeeklyDeal: true);
+    const carb = MealComponent(type: MealComponentType.coveredByProtein, name: 'Rice', usesWeeklyDeal: false);
+    const vegetable = MealComponent(type: MealComponentType.simpleSide, name: 'Broccoli', usesWeeklyDeal: false);
+    const slot = MealSlotFull(
+      mealType: MealType.lunch,
+      protein: 'meat',
+      count: 5,
+      portionsPerMeal: 3,
+      proteinComponent: protein,
+      carbComponent: carb,
+      vegetableComponent: vegetable,
+    );
+    const newProtein = MealComponent(type: MealComponentType.link, name: 'Pulled pork', usesWeeklyDeal: true);
+    const newCarb = MealComponent(type: MealComponentType.simpleSide, name: 'Buns', usesWeeklyDeal: false);
+    const newVegetable = MealComponent(type: MealComponentType.simpleSide, name: 'Coleslaw', usesWeeklyDeal: false);
+
+    final withNewProtein = slot.copyWith(proteinComponent: newProtein);
+    expect(withNewProtein.proteinComponent, newProtein);
+    expect(withNewProtein.carbComponent, carb);
+    expect(withNewProtein.vegetableComponent, vegetable);
+
+    final withNewCarb = slot.copyWith(carbComponent: newCarb);
+    expect(withNewCarb.proteinComponent, protein);
+    expect(withNewCarb.carbComponent, newCarb);
+    expect(withNewCarb.vegetableComponent, vegetable);
+
+    final withNewVegetable = slot.copyWith(vegetableComponent: newVegetable);
+    expect(withNewVegetable.proteinComponent, protein);
+    expect(withNewVegetable.carbComponent, carb);
+    expect(withNewVegetable.vegetableComponent, newVegetable);
+
+    final unchanged = slot.copyWith();
+    expect(unchanged.proteinComponent, protein);
+    expect(unchanged.carbComponent, carb);
+    expect(unchanged.vegetableComponent, vegetable);
+  });
+
   test('Ingredient round-trips through JSON', () {
     final ingredient = Ingredient(name: 'chicken thighs', amount: '1.5 kg');
 

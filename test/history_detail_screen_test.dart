@@ -78,6 +78,73 @@ void main() {
     expect(saved.single.slots.single.recipeName, 'Honey Garlic Chicken');
   });
 
+  testWidgets('falls back to a default repository when none is provided', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: HistoryDetailScreen(entry: _entry())));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2026-W34'), findsOneWidget);
+    expect(find.text('General Tao Chicken'), findsOneWidget);
+  });
+
+  testWidgets('adds, edits and removes an anchor item from within the edit-slot dialog', (tester) async {
+    final repository = MealHistoryRepository();
+    await repository.saveWeek(_entry());
+
+    await tester.pumpWidget(
+      MaterialApp(home: HistoryDetailScreen(entry: _entry(), repository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Edit this slot'));
+    await tester.pumpAndSettle();
+
+    // The vegetable component starts with no anchors, so its "Add anchor"
+    // chip is the second of the three sections' chips.
+    await tester.tap(find.text('Add anchor').at(2));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add anchor item'), findsOneWidget);
+
+    // Saving with an empty name is a no-op - the dialog stays open.
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add anchor item'), findsOneWidget);
+
+    await tester.enterText(find.widgetWithText(TextField, 'Item name'), 'Broccoli');
+    await tester.enterText(find.widgetWithText(TextField, 'Store'), 'IGA');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Broccoli · IGA'), findsOneWidget);
+
+    // Editing the newly-added anchor: Cancel leaves it unchanged.
+    await tester.tap(find.text('Broccoli · IGA'));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit anchor item'), findsOneWidget);
+    // Two "Cancel" buttons are in the tree at once - the edit-slot dialog's
+    // own Cancel sits behind this anchor dialog - so target the topmost one.
+    await tester.tap(find.text('Cancel').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Broccoli · IGA'), findsOneWidget);
+
+    // Editing again and saving updates the chip.
+    await tester.tap(find.text('Broccoli · IGA'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Item name'), 'Carrots');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Carrots · IGA'), findsOneWidget);
+    expect(find.text('Broccoli · IGA'), findsNothing);
+
+    // Removing it via the chip's delete icon.
+    final chip = find.ancestor(of: find.text('Carrots · IGA'), matching: find.byType(InputChip));
+    await tester.tap(find.descendant(of: chip, matching: find.byIcon(Icons.close)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Carrots · IGA'), findsNothing);
+  });
+
   testWidgets('deleting a week removes it from the repository and pops', (tester) async {
     final repository = MealHistoryRepository();
     await repository.saveWeek(_entry());

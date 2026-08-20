@@ -63,4 +63,24 @@ void main() {
 
     expect(find.text('General Tao Chicken'), findsOneWidget);
   });
+
+  testWidgets('reloads the list once the detail screen is popped, reflecting a deletion made there', (tester) async {
+    final repository = MealHistoryRepository();
+    await repository.saveWeek(
+      MealHistoryEntry(weekId: '2026-W34', savedAt: DateTime.utc(2026, 8, 20), slots: [_slot('General Tao Chicken')]),
+    );
+
+    await tester.pumpWidget(MaterialApp(home: HistoryScreen(repository: repository)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('2026-W34'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Delete this week'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('No saved weeks yet'), findsOneWidget);
+  });
 }

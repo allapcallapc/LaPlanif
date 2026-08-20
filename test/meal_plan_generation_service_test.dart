@@ -15,7 +15,12 @@ import 'package:laplanif/services/ai_config_repository.dart';
 import 'package:laplanif/services/meal_plan_generation_service.dart';
 import 'package:laplanif/services/model_fallback_controller.dart';
 
-http.Response _researchResponse({int inputTokens = 200, int outputTokens = 150, required String text}) {
+http.Response _researchResponse({
+  int inputTokens = 200,
+  int outputTokens = 150,
+  required String text,
+  List<Map<String, String>> sources = const [],
+}) {
   return http.Response(
     jsonEncode({
       'candidates': [
@@ -26,6 +31,15 @@ http.Response _researchResponse({int inputTokens = 200, int outputTokens = 150, 
             ],
             'role': 'model',
           },
+          if (sources.isNotEmpty)
+            'groundingMetadata': {
+              'groundingChunks': [
+                for (final s in sources)
+                  {
+                    'web': {'uri': s['uri'], 'title': s['title'] ?? ''},
+                  },
+              ],
+            },
         },
       ],
       'usageMetadata': {'promptTokenCount': inputTokens, 'candidatesTokenCount': outputTokens},
@@ -146,6 +160,9 @@ void main() {
               'Slot 1 protein: verified link https://example.com/chicken-stir-fry. '
               'The recipe already includes rice as an ingredient (carb covered). '
               'Vegetable not covered - propose steamed broccoli as a simple side, using the Broccoli deal item at IGA.',
+          sources: const [
+            {'uri': 'https://example.com/chicken-stir-fry', 'title': 'Big-batch chicken thigh stir-fry'},
+          ],
         );
       }
 
@@ -160,6 +177,8 @@ void main() {
       expect((declarations.single as Map)['name'], 'record_meal_components');
       expect(request.body, contains('Research notes from the search step'));
       expect(request.body, contains('already includes rice'));
+      expect(request.body, contains('Verified search source URLs'));
+      expect(request.body, contains('https://example.com/chicken-stir-fry'));
 
       return _extractionResponse(
         slots: [
@@ -229,6 +248,49 @@ void main() {
     expect(logs[1].success, isTrue);
     expect(logs[1].inputTokens, 200);
   });
+
+  test(
+    'downgrades a "link" component to ai_recipe and drops its URL when the URL was not an actual search-grounding source',
+    () async {
+      var callCount = 0;
+      final client = MockClient((request) async {
+        callCount++;
+        if (callCount == 1) {
+          // Only a different URL was actually verified by the search tool -
+          // none matching what the extraction call is about to make up.
+          return _researchResponse(
+            text: 'Slot 1 protein: verified link https://example.com/real-recipe.',
+            sources: const [
+              {'uri': 'https://example.com/real-recipe', 'title': 'Real recipe'},
+            ],
+          );
+        }
+        // Extraction hallucinates a plausible-looking URL that was never in
+        // the verified source list handed to it.
+        return _extractionResponse(
+          slots: [
+            {
+              'protein': _rawComponent(
+                type: 'link',
+                name: 'Easy baked chicken leg quarters',
+                recipeUrl: 'https://www.allrecipes.com/recipe/244795/easy-baked-chicken-leg-quarters',
+              ),
+              'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+              'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+            },
+          ],
+        );
+      });
+
+      final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+      final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+      final protein = plan.slots.single.proteinComponent;
+      expect(protein.type, MealComponentType.aiRecipe);
+      expect(protein.recipeUrl, isNull);
+      expect(protein.name, 'Easy baked chicken leg quarters');
+    },
+  );
 
   test('empty recipeUrl parses to null and blank ingredients/instructions parse to empty lists', () async {
     var callCount = 0;

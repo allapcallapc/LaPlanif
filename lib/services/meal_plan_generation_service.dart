@@ -30,9 +30,13 @@ import 'model_fallback_controller.dart';
 ///    account's working model differs from the one used elsewhere.
 /// 2. A structured extraction call (function calling) that converts those
 ///    research notes into the typed component format, without doing any
-///    search itself - it may only reuse URLs the research call already
-///    found, never invent new ones. This has no grounding requirement, so it
-///    uses the caller's chosen [model] like any other call in the app.
+///    search itself - it may only reuse URLs the research call's search tool
+///    actually returned (`groundingMetadata.groundingChunks`), never invent
+///    new ones. [_parseComponent] enforces that as a hard check on the
+///    result, since the model can still write a plausible-looking but
+///    unverified URL in its free-text notes despite being told not to. This
+///    call has no grounding requirement, so it uses the caller's chosen
+///    [model] like any other call in the app.
 class MealPlanGenerationService {
   MealPlanGenerationService({
     http.Client? client,
@@ -74,7 +78,7 @@ class MealPlanGenerationService {
     final effectiveGroundingModels = groundingModels ?? this.groundingModels;
     final activityId = AiCallActivity.start(storeName: _logStoreName, model: effectiveModel);
     try {
-      final research = await _research(
+      final (research, sources) = await _research(
         apiKey: apiKey,
         slots: slots,
         items: items,
@@ -86,6 +90,7 @@ class MealPlanGenerationService {
         slots: slots,
         items: items,
         research: research,
+        sources: sources,
         model: effectiveModel,
       );
     } finally {
@@ -101,7 +106,7 @@ class MealPlanGenerationService {
   /// rule - falling through is only for capacity/quota problems, not real
   /// errors (e.g. a paid-only model returns HTTP 404 on a free-tier key,
   /// which isn't retried here).
-  Future<String> _research({
+  Future<(String, List<_GroundingSource>)> _research({
     required String apiKey,
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
@@ -131,7 +136,7 @@ class MealPlanGenerationService {
     throw lastRateLimitError;
   }
 
-  Future<String> _researchWithModel({
+  Future<(String, List<_GroundingSource>)> _researchWithModel({
     required String apiKey,
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
@@ -179,11 +184,36 @@ class MealPlanGenerationService {
         inputTokens: (usage?['promptTokenCount'] as num?)?.toInt() ?? 0,
         outputTokens: (usage?['candidatesTokenCount'] as num?)?.toInt() ?? 0,
       );
-      return text;
+      return (text, _groundingSources(decoded));
     } catch (e) {
       await _log(model: model, phase: 'research', success: false, errorMessage: stripExceptionPrefix(e));
       rethrow;
     }
+  }
+
+  /// Pulls the actual search-grounding sources the API attached to the
+  /// research response (`groundingMetadata.groundingChunks[].web`) - the only
+  /// URLs Google's own grounding vouches for as real search hits. The
+  /// research call's free-text notes are written by the model and can
+  /// describe a URL it reconstructed from memory (e.g. a plausible-looking
+  /// `/recipe/244795/...` pattern) rather than one it actually found, so
+  /// those notes alone aren't a reliable source of truth for a working link -
+  /// only this list is, and [_parseComponent] enforces that downstream.
+  List<_GroundingSource> _groundingSources(Map<String, dynamic> decoded) {
+    final candidates = decoded['candidates'] as List<dynamic>?;
+    if (candidates == null || candidates.isEmpty) return const [];
+    final groundingMetadata = (candidates.first as Map<String, dynamic>)['groundingMetadata'] as Map<String, dynamic>?;
+    final chunks = groundingMetadata?['groundingChunks'] as List<dynamic>? ?? const [];
+
+    final sources = <_GroundingSource>[];
+    final seenUris = <String>{};
+    for (final chunk in chunks) {
+      final web = (chunk as Map<String, dynamic>?)?['web'] as Map<String, dynamic>?;
+      final uri = (web?['uri'] as String?)?.trim();
+      if (uri == null || uri.isEmpty || !seenUris.add(uri)) continue;
+      sources.add(_GroundingSource(uri: uri, title: (web?['title'] as String? ?? '').trim()));
+    }
+    return sources;
   }
 
   // --- Phase 2: structured extraction ----------------------------------
@@ -193,13 +223,18 @@ class MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     required String research,
+    required List<_GroundingSource> sources,
     required String model,
   }) async {
     final userText =
         '${_slotsUserText(slots, items, '')}\n\n'
-        'Research notes from the search step - the only source of truth for real recipe URLs. '
-        'Never invent or guess a URL that does not appear verbatim below; if a component has no '
-        'verified URL in these notes, use type ai_recipe or simple_side instead:\n$research';
+        'Research notes from the search step, for context on which recipe fits which slot:\n$research\n\n'
+        'Verified search source URLs - the ONLY URLs you may ever use as a recipeUrl for type "link". '
+        'These are the actual links Google Search returned, not the research notes\' prose. Match each '
+        'one to the recipe it describes (by title) and copy it verbatim, character-for-character; never '
+        'edit, shorten, "clean up", or reconstruct a URL, and never use any URL - however plausible - that '
+        'is not in this list. If a component has no matching entry here, use type ai_recipe or '
+        'simple_side instead:\n${_sourcesText(sources)}';
 
     final body = jsonEncode({
       'systemInstruction': {
@@ -227,7 +262,8 @@ class MealPlanGenerationService {
 
     final decoded = await _post(apiKey: apiKey, model: model, body: body, phase: 'extraction');
     try {
-      final plan = _parseFull(decoded, slots);
+      final verifiedUrls = sources.map((s) => s.uri).toSet();
+      final plan = _parseFull(decoded, slots, verifiedUrls);
       final usage = decoded['usageMetadata'] as Map<String, dynamic>?;
       await _log(
         model: model,
@@ -348,6 +384,11 @@ class MealPlanGenerationService {
         'All other available deal items:\n${_itemsText(available)}';
   }
 
+  String _sourcesText(List<_GroundingSource> sources) {
+    if (sources.isEmpty) return '(none - no search sources were returned; do not use type "link" for any component)';
+    return sources.map((s) => '- ${s.uri}${s.title.isEmpty ? '' : ' (${s.title})'}').join('\n');
+  }
+
   String _itemsText(List<DealItem> list) {
     if (list.isEmpty) return '(none)';
     return list
@@ -361,7 +402,7 @@ class MealPlanGenerationService {
 
   // --- Response parsing -----------------------------------------------
 
-  MealPlanFull _parseFull(Map<String, dynamic> decoded, List<MealSlotPreview> slots) {
+  MealPlanFull _parseFull(Map<String, dynamic> decoded, List<MealSlotPreview> slots, Set<String> verifiedUrls) {
     final (content, reasonSuffix) = _firstCandidateContent(decoded);
     final parts = content['parts'] as List<dynamic>?;
     if (parts == null) throw Exception('no content in response$reasonSuffix');
@@ -392,20 +433,34 @@ class MealPlanGenerationService {
             protein: slots[i].protein,
             count: slots[i].count,
             portionsPerMeal: slots[i].portionsPerMeal,
-            proteinComponent: _parseComponent((rawSlots[i] as Map<String, dynamic>)['protein'] as Map<String, dynamic>),
-            carbComponent: _parseComponent((rawSlots[i] as Map<String, dynamic>)['carb'] as Map<String, dynamic>),
+            proteinComponent: _parseComponent(
+              (rawSlots[i] as Map<String, dynamic>)['protein'] as Map<String, dynamic>,
+              verifiedUrls,
+            ),
+            carbComponent: _parseComponent((rawSlots[i] as Map<String, dynamic>)['carb'] as Map<String, dynamic>, verifiedUrls),
             vegetableComponent: _parseComponent(
               (rawSlots[i] as Map<String, dynamic>)['vegetable'] as Map<String, dynamic>,
+              verifiedUrls,
             ),
           ),
       ],
     );
   }
 
-  MealComponent _parseComponent(Map<String, dynamic> raw) {
-    final rawUrl = (raw['recipeUrl'] as String?)?.trim() ?? '';
+  MealComponent _parseComponent(Map<String, dynamic> raw, Set<String> verifiedUrls) {
+    var type = MealComponentType.fromValue(raw['type'] as String);
+    var rawUrl = (raw['recipeUrl'] as String?)?.trim() ?? '';
+    // Hard safety net beneath the extraction prompt's instructions: a
+    // recipeUrl that doesn't match a search-grounding source verbatim was
+    // not actually verified (typically the model reconstructing a
+    // plausible-looking URL from memory), so it can't be trusted to
+    // resolve - drop it rather than hand the user a dead link.
+    if (rawUrl.isNotEmpty && !verifiedUrls.contains(rawUrl)) {
+      rawUrl = '';
+      if (type == MealComponentType.link) type = MealComponentType.aiRecipe;
+    }
     return MealComponent(
-      type: MealComponentType.fromValue(raw['type'] as String),
+      type: type,
       name: (raw['name'] as String).trim(),
       recipeUrl: rawUrl.isEmpty ? null : rawUrl,
       ingredients: (raw['ingredients'] as List<dynamic>? ?? const [])
@@ -444,16 +499,16 @@ Write your findings as clear, per-slot notes covering: the protein recipe name a
 ''';
 
 const _extractionSystemPrompt = '''
-You are converting research notes into a structured meal plan. You are given confirmed meal slots, the week's deal items, and research notes from a prior search step describing candidate protein/carb/vegetable components for each slot, including any verified recipe URLs that were found.
+You are converting research notes into a structured meal plan. You are given confirmed meal slots, the week's deal items, research notes from a prior search step describing candidate protein/carb/vegetable components for each slot, and a separate list of verified search source URLs - the actual links the search tool returned.
 
 Every meal (slot) is composed of exactly 3 components: protein, carb, vegetable. For each slot, in the same order given, record:
 
 - protein: scaled to totalPortionsNeeded, built from the slot's confirmed anchor item(s).
 - carb and vegetable: each either covered_by_protein (when the research notes say the protein recipe already explicitly includes it - reference the same recipeUrl as the protein component in that case), or its own component.
 
-For every component, choose exactly one type: "link" (a real URL - only ever one that appears verbatim in the research notes below, never invented), "ai_recipe" (full ingredients + instructions, used only when the research notes found no verified link), "simple_side" (a short prep note, no full recipe - valid for carb/vegetable, not for protein), or "covered_by_protein" (carb/vegetable only).
+For every component, choose exactly one type: "link" (a real URL, copied verbatim character-for-character from the verified search source URL list - never from the research notes' prose, and never invented or reconstructed), "ai_recipe" (full ingredients + instructions, used only when there is no matching verified source URL), "simple_side" (a short prep note, no full recipe - valid for carb/vegetable, not for protein), or "covered_by_protein" (carb/vegetable only).
 
-Do not invent, guess, or reconstruct a URL that is not present verbatim in the research notes - if the notes report no verified link for a component, use ai_recipe or simple_side instead.
+The research notes tell you WHICH recipe fits each component (by name/description); the verified source URL list is the ONLY place a usable URL may come from. Match the recipe the notes describe to its entry in that list (by title) and copy that entry's URL exactly - do not shorten it, "clean it up", or type it from memory even if you recall what the real URL should look like. If no entry in the list matches, use ai_recipe or simple_side instead - never fall back to a remembered or guessed URL.
 
 Set usesWeeklyDeal and dealItems (name + store, from the deal items given) truthfully for each component, based on whether it draws on one of this week's deal items - most protein components will, carb/vegetable only when the research notes say so.
 
@@ -529,3 +584,14 @@ const _recordMealComponentsTool = {
     },
   ],
 };
+
+/// One search-grounding source the research call's `google_search` tool
+/// actually returned, per `groundingMetadata.groundingChunks[].web`. [uri]
+/// is the only kind of URL the extraction step is allowed to hand back as a
+/// `link` component's recipeUrl - see [MealPlanGenerationService._groundingSources].
+class _GroundingSource {
+  const _GroundingSource({required this.uri, required this.title});
+
+  final String uri;
+  final String title;
+}

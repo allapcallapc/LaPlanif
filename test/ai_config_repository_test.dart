@@ -56,10 +56,10 @@ void main() {
     expect(await repo.loadModels(), AiConfigRepository.defaultModels);
   });
 
-  test('defaults to the built-in grounding-model list, gemini-2.5-flash-lite first, when none is configured', () async {
+  test('defaults the grounding-model list to the same list as the general models, when none is configured', () async {
     final repo = AiConfigRepository();
     expect(await repo.loadGroundingModels(), AiConfigRepository.defaultGroundingModels);
-    expect(AiConfigRepository.defaultGroundingModels.first, 'gemini-2.5-flash-lite');
+    expect(AiConfigRepository.defaultGroundingModels, AiConfigRepository.defaultModels);
   });
 
   test('saves and reloads a trimmed, ordered grounding-model list', () async {

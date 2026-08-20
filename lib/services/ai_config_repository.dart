@@ -23,17 +23,12 @@ class AiConfigRepository {
   ];
 
   /// Used whenever no grounding-model list has been configured yet, for the
-  /// meal-plan generation step's search-grounded recipe lookup. Search
-  /// grounding quota isn't provisioned for every model family - newer/
-  /// preview families can have none at all even on a paid tier, so this is a
-  /// separate, deliberately conservative list rather than [defaultModels]:
-  /// only families confirmed to carry a grounding allowance.
-  static const defaultGroundingModels = [
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-2-flash-lite',
-    'gemini-2-flash',
-  ];
+  /// meal-plan generation step's search-grounded recipe lookup. Defaults to
+  /// the same list as [defaultModels] - grounding support and free-tier
+  /// availability can vary by account, so this exists as a separately
+  /// configurable override for whoever hits a model that doesn't work for
+  /// them, not because any particular family is assumed broken by default.
+  static const defaultGroundingModels = defaultModels;
 
   Future<String> loadApiKey() async {
     final prefs = await SharedPreferences.getInstance();

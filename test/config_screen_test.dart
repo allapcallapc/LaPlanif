@@ -316,25 +316,22 @@ void main() {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);
 
+    // The default grounding-model list is the same as the default model
+    // list, so every entry renders twice: once in each section.
     for (final model in AiConfigRepository.defaultModels) {
-      // gemini-2.5-flash and gemini-2.5-flash-lite appear in both the
-      // default model list and the default grounding-model list below it -
-      // everything else appears only in the model list.
-      final expectedCount = AiConfigRepository.defaultGroundingModels.contains(model) ? 2 : 1;
-      expect(find.text(model), findsNWidgets(expectedCount));
+      expect(find.text(model), findsNWidgets(2));
     }
     expect(AiConfigRepository.defaultModels.first, 'gemini-3.5-flash-lite');
   });
 
-  testWidgets('shows the full default grounding-model list with gemini-2.5-flash-lite first', (tester) async {
+  testWidgets('shows the full default grounding-model list, matching the general model list', (tester) async {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);
 
     for (final model in AiConfigRepository.defaultGroundingModels) {
-      final expectedCount = AiConfigRepository.defaultModels.contains(model) ? 2 : 1;
-      expect(find.text(model), findsNWidgets(expectedCount));
+      expect(find.text(model), findsNWidgets(2));
     }
-    expect(AiConfigRepository.defaultGroundingModels.first, 'gemini-2.5-flash-lite');
+    expect(AiConfigRepository.defaultGroundingModels, AiConfigRepository.defaultModels);
   });
 
   testWidgets('disables removal when only one grounding model is configured', (tester) async {
@@ -373,11 +370,11 @@ void main() {
     final aiConfigRepo = AiConfigRepository();
     await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
-    // gemini-2.5-flash-lite appears in both the general model list and the
+    // gemini-3.5-flash-lite appears in both the general model list and the
     // grounding-model list - .first resolves to the general list's row,
     // .last to the grounding list's row, since the grounding section renders
     // below it.
-    await tester.tap(find.text('gemini-2.5-flash-lite').last);
+    await tester.tap(find.text('gemini-3.5-flash-lite').last);
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextFormField, 'Model id'), 'gemini-grounding-renamed');
     await tester.tap(find.text('Save'));
@@ -447,7 +444,9 @@ void main() {
     final aiConfigRepo = AiConfigRepository();
     await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
-    await tester.tap(find.text('gemini-3.5-flash-lite'));
+    // gemini-3.5-flash-lite also appears in the grounding-model section
+    // below (same default list) - .first is the general Models section's row.
+    await tester.tap(find.text('gemini-3.5-flash-lite').first);
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextFormField, 'Model id'), 'gemini-renamed');
     await tester.tap(find.text('Save'));

@@ -274,14 +274,16 @@ void main() {
   });
 
   test('falls through to the next grounding model when an earlier one is rate limited', () async {
+    // Deliberately distinct from the general model list (which the
+    // extraction call uses), so a collision between the two can't mask a
+    // routing bug in this test.
+    const groundingModels = ['grounding-a', 'grounding-b'];
     final attemptedModels = <String>[];
     final client = MockClient((request) async {
       final model = request.url.pathSegments.last.split(':').first;
       attemptedModels.add(model);
-      if (model == AiConfigRepository.defaultGroundingModels.first) return http.Response('', 429);
-      if (AiConfigRepository.defaultGroundingModels.contains(model)) {
-        return _researchResponse(text: 'Verified link found via fallback model.');
-      }
+      if (model == 'grounding-a') return http.Response('', 429);
+      if (model == 'grounding-b') return _researchResponse(text: 'Verified link found via fallback model.');
       // Extraction call, on whatever model the caller chose.
       return _extractionResponse(
         slots: [
@@ -294,22 +296,22 @@ void main() {
       );
     });
     final logRepository = AiCallLogRepository();
-    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+    final service = MealPlanGenerationService(
+      client: client,
+      logRepository: logRepository,
+      groundingModels: groundingModels,
+    );
 
     final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
 
     expect(plan.slots.single.proteinComponent.name, 'Chicken curry');
-    expect(attemptedModels, [
-      AiConfigRepository.defaultGroundingModels.first,
-      AiConfigRepository.defaultGroundingModels[1],
-      'gemini-3.5-flash-lite',
-    ]);
+    expect(attemptedModels, ['grounding-a', 'grounding-b', 'gemini-3.5-flash-lite']);
 
     final logs = await logRepository.loadAll();
     expect(logs.length, 3);
-    expect(logs[2].model, AiConfigRepository.defaultGroundingModels.first);
+    expect(logs[2].model, 'grounding-a');
     expect(logs[2].success, isFalse);
-    expect(logs[1].model, AiConfigRepository.defaultGroundingModels[1]);
+    expect(logs[1].model, 'grounding-b');
     expect(logs[1].success, isTrue);
   });
 

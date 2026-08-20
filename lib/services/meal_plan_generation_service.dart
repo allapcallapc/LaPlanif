@@ -23,12 +23,11 @@ import 'model_fallback_controller.dart';
 ///    verifies real recipe links for each slot's protein/carb/vegetable, and
 ///    checks whether the protein's recipe already explicitly covers the carb
 ///    and/or vegetable. This tries [groundingModels] in order rather than
-///    the caller's chosen [model] - Search grounding quota isn't provisioned
-///    for every model family (newer/preview families in particular often
-///    have none at all on the free tier, failing every grounded call
-///    outright), so the research step needs its own list of models actually
-///    known to carry a Search grounding allowance. Configurable separately
-///    from the general model list in Config, for exactly that reason.
+///    the caller's chosen [model] - grounding support and free-tier
+///    availability can vary by account (e.g. a model can be paid-tier-only,
+///    unrelated to grounding itself), so the research step has its own,
+///    separately configurable model list in Config, in case a given
+///    account's working model differs from the one used elsewhere.
 /// 2. A structured extraction call (function calling) that converts those
 ///    research notes into the typed component format, without doing any
 ///    search itself - it may only reuse URLs the research call already
@@ -97,10 +96,11 @@ class MealPlanGenerationService {
   // --- Phase 1: grounded research -------------------------------------
 
   /// Tries [groundingModels] in order, falling through to the next one on
-  /// [RateLimitedException] (including "no grounding quota provisioned for
-  /// this model", which the API also reports as HTTP 429). Any other failure
-  /// propagates immediately, same as [ModelFallbackController]'s rule -
-  /// falling through is only for capacity/quota problems, not real errors.
+  /// [RateLimitedException] (HTTP 429 - rate limited or out of quota). Any
+  /// other failure propagates immediately, same as [ModelFallbackController]'s
+  /// rule - falling through is only for capacity/quota problems, not real
+  /// errors (e.g. a paid-only model returns HTTP 404 on a free-tier key,
+  /// which isn't retried here).
   Future<String> _research({
     required String apiKey,
     required List<MealSlotPreview> slots,

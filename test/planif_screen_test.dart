@@ -397,6 +397,12 @@ void main() {
 
     expect(find.text('COVER'), findsOneWidget);
     expect(find.text('2.49\$/lb'), findsOneWidget);
+
+    // The filter sheet's "jump to category" list covers every category
+    // present, including uncategorized - not just the three named ones.
+    await tester.tap(find.byTooltip('Filters'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(ListTile, 'Uncategorized'), findsOneWidget);
   });
 
   testWidgets(

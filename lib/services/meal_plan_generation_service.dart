@@ -22,11 +22,17 @@ import 'model_fallback_controller.dart';
 /// 1. A grounded research call (Google Search tool) that looks up and
 ///    verifies real recipe links for each slot's protein/carb/vegetable, and
 ///    checks whether the protein's recipe already explicitly covers the carb
-///    and/or vegetable.
+///    and/or vegetable. This tries [groundingModels] in order rather than
+///    the caller's chosen [model] - Search grounding quota isn't provisioned
+///    for every model family (newer/preview families in particular often
+///    have none at all on the free tier, failing every grounded call
+///    outright), so the research step needs its own list of models actually
+///    known to carry a Search grounding allowance.
 /// 2. A structured extraction call (function calling) that converts those
 ///    research notes into the typed component format, without doing any
 ///    search itself - it may only reuse URLs the research call already
-///    found, never invent new ones.
+///    found, never invent new ones. This has no grounding requirement, so it
+///    uses the caller's chosen [model] like any other call in the app.
 class MealPlanGenerationService {
   MealPlanGenerationService({http.Client? client, String? model, AiCallLogRepository? logRepository})
     : model = model ?? AiConfigRepository.defaultModels.first,
@@ -35,6 +41,13 @@ class MealPlanGenerationService {
 
   static const _apiBase = 'https://generativelanguage.googleapis.com/v1beta/models';
   static const _logStoreName = 'Meal plan generation';
+
+  /// Models to try, in order, for the grounded research call - restricted to
+  /// families confirmed to carry a Search grounding quota, since newer/
+  /// preview model families can have none provisioned at all (every grounded
+  /// call to them fails immediately, no matter how long you wait). Ordered
+  /// newest/most-capable first within that constraint.
+  static const groundingModels = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2-flash-lite', 'gemini-2-flash'];
 
   final http.Client _client;
   final AiCallLogRepository _logRepository;
@@ -50,13 +63,7 @@ class MealPlanGenerationService {
     final effectiveModel = model ?? this.model;
     final activityId = AiCallActivity.start(storeName: _logStoreName, model: effectiveModel);
     try {
-      final research = await _research(
-        apiKey: apiKey,
-        slots: slots,
-        items: items,
-        dietaryNotes: dietaryNotes,
-        model: effectiveModel,
-      );
+      final research = await _research(apiKey: apiKey, slots: slots, items: items, dietaryNotes: dietaryNotes);
       return await _extract(
         apiKey: apiKey,
         slots: slots,
@@ -71,7 +78,38 @@ class MealPlanGenerationService {
 
   // --- Phase 1: grounded research -------------------------------------
 
+  /// Tries [groundingModels] in order, falling through to the next one on
+  /// [RateLimitedException] (including "no grounding quota provisioned for
+  /// this model", which the API also reports as HTTP 429). Any other failure
+  /// propagates immediately, same as [ModelFallbackController]'s rule -
+  /// falling through is only for capacity/quota problems, not real errors.
   Future<String> _research({
+    required String apiKey,
+    required List<MealSlotPreview> slots,
+    required List<DealItem> items,
+    required String dietaryNotes,
+  }) async {
+    late RateLimitedException lastRateLimitError;
+    for (final groundingModel in groundingModels) {
+      try {
+        return await _researchWithModel(
+          apiKey: apiKey,
+          slots: slots,
+          items: items,
+          dietaryNotes: dietaryNotes,
+          model: groundingModel,
+        );
+      } on RateLimitedException catch (e) {
+        lastRateLimitError = e;
+      }
+    }
+    // Every model in groundingModels was rate limited (or has no grounding
+    // quota at all, which the API also reports as HTTP 429) - nothing left
+    // to fall through to.
+    throw lastRateLimitError;
+  }
+
+  Future<String> _researchWithModel({
     required String apiKey,
     required List<MealSlotPreview> slots,
     required List<DealItem> items,

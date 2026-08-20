@@ -125,15 +125,17 @@ void main() {
     var callCount = 0;
     final client = MockClient((request) async {
       callCount++;
-      expect(
-        request.url.toString(),
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
-      );
       expect(request.headers['x-goog-api-key'], 'test-key');
       final body = jsonDecode(request.body) as Map<String, dynamic>;
 
       if (callCount == 1) {
-        // Phase 1: grounded research, no function-calling tools.
+        // Phase 1: grounded research - tries MealPlanGenerationService.groundingModels
+        // (a model list confirmed to carry a Search grounding quota), not the
+        // caller's chosen model, so it hits the first grounding model.
+        expect(
+          request.url.toString(),
+          'https://generativelanguage.googleapis.com/v1beta/models/${MealPlanGenerationService.groundingModels.first}:generateContent',
+        );
         final tools = body['tools'] as List;
         expect((tools.single as Map).containsKey('google_search'), isTrue);
         expect(body.containsKey('toolConfig'), isFalse);
@@ -146,7 +148,12 @@ void main() {
         );
       }
 
-      // Phase 2: structured extraction.
+      // Phase 2: structured extraction - has no grounding requirement, so it
+      // uses the caller's chosen model like any other call.
+      expect(
+        request.url.toString(),
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+      );
       final tools = body['tools'] as List;
       final declarations = (tools.single as Map)['functionDeclarations'] as List;
       expect((declarations.single as Map)['name'], 'record_meal_components');
@@ -246,7 +253,7 @@ void main() {
     expect(plan.slots.single.proteinComponent.instructions, isEmpty);
   });
 
-  test('throws and logs a research-phase failure on HTTP 429', () async {
+  test('exhausts every grounding model before giving up, logging one failure per model tried', () async {
     final client = MockClient((request) async => http.Response('', 429));
     final logRepository = AiCallLogRepository();
     final service = MealPlanGenerationService(client: client, logRepository: logRepository);
@@ -256,10 +263,53 @@ void main() {
       throwsA(isA<RateLimitedException>()),
     );
 
+    // AiCallLogRepository stores newest first, so the last grounding model
+    // tried comes back at index 0 and the first at the end.
     final logs = await logRepository.loadAll();
-    expect(logs.length, 1);
-    expect(logs.single.storeName, 'Meal plan generation (research)');
-    expect(logs.single.success, isFalse);
+    expect(logs.length, MealPlanGenerationService.groundingModels.length);
+    expect(logs.every((l) => l.storeName == 'Meal plan generation (research)'), isTrue);
+    expect(logs.every((l) => l.success == false), isTrue);
+    expect(logs.map((l) => l.model).toList(), MealPlanGenerationService.groundingModels.reversed.toList());
+  });
+
+  test('falls through to the next grounding model when an earlier one is rate limited', () async {
+    final attemptedModels = <String>[];
+    final client = MockClient((request) async {
+      final model = request.url.pathSegments.last.split(':').first;
+      attemptedModels.add(model);
+      if (model == MealPlanGenerationService.groundingModels.first) return http.Response('', 429);
+      if (MealPlanGenerationService.groundingModels.contains(model)) {
+        return _researchResponse(text: 'Verified link found via fallback model.');
+      }
+      // Extraction call, on whatever model the caller chose.
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Chicken curry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+          },
+        ],
+      );
+    });
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+
+    final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+    expect(plan.slots.single.proteinComponent.name, 'Chicken curry');
+    expect(attemptedModels, [
+      MealPlanGenerationService.groundingModels.first,
+      MealPlanGenerationService.groundingModels[1],
+      'gemini-3.5-flash-lite',
+    ]);
+
+    final logs = await logRepository.loadAll();
+    expect(logs.length, 3);
+    expect(logs[2].model, MealPlanGenerationService.groundingModels.first);
+    expect(logs[2].success, isFalse);
+    expect(logs[1].model, MealPlanGenerationService.groundingModels[1]);
+    expect(logs[1].success, isTrue);
   });
 
   test('throws and logs an extraction-phase failure on HTTP 429 after a successful research call', () async {

@@ -74,4 +74,25 @@ class DealItem {
     pageIndex: pageIndex,
     preference: preference ?? this.preference,
   );
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'price': price,
+    'unit': unit,
+    'category': category.name,
+    'storeName': storeName,
+    'pageIndex': pageIndex,
+  };
+
+  // Preference is deliberately left out of the JSON: cached items are always
+  // re-merged with DealPreferenceRepository's current selections rather than
+  // trusting a preference frozen at cache time.
+  factory DealItem.fromJson(Map<String, dynamic> json) => DealItem(
+    name: json['name'] as String,
+    price: json['price'] as String,
+    unit: json['unit'] as String,
+    category: DealCategoryLabel.fromLabel(json['category'] as String),
+    storeName: json['storeName'] as String,
+    pageIndex: json['pageIndex'] as int,
+  );
 }

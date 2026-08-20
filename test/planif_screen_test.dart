@@ -443,35 +443,25 @@ void main() {
         ),
       );
 
-      // The priority/excluded summary now lives in the filter sheet (opened
-      // via the app bar's filter icon) instead of an always-on row, so
-      // checking it means opening the sheet, then dismissing it (tapping the
-      // scrim, above where the sheet itself sits) to get back to the list.
-      Future<void> expectSummary(String text) async {
-        await tester.tap(find.byTooltip('Filters'));
-        await tester.pumpAndSettle();
-        expect(find.text(text), findsOneWidget);
-        await tester.tapAt(const Offset(200, 50));
-        await tester.pumpAndSettle();
-      }
-
       await pumpScreen();
       await tester.pumpAndSettle();
       await tester.tap(find.text('Fetch deals'));
       await tester.pumpAndSettle();
 
-      await expectSummary('0 priority, 0 excluded');
+      // The priority/excluded summary is always visible in the app bar -
+      // no need to open the filter sheet to see it.
+      expect(find.text('0 priority, 0 excluded'), findsOneWidget);
 
       // neutral -> priority
       await tester.tap(find.text('Poulet'));
       await tester.pumpAndSettle();
-      await expectSummary('1 priority, 0 excluded');
+      expect(find.text('1 priority, 0 excluded'), findsOneWidget);
       expect(find.byIcon(Icons.star), findsOneWidget);
 
       // priority -> excluded
       await tester.tap(find.text('Poulet'));
       await tester.pumpAndSettle();
-      await expectSummary('0 priority, 1 excluded');
+      expect(find.text('0 priority, 1 excluded'), findsOneWidget);
       expect(find.byIcon(Icons.star), findsNothing);
 
       expect(await preferenceRepository.loadAll(), {'IGA::Poulet::3.99\$::': DealPreference.excluded});
@@ -486,7 +476,7 @@ void main() {
       await pumpScreen();
       await tester.pumpAndSettle();
       expect(find.text('Poulet'), findsOneWidget);
-      await expectSummary('0 priority, 1 excluded');
+      expect(find.text('0 priority, 1 excluded'), findsOneWidget);
 
       // Explicitly reloading (stepping back to the fetch step, then tapping
       // "Fetch deals" again) is a deliberate reset: it clears the persisted
@@ -496,7 +486,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Fetch deals'));
       await tester.pumpAndSettle();
-      await expectSummary('0 priority, 0 excluded');
+      expect(find.text('0 priority, 0 excluded'), findsOneWidget);
       expect(await preferenceRepository.loadAll(), isEmpty);
     },
   );

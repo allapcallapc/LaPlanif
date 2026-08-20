@@ -596,15 +596,34 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   // Everything that used to live in a second chrome row now lives here
   // instead: a compact view-mode toggle once there's a preview to switch
-  // to, a filter action (badged when a filter is active) while browsing
-  // deals, and a regenerate action while looking at the preview.
+  // to, the priority/excluded summary and a filter action (badged when a
+  // store filter is active) while browsing deals, and a regenerate action
+  // while looking at the preview.
   List<Widget> _buildAppBarActions() {
     return [
       if (_preview != null) _buildViewModeToggle(),
+      if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildPreferenceSummary(),
       if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildFilterButton(),
       if (_viewMode == _ViewMode.preview && _preview != null) _buildRegenerateButton(),
       const SizedBox(width: 4),
     ];
+  }
+
+  // Immediate feedback that tapping an item actually did something -
+  // visible without opening the filter sheet, unlike the store filter and
+  // category jump-list it sits next to.
+  Widget _buildPreferenceSummary() {
+    final priorityCount = _items.where((item) => item.preference == DealPreference.priority).length;
+    final excludedCount = _items.where((item) => item.preference == DealPreference.excluded).length;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Text(
+        '$priorityCount priority, $excludedCount excluded',
+        style: Theme.of(context).textTheme.labelMedium,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
   }
 
   Widget _buildViewModeToggle() {
@@ -629,8 +648,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
+  // Badged only for the store filter - priority/excluded already has its
+  // own always-visible summary next to this button, so badging for that
+  // too would just be a redundant signal for the same thing.
   Widget _buildFilterButton() {
-    final active = _storeFilter != null || _items.any((item) => item.preference != DealPreference.neutral);
+    final active = _storeFilter != null;
     return Stack(
       clipBehavior: Clip.none,
       children: [

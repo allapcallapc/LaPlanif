@@ -184,7 +184,7 @@ void main() {
 
   test('includes non-empty dietaryNotes as standing planning instructions', () async {
     final client = MockClient((request) async {
-      expect(request.body, contains('Standing planning instructions'));
+      expect(request.body, contains('Standing planning instructions - follow these across every slot:'));
       expect(request.body, contains('No more than 2 days of fish per week.'));
 
       return _successResponse(
@@ -212,7 +212,10 @@ void main() {
 
   test('omits the standing-instructions section when dietaryNotes is empty', () async {
     final client = MockClient((request) async {
-      expect(request.body, isNot(contains('Standing planning instructions')));
+      // The system prompt always mentions "Standing planning instructions" in
+      // the abstract - only the concrete per-request section (with its
+      // trailing colon) should be absent when there's nothing to say.
+      expect(request.body, isNot(contains('Standing planning instructions - follow these across every slot:')));
 
       return _successResponse(
         slots: [

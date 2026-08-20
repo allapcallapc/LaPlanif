@@ -22,9 +22,9 @@ void main() {
       (MealType.supper, 'meat', 2),
       (MealType.supper, 'tofu', 4),
     ]);
-    expect(config.dietaryNotes, contains('No more than 2 days of fish per week'));
-    expect(config.dietaryNotes, contains('Prefer lunches that can be frozen'));
-    expect(config.dietaryNotes, contains('No red meat'));
+    expect(config.dietaryNotes, contains('Do not put fish for more than 2 days'));
+    expect(config.dietaryNotes, contains('Try to prefer lunches that can go into the freezer'));
+    expect(config.dietaryNotes, contains('Do not use red meat'));
   });
 
   test('mealsPerWeek is the sum of the slot counts', () async {

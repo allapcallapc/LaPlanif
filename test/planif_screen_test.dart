@@ -136,6 +136,7 @@ class _FakePreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
     String? model,
   }) {
     calls.add(mealSlots);
@@ -158,6 +159,7 @@ class _FakeDeferredPreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
     String? model,
   }) {
     final completer = Completer<MealPlanPreview>();
@@ -180,6 +182,7 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
     String? model,
   }) {
     return _byModel(model!);

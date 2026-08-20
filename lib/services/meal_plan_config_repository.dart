@@ -15,6 +15,10 @@ class MealPlanConfigRepository {
       MealSlot(id: 'default-supper-meat', mealType: MealType.supper, protein: 'meat', count: 2),
       MealSlot(id: 'default-supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4),
     ],
+    dietaryNotes:
+        '- Do not put fish for more than 2 days.\n'
+        '- Try to prefer lunches that can go into the freezer.\n'
+        '- Do not use red meat.',
   );
 
   Future<MealPlanConfig> load() async {

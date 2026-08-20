@@ -478,6 +478,23 @@ void main() {
     expect(saved.diversityWindowDays, 21);
   });
 
+  testWidgets('editing the additional planning instructions persists the new value', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final mealPlanRepo = MealPlanConfigRepository();
+    await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Additional planning instructions'),
+      'No shellfish.',
+    );
+    await tester.pumpAndSettle();
+    // The persistence write is debounced; advance past the debounce window.
+    await tester.pump(const Duration(milliseconds: 600));
+
+    final saved = await mealPlanRepo.load();
+    expect(saved.dietaryNotes, 'No shellfish.');
+  });
+
   testWidgets('editing the protein field persists the new value', (tester) async {
     final storeRepo = StoreConfigRepository();
     final mealPlanRepo = MealPlanConfigRepository();

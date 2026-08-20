@@ -33,6 +33,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   final _apiKeyController = TextEditingController();
   final _portionsController = TextEditingController();
   final _diversityController = TextEditingController();
+  final _dietaryNotesController = TextEditingController();
   bool _obscureApiKey = true;
   Timer? _apiKeySaveDebounce;
   Timer? _mealPlanSaveDebounce;
@@ -63,6 +64,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _apiKeyController.dispose();
     _portionsController.dispose();
     _diversityController.dispose();
+    _dietaryNotesController.dispose();
     super.dispose();
   }
 
@@ -100,6 +102,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     if (!mounted) return;
     _portionsController.text = '${config.portionsPerMeal}';
     _diversityController.text = '${config.diversityWindowDays}';
+    _dietaryNotesController.text = config.dietaryNotes;
     setState(() => _mealPlanConfig = config);
   }
 
@@ -126,6 +129,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
     final parsed = int.tryParse(value);
     if (parsed == null || parsed <= 0) return;
     _saveMealPlanConfig(_mealPlanConfig!.copyWith(diversityWindowDays: parsed));
+  }
+
+  void _onDietaryNotesChanged(String value) {
+    _saveMealPlanConfig(_mealPlanConfig!.copyWith(dietaryNotes: value));
   }
 
   void _addMealSlot() {
@@ -300,6 +307,21 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       ),
                     ),
                   ],
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: TextField(
+                  controller: _dietaryNotesController,
+                  maxLines: null,
+                  minLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Additional planning instructions',
+                    hintText: 'e.g. no more than 2 days of fish per week, no red meat',
+                  ),
+                  onChanged: _onDietaryNotesChanged,
                 ),
               ),
             ),

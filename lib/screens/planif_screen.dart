@@ -221,6 +221,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
           mealSlots: config.mealSlots,
           portionsPerMeal: config.portionsPerMeal,
           items: _items,
+          dietaryNotes: config.dietaryNotes,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
@@ -272,6 +273,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
           portionsPerMeal: config.portionsPerMeal,
           items: _items,
           alreadyUsedAnchors: alreadyUsedAnchors,
+          dietaryNotes: config.dietaryNotes,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {

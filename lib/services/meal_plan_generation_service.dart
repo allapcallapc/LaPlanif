@@ -108,7 +108,7 @@ class MealPlanGenerationService {
     required String dietaryNotes,
     required List<String> groundingModels,
   }) async {
-    late RateLimitedException lastRateLimitError;
+    RateLimitedException? lastRateLimitError;
     for (final groundingModel in groundingModels) {
       try {
         return await _researchWithModel(
@@ -121,6 +121,9 @@ class MealPlanGenerationService {
       } on RateLimitedException catch (e) {
         lastRateLimitError = e;
       }
+    }
+    if (lastRateLimitError == null) {
+      throw ArgumentError.value(groundingModels, 'groundingModels', 'must not be empty');
     }
     // Every model in groundingModels was rate limited (or has no grounding
     // quota at all, which the API also reports as HTTP 429) - nothing left

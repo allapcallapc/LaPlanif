@@ -42,14 +42,19 @@ class ModelFallbackController {
       }
 
       await Future<void>.delayed(waitBeforeRetry);
+      late RateLimitedException rateLimitError;
       try {
         return await attempt(model);
-      } on RateLimitedException {
+      } on RateLimitedException catch (e) {
+        rateLimitError = e;
         // still rate limited after the cooldown - ask what to do next.
       }
 
       final nextModel = modelIndex + 1 < models.length ? models[modelIndex + 1] : null;
-      final decision = await onRateLimited(currentModel: model, nextModel: nextModel);
+      // Name the model the exception actually blames, not `model` - attempt()
+      // may internally try a different list of models (e.g. a research call's
+      // own grounding-model fallback) and only surface the one it gave up on.
+      final decision = await onRateLimited(currentModel: rateLimitError.model, nextModel: nextModel);
       if (decision == RateLimitChoice.nextModel) {
         // onRateLimited is only ever handed a non-null nextModel to offer
         // this choice for in the first place - a caller returning nextModel

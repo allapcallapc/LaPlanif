@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../models/deal_item.dart';
+import '../models/meal_plan_config.dart';
+import '../models/meal_plan_preview.dart';
 import '../models/store_config.dart';
 import '../services/ai_config_repository.dart';
 import '../services/ai_deal_extraction_service.dart';
 import '../services/deal_preference_repository.dart';
 import '../services/flyer_scraper_service.dart';
+import '../services/meal_plan_config_repository.dart';
+import '../services/meal_plan_preview_service.dart';
 import '../services/model_fallback_controller.dart';
 import '../services/store_config_repository.dart';
 import '../utils/error_formatting.dart';
@@ -37,12 +41,16 @@ class PlanifScreen extends StatefulWidget {
     AiDealExtractionService? extractionService,
     AiConfigRepository? aiConfigRepository,
     DealPreferenceRepository? preferenceRepository,
+    MealPlanConfigRepository? mealPlanConfigRepository,
+    MealPlanPreviewService? previewService,
     Duration? rateLimitWait,
     RateLimitPrompt? rateLimitPrompt,
   }) : scraperService = scraperService ?? FlyerScraperService(),
        extractionService = extractionService ?? AiDealExtractionService(),
        aiConfigRepository = aiConfigRepository ?? AiConfigRepository(),
        preferenceRepository = preferenceRepository ?? DealPreferenceRepository(),
+       mealPlanConfigRepository = mealPlanConfigRepository ?? MealPlanConfigRepository(),
+       previewService = previewService ?? MealPlanPreviewService(),
        rateLimitWait = rateLimitWait ?? const Duration(minutes: 1),
        rateLimitPrompt = rateLimitPrompt ?? showRateLimitDialog;
 
@@ -51,6 +59,8 @@ class PlanifScreen extends StatefulWidget {
   final AiDealExtractionService extractionService;
   final AiConfigRepository aiConfigRepository;
   final DealPreferenceRepository preferenceRepository;
+  final MealPlanConfigRepository mealPlanConfigRepository;
+  final MealPlanPreviewService previewService;
 
   /// How long [ModelFallbackController] waits before its one automatic
   /// retry on a rate-limited call. Injectable so tests don't have to wait.
@@ -72,6 +82,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
   String? _storeFilter;
   String? _apiKey;
   List<String> _models = [];
+  MealPlanPreview? _preview;
+  MealPlanConfig? _mealPlanConfig;
+  bool _isPreviewLoading = false;
+  bool _showPreview = false;
+  final Set<int> _regeneratingSlots = {};
 
   Future<void> _fetchAll() async {
     final apiKey = await widget.aiConfigRepository.loadApiKey();
@@ -130,6 +145,162 @@ class _PlanifScreenState extends State<PlanifScreen> {
       if (index != -1) _items[index] = updated;
     });
     await widget.preferenceRepository.setPreference(item.preferenceKey, next);
+  }
+
+  Future<void> _generatePreview() async {
+    final apiKey = _apiKey;
+    if (apiKey == null || _isPreviewLoading || _regeneratingSlots.isNotEmpty) return;
+
+    final config = await widget.mealPlanConfigRepository.load();
+    setState(() => _isPreviewLoading = true);
+
+    final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
+    try {
+      final preview = await controller.run(
+        attempt: (model) => widget.previewService.previewMealPlan(
+          apiKey: apiKey,
+          mealSlots: config.mealSlots,
+          portionsPerMeal: config.portionsPerMeal,
+          items: _items,
+          model: model,
+        ),
+        onRateLimited: ({required currentModel, nextModel}) {
+          if (!mounted) return Future.value(RateLimitChoice.retrySame);
+          return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _preview = preview;
+        _mealPlanConfig = config;
+        _isPreviewLoading = false;
+        _showPreview = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isPreviewLoading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not generate preview: ${stripExceptionPrefix(e)}')));
+    }
+  }
+
+  // Re-runs the AI call for just this one slot and splices the result back
+  // into _preview, leaving every other slot's anchors/note untouched.
+  Future<void> _regenerateSlot(int index) async {
+    final apiKey = _apiKey;
+    final config = _mealPlanConfig;
+    if (apiKey == null || config == null || _isPreviewLoading || _regeneratingSlots.contains(index)) return;
+
+    setState(() => _regeneratingSlots.add(index));
+
+    // Every other slot's current anchors, so the regenerated slot doesn't
+    // duplicate an ingredient another slot is already using - the AI only
+    // sees the one slot being regenerated, unlike the full-plan generate
+    // call where every slot (and thus every other slot's picks) is visible
+    // in the same request.
+    final alreadyUsedAnchors = [
+      for (var i = 0; i < _preview!.slots.length; i++)
+        if (i != index) ..._preview!.slots[i].anchorItems,
+    ];
+
+    final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
+    try {
+      final result = await controller.run(
+        attempt: (model) => widget.previewService.previewMealPlan(
+          apiKey: apiKey,
+          mealSlots: [config.mealSlots[index]],
+          portionsPerMeal: config.portionsPerMeal,
+          items: _items,
+          alreadyUsedAnchors: alreadyUsedAnchors,
+          model: model,
+        ),
+        onRateLimited: ({required currentModel, nextModel}) {
+          if (!mounted) return Future.value(RateLimitChoice.retrySame);
+          return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        final slots = [..._preview!.slots];
+        slots[index] = result.slots.single;
+        _preview = MealPlanPreview(slots: slots);
+        _regeneratingSlots.remove(index);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _regeneratingSlots.remove(index));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not regenerate this recipe: ${stripExceptionPrefix(e)}')));
+    }
+  }
+
+  // Normalized by name alone, not name+store: the same ingredient sold at
+  // two different stores (e.g. "Brocoli" at IGA and "Brocoli" at Metro)
+  // still counts as reusing it, so this can't dedupe on store too.
+  String _anchorNameKey(String name) => name.trim().toLowerCase();
+
+  // Every anchor item currently used anywhere in the preview, across every
+  // slot - an ingredient shouldn't anchor more than one slot, so neither the
+  // swap nor the add picker should offer one already spoken for elsewhere.
+  Set<String> _usedAnchorKeys() => {
+    for (final slot in _preview!.slots)
+      for (final anchor in slot.anchorItems) _anchorNameKey(anchor.name),
+  };
+
+  Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
+    final usedKeys = _usedAnchorKeys();
+    final available = _items
+        .where((item) => item.preference != DealPreference.excluded)
+        .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
+        .toList();
+    final selected = await showDialog<DealItem>(context: context, builder: (_) => _AnchorPickerDialog(items: available));
+    if (selected == null) return;
+
+    setState(() {
+      final slots = [..._preview!.slots];
+      final slot = slots[slotIndex];
+      final anchors = slot.anchorItems
+          .map((a) => identical(a, current) ? AnchorItem(name: selected.name, store: selected.storeName) : a)
+          .toList();
+      slots[slotIndex] = slot.copyWith(anchorItems: anchors);
+      _preview = MealPlanPreview(slots: slots);
+    });
+  }
+
+  Future<void> _addAnchorItem(int slotIndex) async {
+    final usedKeys = _usedAnchorKeys();
+    final available = _items
+        .where((item) => item.preference != DealPreference.excluded)
+        .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
+        .toList();
+    final selected = await showDialog<DealItem>(
+      context: context,
+      builder: (_) => _AnchorPickerDialog(items: available, title: 'Add anchor item'),
+    );
+    if (selected == null) return;
+
+    setState(() {
+      final slots = [..._preview!.slots];
+      final anchors = [...slots[slotIndex].anchorItems, AnchorItem(name: selected.name, store: selected.storeName)];
+      slots[slotIndex] = slots[slotIndex].copyWith(anchorItems: anchors);
+      _preview = MealPlanPreview(slots: slots);
+    });
+  }
+
+  void _removeAnchorItem(int slotIndex, AnchorItem anchor) {
+    setState(() {
+      final slots = [..._preview!.slots];
+      final slot = slots[slotIndex];
+      final anchors = slot.anchorItems.where((a) => !identical(a, anchor)).toList();
+      slots[slotIndex] = slot.copyWith(anchorItems: anchors);
+      _preview = MealPlanPreview(slots: slots);
+    });
+  }
+
+  void _onGenerateFullPlan() {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Full recipe generation is coming soon.')));
   }
 
   Future<void> _retryStore(StoreFetchState state) async {
@@ -247,7 +418,8 @@ class _PlanifScreenState extends State<PlanifScreen> {
             if (_hasRun) _buildStatusSummary() else ..._states.map(_buildStatusRow),
             const Divider(height: 1),
           ],
-          Expanded(child: _buildResults()),
+          if (_hasRun && _items.isNotEmpty) ...[_buildStep2Row(), const Divider(height: 1)],
+          Expanded(child: _showPreview && _preview != null ? _buildPreviewList() : _buildResults()),
         ],
       ),
     );
@@ -422,7 +594,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Widget _buildItemTile(DealItem item) {
-    final priceText = item.unit.isEmpty ? item.price : '${item.price}/${item.unit}';
+    final priceText = item.priceText;
     final isPriority = item.preference == DealPreference.priority;
     final isExcluded = item.preference == DealPreference.excluded;
     final nameStyle = isExcluded ? const TextStyle(decoration: TextDecoration.lineThrough) : null;
@@ -456,6 +628,198 @@ class _PlanifScreenState extends State<PlanifScreen> {
         'COVER',
         style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber.shade900),
       ),
+    );
+  }
+
+  Widget _buildStep2Row() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          child: Row(
+            children: [
+              Text('Step 2', style: Theme.of(context).textTheme.titleSmall),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _generatePreview,
+                icon: _isPreviewLoading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.restaurant_menu, size: 18),
+                label: Text(
+                  _isPreviewLoading
+                      ? 'Generating…'
+                      : (_preview == null ? 'Preview meal plan' : 'Regenerate preview'),
+                ),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_preview != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              // Wrap instead of a Row: at narrow widths both chips together
+              // can outgrow the line, and Wrap drops the second one to a new
+              // line instead of overflowing or needing a scroll gesture to
+              // reach it.
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('Deal items'),
+                    selected: !_showPreview,
+                    onSelected: (_) => setState(() => _showPreview = false),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Meal plan preview'),
+                    selected: _showPreview,
+                    onSelected: (_) => setState(() => _showPreview = true),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPreviewList() {
+    final preview = _preview!;
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: preview.slots.length + 1,
+      itemBuilder: (context, i) {
+        if (i == preview.slots.length) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: FilledButton.icon(
+              onPressed: _onGenerateFullPlan,
+              icon: const Icon(Icons.arrow_forward),
+              label: const Text('Looks good, generate full plan →'),
+            ),
+          );
+        }
+        return _buildPreviewCard(i, preview.slots[i]);
+      },
+    );
+  }
+
+  Widget _buildPreviewCard(int index, MealSlotPreview slot) {
+    final isRegenerating = _regeneratingSlots.contains(index);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  slot.mealType == MealType.lunch ? Icons.wb_sunny_outlined : Icons.nightlight_outlined,
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${_capitalize(slot.mealType.name)} · ${slot.protein}',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Chip(
+                  label: Text('${slot.totalPortionsNeeded} portions'),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                IconButton(
+                  icon: isRegenerating
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.refresh, size: 18),
+                  tooltip: 'Regenerate this recipe',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: (_isPreviewLoading || isRegenerating) ? null : () => _regenerateSlot(index),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${slot.count} meals × ${slot.portionsPerMeal} portions',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor, disabled: isRegenerating),
+                ActionChip(
+                  avatar: const Icon(Icons.add, size: 16),
+                  label: const Text('Add item'),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: isRegenerating ? null : () => _addAnchorItem(index),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(slot.note, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontStyle: FontStyle.italic)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAnchorChip(int slotIndex, AnchorItem anchor, {bool disabled = false}) {
+    return InputChip(
+      avatar: const Icon(Icons.swap_horiz, size: 16),
+      label: Text('${anchor.name} · ${anchor.store}'),
+      tooltip: 'Tap to swap, or use the × to remove',
+      onPressed: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
+      deleteIcon: const Icon(Icons.close, size: 16),
+      onDeleted: disabled ? null : () => _removeAnchorItem(slotIndex, anchor),
+    );
+  }
+
+  String _capitalize(String s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
+}
+
+class _AnchorPickerDialog extends StatelessWidget {
+  const _AnchorPickerDialog({required this.items, this.title = 'Swap anchor item'});
+
+  final List<DealItem> items;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: items.isEmpty
+            ? const Padding(padding: EdgeInsets.all(8), child: Text('No available deal items.'))
+            : ListView.builder(
+                shrinkWrap: true,
+                itemCount: items.length,
+                itemBuilder: (context, i) {
+                  final item = items[i];
+                  return ListTile(
+                    title: Text(item.name),
+                    subtitle: Text('${item.storeName} · ${item.priceText}'),
+                    onTap: () => Navigator.of(context).pop(item),
+                  );
+                },
+              ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel'))],
     );
   }
 }

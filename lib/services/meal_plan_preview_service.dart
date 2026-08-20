@@ -154,7 +154,7 @@ class MealPlanPreviewService {
   ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
     final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
-    final available = items.where((i) => i.preference != DealPreference.excluded).toList();
+    final available = items.where((i) => i.preference == DealPreference.neutral).toList();
 
     final slotsText = mealSlots
         .asMap()

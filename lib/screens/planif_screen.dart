@@ -152,10 +152,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     if (apiKey == null || _isPreviewLoading || _regeneratingSlots.isNotEmpty) return;
 
     final config = await widget.mealPlanConfigRepository.load();
-    setState(() {
-      _isPreviewLoading = true;
-      _mealPlanConfig = config;
-    });
+    setState(() => _isPreviewLoading = true);
 
     final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
     try {
@@ -175,6 +172,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       if (!mounted) return;
       setState(() {
         _preview = preview;
+        _mealPlanConfig = config;
         _isPreviewLoading = false;
         _showPreview = true;
       });
@@ -596,7 +594,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Widget _buildItemTile(DealItem item) {
-    final priceText = item.unit.isEmpty ? item.price : '${item.price}/${item.unit}';
+    final priceText = item.priceText;
     final isPriority = item.preference == DealPreference.priority;
     final isExcluded = item.preference == DealPreference.excluded;
     final nameStyle = isExcluded ? const TextStyle(decoration: TextDecoration.lineThrough) : null;
@@ -763,12 +761,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor),
+                for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor, disabled: isRegenerating),
                 ActionChip(
                   avatar: const Icon(Icons.add, size: 16),
                   label: const Text('Add item'),
                   visualDensity: VisualDensity.compact,
-                  onPressed: () => _addAnchorItem(index),
+                  onPressed: isRegenerating ? null : () => _addAnchorItem(index),
                 ),
               ],
             ),
@@ -780,14 +778,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  Widget _buildAnchorChip(int slotIndex, AnchorItem anchor) {
+  Widget _buildAnchorChip(int slotIndex, AnchorItem anchor, {bool disabled = false}) {
     return InputChip(
       avatar: const Icon(Icons.swap_horiz, size: 16),
       label: Text('${anchor.name} · ${anchor.store}'),
       tooltip: 'Tap to swap, or use the × to remove',
-      onPressed: () => _swapAnchorItem(slotIndex, anchor),
+      onPressed: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
       deleteIcon: const Icon(Icons.close, size: 16),
-      onDeleted: () => _removeAnchorItem(slotIndex, anchor),
+      onDeleted: disabled ? null : () => _removeAnchorItem(slotIndex, anchor),
     );
   }
 
@@ -813,10 +811,9 @@ class _AnchorPickerDialog extends StatelessWidget {
                 itemCount: items.length,
                 itemBuilder: (context, i) {
                   final item = items[i];
-                  final priceText = item.unit.isEmpty ? item.price : '${item.price}/${item.unit}';
                   return ListTile(
                     title: Text(item.name),
-                    subtitle: Text('${item.storeName} · $priceText'),
+                    subtitle: Text('${item.storeName} · ${item.priceText}'),
                     onTap: () => Navigator.of(context).pop(item),
                   );
                 },

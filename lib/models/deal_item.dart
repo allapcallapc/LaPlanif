@@ -53,6 +53,10 @@ class DealItem {
   /// are numbered when sent for extraction.
   bool get isCoverPage => pageIndex == 1;
 
+  /// Display-ready price, with the unit appended when the price is per-unit
+  /// rather than flat.
+  String get priceText => unit.isEmpty ? price : '$price/$unit';
+
   /// Flyer items don't have a stable ID, so store+name+price+unit stands in
   /// for one when persisting a preference across re-fetches of the same
   /// flyer. Price and unit are included because a flyer can list the same

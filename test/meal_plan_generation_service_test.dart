@@ -15,7 +15,12 @@ import 'package:laplanif/services/ai_config_repository.dart';
 import 'package:laplanif/services/meal_plan_generation_service.dart';
 import 'package:laplanif/services/model_fallback_controller.dart';
 
-http.Response _researchResponse({int inputTokens = 200, int outputTokens = 150, required String text}) {
+http.Response _researchResponse({
+  int inputTokens = 200,
+  int outputTokens = 150,
+  required String text,
+  List<Map<String, String>> sources = const [],
+}) {
   return http.Response(
     jsonEncode({
       'candidates': [
@@ -26,6 +31,15 @@ http.Response _researchResponse({int inputTokens = 200, int outputTokens = 150, 
             ],
             'role': 'model',
           },
+          if (sources.isNotEmpty)
+            'groundingMetadata': {
+              'groundingChunks': [
+                for (final s in sources)
+                  {
+                    'web': {'uri': s['uri'], 'title': s['title'] ?? ''},
+                  },
+              ],
+            },
         },
       ],
       'usageMetadata': {'promptTokenCount': inputTokens, 'candidatesTokenCount': outputTokens},
@@ -65,7 +79,7 @@ http.Response _extractionResponse({
 Map<String, dynamic> _rawComponent({
   required String type,
   required String name,
-  String recipeUrl = '',
+  int sourceIndex = -1,
   List<Map<String, String>> ingredients = const [],
   List<String> instructions = const [],
   String note = '',
@@ -74,7 +88,7 @@ Map<String, dynamic> _rawComponent({
 }) => {
   'type': type,
   'name': name,
-  'recipeUrl': recipeUrl,
+  'sourceIndex': sourceIndex,
   'ingredients': ingredients,
   'instructions': instructions,
   'note': note,
@@ -146,6 +160,9 @@ void main() {
               'Slot 1 protein: verified link https://example.com/chicken-stir-fry. '
               'The recipe already includes rice as an ingredient (carb covered). '
               'Vegetable not covered - propose steamed broccoli as a simple side, using the Broccoli deal item at IGA.',
+          sources: const [
+            {'uri': 'https://example.com/chicken-stir-fry', 'title': 'Big-batch chicken thigh stir-fry'},
+          ],
         );
       }
 
@@ -160,6 +177,8 @@ void main() {
       expect((declarations.single as Map)['name'], 'record_meal_components');
       expect(request.body, contains('Research notes from the search step'));
       expect(request.body, contains('already includes rice'));
+      expect(request.body, contains('Verified search sources'));
+      expect(request.body, contains('[0] https://example.com/chicken-stir-fry'));
 
       return _extractionResponse(
         slots: [
@@ -167,17 +186,13 @@ void main() {
             'protein': _rawComponent(
               type: 'link',
               name: 'Big-batch chicken thigh stir-fry',
-              recipeUrl: 'https://example.com/chicken-stir-fry',
+              sourceIndex: 0,
               usesWeeklyDeal: true,
               dealItems: [
                 {'name': 'Chicken thighs', 'store': 'IGA'},
               ],
             ),
-            'carb': _rawComponent(
-              type: 'covered_by_protein',
-              name: 'Rice (included in the stir-fry recipe)',
-              recipeUrl: 'https://example.com/chicken-stir-fry',
-            ),
+            'carb': _rawComponent(type: 'covered_by_protein', name: 'Rice (included in the stir-fry recipe)'),
             'vegetable': _rawComponent(
               type: 'simple_side',
               name: 'Steamed broccoli',
@@ -228,6 +243,79 @@ void main() {
     expect(logs[1].storeName, 'Meal plan generation (research)');
     expect(logs[1].success, isTrue);
     expect(logs[1].inputTokens, 200);
+  });
+
+  test(
+    'downgrades a "link" component to ai_recipe when its sourceIndex does not point at a real search-grounding source',
+    () async {
+      var callCount = 0;
+      final client = MockClient((request) async {
+        callCount++;
+        if (callCount == 1) {
+          // Only one source was actually verified by the search tool - index
+          // 0. The extraction call is about to reference a bogus index.
+          return _researchResponse(
+            text: 'Slot 1 protein: verified link https://example.com/real-recipe.',
+            sources: const [
+              {'uri': 'https://example.com/real-recipe', 'title': 'Real recipe'},
+            ],
+          );
+        }
+        // Extraction claims type "link" but points at an index past the end
+        // of the verified source list - equivalent to it never having a real
+        // source to cite (e.g. it "recalled" a plausible-looking URL instead
+        // of actually picking one from the list).
+        return _extractionResponse(
+          slots: [
+            {
+              'protein': _rawComponent(type: 'link', name: 'Easy baked chicken leg quarters', sourceIndex: 7),
+              'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+              'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+            },
+          ],
+        );
+      });
+
+      final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+      final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+      final protein = plan.slots.single.proteinComponent;
+      expect(protein.type, MealComponentType.aiRecipe);
+      expect(protein.recipeUrl, isNull);
+      expect(protein.name, 'Easy baked chicken leg quarters');
+    },
+  );
+
+  test('resolves a "link" component\'s recipeUrl from its sourceIndex into the verified source list', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) {
+        return _researchResponse(
+          text: 'Slot 1 protein: verified link https://example.com/second-recipe.',
+          sources: const [
+            {'uri': 'https://example.com/first-recipe', 'title': 'First recipe'},
+            {'uri': 'https://example.com/second-recipe', 'title': 'Second recipe'},
+          ],
+        );
+      }
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'link', name: 'Second recipe', sourceIndex: 1),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+    final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+    final protein = plan.slots.single.proteinComponent;
+    expect(protein.type, MealComponentType.link);
+    expect(protein.recipeUrl, 'https://example.com/second-recipe');
   });
 
   test('empty recipeUrl parses to null and blank ingredients/instructions parse to empty lists', () async {

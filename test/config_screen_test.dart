@@ -316,10 +316,99 @@ void main() {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);
 
+    // The default grounding-model list is the same as the default model
+    // list, so every entry renders twice: once in each section.
     for (final model in AiConfigRepository.defaultModels) {
-      expect(find.text(model), findsOneWidget);
+      expect(find.text(model), findsNWidgets(2));
     }
     expect(AiConfigRepository.defaultModels.first, 'gemini-3.5-flash-lite');
+  });
+
+  testWidgets('shows the full default grounding-model list, matching the general model list', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo);
+
+    for (final model in AiConfigRepository.defaultGroundingModels) {
+      expect(find.text(model), findsNWidgets(2));
+    }
+    expect(AiConfigRepository.defaultGroundingModels, AiConfigRepository.defaultModels);
+  });
+
+  testWidgets('disables removal when only one grounding model is configured', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveGroundingModels(['solo-grounding-model']);
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    expect(find.text('solo-grounding-model'), findsOneWidget);
+    final removeButton = tester.widget<IconButton>(
+      find.ancestor(of: find.byTooltip('Remove grounding model'), matching: find.byType(IconButton)),
+    );
+    expect(removeButton.onPressed, isNull);
+  });
+
+  testWidgets('adds a grounding model and persists the order', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    await tester.tap(find.byTooltip('Add grounding model'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Model id'), 'gemini-grounding-backup');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('gemini-grounding-backup'), findsOneWidget);
+    expect(await aiConfigRepo.loadGroundingModels(), [
+      ...AiConfigRepository.defaultGroundingModels,
+      'gemini-grounding-backup',
+    ]);
+  });
+
+  testWidgets('editing a grounding model updates it in place', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    // gemini-3.5-flash-lite appears in both the general model list and the
+    // grounding-model list - .first resolves to the general list's row,
+    // .last to the grounding list's row, since the grounding section renders
+    // below it.
+    await tester.tap(find.text('gemini-3.5-flash-lite').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Model id'), 'gemini-grounding-renamed');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('gemini-grounding-renamed'), findsOneWidget);
+    expect(await aiConfigRepo.loadGroundingModels(), [
+      'gemini-grounding-renamed',
+      ...AiConfigRepository.defaultGroundingModels.skip(1),
+    ]);
+  });
+
+  testWidgets('reorders grounding models with the move arrows and persists the new order', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveGroundingModels(['gemini-a', 'gemini-b']);
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    await tester.tap(find.byTooltip('Move grounding model up').last);
+    await tester.pumpAndSettle();
+
+    expect(await aiConfigRepo.loadGroundingModels(), ['gemini-b', 'gemini-a']);
+  });
+
+  testWidgets('removes a grounding model when more than one is configured', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveGroundingModels(['gemini-a', 'gemini-b']);
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    await tester.tap(find.byTooltip('Remove grounding model').first);
+    await tester.pumpAndSettle();
+
+    expect(await aiConfigRepo.loadGroundingModels(), ['gemini-b']);
   });
 
   testWidgets('disables removal when only one model is configured', (tester) async {
@@ -355,7 +444,9 @@ void main() {
     final aiConfigRepo = AiConfigRepository();
     await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
-    await tester.tap(find.text('gemini-3.5-flash-lite'));
+    // gemini-3.5-flash-lite also appears in the grounding-model section
+    // below (same default list) - .first is the general Models section's row.
+    await tester.tap(find.text('gemini-3.5-flash-lite').first);
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextFormField, 'Model id'), 'gemini-renamed');
     await tester.tap(find.text('Save'));

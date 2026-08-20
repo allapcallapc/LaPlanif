@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:laplanif/models/deal_item.dart';
 import 'package:laplanif/models/flyer_page.dart';
 import 'package:laplanif/models/meal_plan_config.dart';
+import 'package:laplanif/models/meal_plan_full.dart';
 import 'package:laplanif/models/meal_plan_preview.dart';
 import 'package:laplanif/models/store_config.dart';
 import 'package:laplanif/screens/planif_screen.dart';
@@ -16,6 +17,7 @@ import 'package:laplanif/services/deal_cache_repository.dart';
 import 'package:laplanif/services/deal_preference_repository.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
 import 'package:laplanif/services/meal_plan_config_repository.dart';
+import 'package:laplanif/services/meal_plan_generation_service.dart';
 import 'package:laplanif/services/meal_plan_preview_service.dart';
 import 'package:laplanif/services/model_fallback_controller.dart';
 import 'package:laplanif/services/store_config_repository.dart';
@@ -184,6 +186,48 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     List<AnchorItem> alreadyUsedAnchors = const [],
     String dietaryNotes = '',
     String? model,
+  }) {
+    return _byModel(model!);
+  }
+}
+
+/// Generation-service fake: the caller decides what full plan comes back for
+/// a given set of confirmed preview slots/items, independent of the real AI
+/// call.
+class _FakeGenerationService extends MealPlanGenerationService {
+  _FakeGenerationService(this._handler);
+
+  final Future<MealPlanFull> Function(List<MealSlotPreview> slots, List<DealItem> items) _handler;
+
+  @override
+  Future<MealPlanFull> generateMealPlan({
+    required String apiKey,
+    required List<MealSlotPreview> slots,
+    required List<DealItem> items,
+    String dietaryNotes = '',
+    String? model,
+    List<String>? groundingModels,
+  }) {
+    return _handler(slots, items);
+  }
+}
+
+/// Generation-service fake for exercising the model-fallback/rate-limit flow
+/// on the full-plan generation call: the caller decides what happens per
+/// model.
+class _FakeModelAwareGenerationService extends MealPlanGenerationService {
+  _FakeModelAwareGenerationService(this._byModel);
+
+  final Future<MealPlanFull> Function(String model) _byModel;
+
+  @override
+  Future<MealPlanFull> generateMealPlan({
+    required String apiKey,
+    required List<MealSlotPreview> slots,
+    required List<DealItem> items,
+    String dietaryNotes = '',
+    String? model,
+    List<String>? groundingModels,
   }) {
     return _byModel(model!);
   }
@@ -1289,7 +1333,9 @@ void main() {
     expect(find.text('Fromage'), findsOneWidget);
   });
 
-  testWidgets('generates a meal plan preview, swaps an anchor item, and stubs the full-plan button', (tester) async {
+  testWidgets('generates a meal plan preview, swaps an anchor item, then generates the full meal plan', (
+    tester,
+  ) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -1344,6 +1390,38 @@ void main() {
       ),
     );
 
+    final generationService = _FakeGenerationService(
+      (slots, items) async => MealPlanFull(
+        slots: [
+          MealSlotFull(
+            mealType: slots.single.mealType,
+            protein: slots.single.protein,
+            count: slots.single.count,
+            portionsPerMeal: slots.single.portionsPerMeal,
+            proteinComponent: const MealComponent(
+              type: MealComponentType.link,
+              name: 'Slow-roasted pulled pork',
+              recipeUrl: 'https://example.com/pulled-pork',
+              usesWeeklyDeal: true,
+              dealItems: [AnchorItem(name: 'Ground pork', store: 'IGA')],
+            ),
+            carbComponent: const MealComponent(
+              type: MealComponentType.coveredByProtein,
+              name: 'Buns (included in the pulled pork recipe)',
+              recipeUrl: 'https://example.com/pulled-pork',
+              usesWeeklyDeal: false,
+            ),
+            vegetableComponent: const MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Steamed green beans',
+              note: 'Steam 5 min, toss with butter.',
+              usesWeeklyDeal: false,
+            ),
+          ),
+        ],
+      ),
+    );
+
     await tester.pumpWidget(
       MaterialApp(
         home: PlanifScreen(
@@ -1353,6 +1431,7 @@ void main() {
           aiConfigRepository: aiConfigRepo,
           mealPlanConfigRepository: mealPlanConfigRepository,
           previewService: previewService,
+          generationService: generationService,
         ),
       ),
     );
@@ -1383,10 +1462,422 @@ void main() {
     expect(find.textContaining('Ground pork'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
-    // Stub button just confirms the checkpoint for now - wiring comes next.
     await tester.tap(find.text('Looks good, generate full plan →'));
     await tester.pumpAndSettle();
-    expect(find.text('Full recipe generation is coming soon.'), findsOneWidget);
+
+    // Switches straight to the full-plan view once generation succeeds.
+    expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
+    expect(find.text('https://example.com/pulled-pork'), findsOneWidget);
+    expect(find.text("This week's deal"), findsOneWidget);
+    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    expect(find.text('This recipe already includes the carb — see above.'), findsOneWidget);
+    expect(find.text('Steamed green beans'), findsOneWidget);
+    expect(find.text('Steam 5 min, toss with butter.'), findsOneWidget);
+
+    // The view switcher now offers the full plan alongside the other two.
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Meal plan preview'));
+    await tester.pumpAndSettle();
+    expect(find.text('Looks good, generate full plan →'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Full meal plan'));
+    await tester.pumpAndSettle();
+    expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
+  });
+
+  testWidgets('shows an error snackbar and re-enables the button when full-plan generation fails', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+    final generationService = _FakeGenerationService((slots, items) async => throw Exception('AI API HTTP 500'));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          generationService: generationService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Could not generate full meal plan: AI API HTTP 500'), findsOneWidget);
+    expect(find.text('Looks good, generate full plan →'), findsOneWidget);
+  });
+
+  testWidgets('prompts for the next model when the full-plan generation call is still rate limited, and continues with it', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    await aiConfigRepo.saveModels(['model-a', 'model-b']);
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+
+    final generationService = _FakeModelAwareGenerationService((model) async {
+      if (model == 'model-a') throw RateLimitedException(model);
+      return const MealPlanFull(
+        slots: [
+          MealSlotFull(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 5,
+            portionsPerMeal: 3,
+            proteinComponent: MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Roast chicken thighs',
+              note: 'Roast at 425F for 35 min.',
+              usesWeeklyDeal: true,
+              dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            ),
+            carbComponent: MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+            vegetableComponent: MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Broccoli',
+              usesWeeklyDeal: false,
+            ),
+          ),
+        ],
+      );
+    });
+
+    String? promptedCurrent;
+    String? promptedNext;
+    var promptCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          generationService: generationService,
+          rateLimitWait: Duration.zero,
+          rateLimitPrompt: (context, {required currentModel, nextModel}) async {
+            promptCalls++;
+            promptedCurrent = currentModel;
+            promptedNext = nextModel;
+            return RateLimitChoice.nextModel;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.pumpAndSettle();
+
+    expect(promptCalls, 1);
+    expect(promptedCurrent, 'model-a');
+    expect(promptedNext, 'model-b');
+    expect(find.text('Roast chicken thighs'), findsOneWidget);
+  });
+
+  testWidgets('opens a recipe link via the injected launcher when tapped', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+    final generationService = _FakeGenerationService(
+      (slots, items) async => MealPlanFull(
+        slots: [
+          MealSlotFull(
+            mealType: slots.single.mealType,
+            protein: slots.single.protein,
+            count: slots.single.count,
+            portionsPerMeal: slots.single.portionsPerMeal,
+            proteinComponent: const MealComponent(
+              type: MealComponentType.link,
+              name: 'Slow-roasted pulled pork',
+              recipeUrl: 'https://example.com/pulled-pork',
+              usesWeeklyDeal: false,
+            ),
+            carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+            vegetableComponent: const MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Broccoli',
+              usesWeeklyDeal: false,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final openedUris = <Uri>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          generationService: generationService,
+          launchRecipeLink: (uri) async => openedUris.add(uri),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('https://example.com/pulled-pork'));
+    await tester.pumpAndSettle();
+
+    expect(openedUris, [Uri.parse('https://example.com/pulled-pork')]);
+  });
+
+  testWidgets('shows ingredients and numbered steps for an ai_recipe component', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+    final generationService = _FakeGenerationService(
+      (slots, items) async => MealPlanFull(
+        slots: [
+          MealSlotFull(
+            mealType: slots.single.mealType,
+            protein: slots.single.protein,
+            count: slots.single.count,
+            portionsPerMeal: slots.single.portionsPerMeal,
+            proteinComponent: const MealComponent(
+              type: MealComponentType.aiRecipe,
+              name: 'Big-batch chicken thigh curry',
+              ingredients: [Ingredient(name: 'chicken thighs', amount: '1.5 kg')],
+              instructions: ['Sear the chicken.', 'Simmer in curry sauce for 20 min.'],
+              usesWeeklyDeal: true,
+              dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            ),
+            carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+            vegetableComponent: const MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Broccoli',
+              usesWeeklyDeal: false,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          generationService: generationService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AI recipe'), findsOneWidget);
+    expect(find.text('Ingredients'), findsOneWidget);
+    expect(find.text('• chicken thighs — 1.5 kg'), findsOneWidget);
+    expect(find.text('Steps'), findsOneWidget);
+    expect(find.text('1. Sear the chicken.'), findsOneWidget);
+    expect(find.text('2. Simmer in curry sauce for 20 min.'), findsOneWidget);
   });
 
   testWidgets('shows an error snackbar and re-enables the button when the preview call fails', (tester) async {

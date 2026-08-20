@@ -29,6 +29,7 @@ class ConfigScreen extends StatefulWidget {
 class _ConfigScreenState extends State<ConfigScreen> {
   List<StoreConfig>? _stores;
   List<String>? _models;
+  List<String>? _groundingModels;
   MealPlanConfig? _mealPlanConfig;
   final _apiKeyController = TextEditingController();
   final _portionsController = TextEditingController();
@@ -44,6 +45,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _load();
     _loadApiKey();
     _loadModels();
+    _loadGroundingModels();
     _loadMealPlanConfig();
   }
 
@@ -95,6 +97,12 @@ class _ConfigScreenState extends State<ConfigScreen> {
     final models = await widget.aiConfigRepository.loadModels();
     if (!mounted) return;
     setState(() => _models = models);
+  }
+
+  Future<void> _loadGroundingModels() async {
+    final models = await widget.aiConfigRepository.loadGroundingModels();
+    if (!mounted) return;
+    setState(() => _groundingModels = models);
   }
 
   Future<void> _loadMealPlanConfig() async {
@@ -185,6 +193,37 @@ class _ConfigScreenState extends State<ConfigScreen> {
     await widget.aiConfigRepository.saveModels(_models!);
   }
 
+  Future<void> _openGroundingModelEditor({String? existing, int? index}) async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => _ModelEditorDialog(existing: existing),
+    );
+    if (result == null) return;
+    setState(() {
+      if (index == null) {
+        _groundingModels!.add(result);
+      } else {
+        _groundingModels![index] = result;
+      }
+    });
+    await widget.aiConfigRepository.saveGroundingModels(_groundingModels!);
+  }
+
+  Future<void> _removeGroundingModel(int index) async {
+    setState(() => _groundingModels!.removeAt(index));
+    await widget.aiConfigRepository.saveGroundingModels(_groundingModels!);
+  }
+
+  // Only called from the move-up/move-down buttons, which are disabled at
+  // the top/bottom of the list, so index + delta is always in range here.
+  Future<void> _moveGroundingModel(int index, int delta) async {
+    setState(() {
+      final entry = _groundingModels!.removeAt(index);
+      _groundingModels!.insert(index + delta, entry);
+    });
+    await widget.aiConfigRepository.saveGroundingModels(_groundingModels!);
+  }
+
   Future<void> _openEditor({StoreConfig? existing}) async {
     // Deal items are matched back to a store by display name (see
     // planif_screen._retryStore), so two stores sharing a name would
@@ -219,6 +258,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   Widget build(BuildContext context) {
     final stores = _stores;
     final models = _models;
+    final groundingModels = _groundingModels;
     final mealPlanConfig = _mealPlanConfig;
     return Scaffold(
       appBar: AppBar(title: const Text('Config')),
@@ -468,6 +508,70 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   ),
                 );
               }, childCount: models.length),
+            ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Grounding search models (tried in order)',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Add grounding model',
+                    onPressed: groundingModels == null ? null : () => _openGroundingModelEditor(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                "Used for the full-plan step's recipe-link search - keep this to models that actually carry a "
+                'Search grounding quota on your API key, which can be a narrower set than the models above.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ),
+          if (groundingModels != null)
+            SliverList(
+              delegate: SliverChildBuilderDelegate((context, i) {
+                return ListTile(
+                  dense: true,
+                  title: Text(groundingModels[i]),
+                  onTap: () => _openGroundingModelEditor(existing: groundingModels[i], index: i),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_upward),
+                        tooltip: 'Move grounding model up',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: i == 0 ? null : () => _moveGroundingModel(i, -1),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.arrow_downward),
+                        tooltip: 'Move grounding model down',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: i == groundingModels.length - 1 ? null : () => _moveGroundingModel(i, 1),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Remove grounding model',
+                        visualDensity: VisualDensity.compact,
+                        // At least one grounding model must stay configured.
+                        onPressed: groundingModels.length == 1 ? null : () => _removeGroundingModel(i),
+                      ),
+                    ],
+                  ),
+                );
+              }, childCount: groundingModels.length),
             ),
           SliverToBoxAdapter(
             child: ListTile(

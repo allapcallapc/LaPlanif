@@ -104,10 +104,23 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final cached = await widget.cacheRepository.load();
     if (cached.isEmpty) return;
     final withPreferences = await _applyPreferences(cached);
+    // Loaded alongside the cache so _hasRun implies _apiKey is set, same as
+    // the _fetchAll path - otherwise Step 2's "Preview" button would render
+    // enabled but silently do nothing until an actual fetch runs.
+    final apiKey = await widget.aiConfigRepository.loadApiKey();
+    final models = apiKey.isEmpty ? <String>[] : await widget.aiConfigRepository.loadModels();
     if (!mounted) return;
+    // A real fetch that started (and possibly finished) while this cache
+    // load was still in flight always wins - applying stale cached data on
+    // top of it would silently discard fresher results.
+    if (_isRunning || _hasRun) return;
     setState(() {
       _items = withPreferences;
       _hasRun = true;
+      if (apiKey.isNotEmpty) {
+        _apiKey = apiKey;
+        _models = models;
+      }
     });
   }
 
@@ -120,11 +133,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
       ).showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
       return;
     }
-
-    // An explicit reload starts over: last fetch's priority/excluded
-    // selections were made against items that are about to be replaced, so
-    // keeping them around would silently misapply old choices to new deals.
-    await widget.preferenceRepository.clearAll();
 
     final models = await widget.aiConfigRepository.loadModels();
     final stores = await widget.repository.load();
@@ -147,8 +155,24 @@ class _PlanifScreenState extends State<PlanifScreen> {
       items.addAll(await _fetchStore(state, apiKey, models));
     }
 
-    final withPreferences = await _applyPreferences(items);
-    await widget.cacheRepository.save(withPreferences);
+    // Every store failing leaves nothing to show for this reload - keep
+    // whatever was cached/selected before rather than wiping it out for an
+    // empty result.
+    var withPreferences = items;
+    if (items.isNotEmpty) {
+      // An explicit reload starts over: last fetch's priority/excluded
+      // selections were made against items that are about to be replaced, so
+      // keeping them around would silently misapply old choices to new
+      // deals. Done only once there are actual new items to apply it to.
+      await widget.preferenceRepository.clearAll();
+      withPreferences = await _applyPreferences(items);
+      try {
+        await widget.cacheRepository.save(withPreferences);
+      } catch (_) {
+        // Non-fatal: the freshly fetched items are still shown for this
+        // session, just not persisted for the next time the screen opens.
+      }
+    }
     if (!mounted) return;
     setState(() {
       _items = withPreferences;
@@ -177,8 +201,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Future<void> _generatePreview() async {
+    if (_isPreviewLoading || _regeneratingSlots.isNotEmpty) return;
     final apiKey = _apiKey;
-    if (apiKey == null || _isPreviewLoading || _regeneratingSlots.isNotEmpty) return;
+    if (apiKey == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
+      return;
+    }
 
     final config = await widget.mealPlanConfigRepository.load();
     setState(() => _isPreviewLoading = true);
@@ -340,7 +370,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final rawItems = await _fetchStore(state, apiKey, _models);
     final items = await _applyPreferences(rawItems);
     final merged = [..._items.where((item) => item.storeName != state.store.name), ...items];
-    await widget.cacheRepository.save(merged);
+    try {
+      await widget.cacheRepository.save(merged);
+    } catch (_) {
+      // Non-fatal: the merged items are still shown for this session, just
+      // not persisted for the next time the screen opens.
+    }
     if (!mounted) return;
     setState(() {
       _items = merged;

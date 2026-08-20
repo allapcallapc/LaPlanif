@@ -42,6 +42,11 @@ class DealPreferenceRepository {
     await prefs.setString(_prefsKey, jsonEncode(current));
   }
 
+  Future<void> clearAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefsKey);
+  }
+
   DealPreference _fromName(String name) =>
       DealPreference.values.firstWhere((p) => p.name == name, orElse: () => DealPreference.neutral);
 }

@@ -294,77 +294,82 @@ void main() {
     expect(find.text('2.49\$/lb'), findsOneWidget);
   });
 
-  testWidgets('tapping an item cycles its preference, updates the summary, and persists across reload', (
-    tester,
-  ) async {
-    final repository = StoreConfigRepository();
-    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+  testWidgets(
+    'tapping an item cycles its preference, updates the summary, and survives reopening the screen from cache',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
-    final aiConfigRepo = AiConfigRepository();
-    await aiConfigRepo.saveApiKey('sk-test');
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
 
-    final scraper = _FakePagesScraper({
-      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
-    });
-    final extraction = _FakeExtractionService({
-      'IGA': () async => const [
-        DealItem(
-          name: 'Poulet',
-          price: '3.99\$',
-          unit: '',
-          category: DealCategory.protein,
-          storeName: 'IGA',
-          pageIndex: 2,
+      final scraper = _FakePagesScraper({
+        'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      });
+      final extraction = _FakeExtractionService({
+        'IGA': () async => const [
+          DealItem(
+            name: 'Poulet',
+            price: '3.99\$',
+            unit: '',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 2,
+          ),
+        ],
+      });
+      final preferenceRepository = DealPreferenceRepository();
+
+      Future<void> pumpScreen() => tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            scraperService: scraper,
+            extractionService: extraction,
+            aiConfigRepository: aiConfigRepo,
+            preferenceRepository: preferenceRepository,
+          ),
         ),
-      ],
-    });
-    final preferenceRepository = DealPreferenceRepository();
+      );
 
-    Future<void> pumpScreen() => tester.pumpWidget(
-      MaterialApp(
-        home: PlanifScreen(
-          repository: repository,
-          scraperService: scraper,
-          extractionService: extraction,
-          aiConfigRepository: aiConfigRepo,
-          preferenceRepository: preferenceRepository,
-        ),
-      ),
-    );
+      await pumpScreen();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Fetch deals'));
+      await tester.pumpAndSettle();
 
-    await pumpScreen();
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Fetch deals'));
-    await tester.pumpAndSettle();
+      expect(find.text('0 priority, 0 excluded'), findsOneWidget);
 
-    expect(find.text('0 priority, 0 excluded'), findsOneWidget);
+      // neutral -> priority
+      await tester.tap(find.text('Poulet'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 priority, 0 excluded'), findsOneWidget);
+      expect(find.byIcon(Icons.star), findsOneWidget);
 
-    // neutral -> priority
-    await tester.tap(find.text('Poulet'));
-    await tester.pumpAndSettle();
-    expect(find.text('1 priority, 0 excluded'), findsOneWidget);
-    expect(find.byIcon(Icons.star), findsOneWidget);
+      // priority -> excluded
+      await tester.tap(find.text('Poulet'));
+      await tester.pumpAndSettle();
+      expect(find.text('0 priority, 1 excluded'), findsOneWidget);
+      expect(find.byIcon(Icons.star), findsNothing);
 
-    // priority -> excluded
-    await tester.tap(find.text('Poulet'));
-    await tester.pumpAndSettle();
-    expect(find.text('0 priority, 1 excluded'), findsOneWidget);
-    expect(find.byIcon(Icons.star), findsNothing);
+      expect(await preferenceRepository.loadAll(), {'IGA::Poulet::3.99\$::': DealPreference.excluded});
 
-    expect(await preferenceRepository.loadAll(), {'IGA::Poulet::3.99\$::': DealPreference.excluded});
+      // Reopening the screen (a fresh widget instance, as if the app were
+      // relaunched) shows the cached items straight away, with the
+      // persisted exclusion still applied - no "Fetch deals" tap needed.
+      await pumpScreen();
+      await tester.pumpAndSettle();
+      expect(find.text('Poulet'), findsOneWidget);
+      expect(find.text('0 priority, 1 excluded'), findsOneWidget);
 
-    // Re-fetching (e.g. after reopening the app) re-applies the persisted
-    // exclusion instead of resetting every item back to neutral.
-    await tester.tap(find.text('Fetch deals'));
-    await tester.pumpAndSettle();
-    expect(find.text('0 priority, 1 excluded'), findsOneWidget);
-
-    // excluded -> neutral, which also clears the persisted entry.
-    await tester.tap(find.text('Poulet'));
-    await tester.pumpAndSettle();
-    expect(find.text('0 priority, 0 excluded'), findsOneWidget);
-    expect(await preferenceRepository.loadAll(), isEmpty);
-  });
+      // Explicitly reloading (tapping "Fetch deals" again) is a deliberate
+      // reset: it clears the persisted priority/excluded selections rather
+      // than re-applying them to the freshly fetched items.
+      await tester.tap(find.text('Fetch deals'));
+      await tester.pumpAndSettle();
+      expect(find.text('0 priority, 0 excluded'), findsOneWidget);
+      expect(await preferenceRepository.loadAll(), isEmpty);
+    },
+  );
 
   testWidgets('shows resolved and failed rows in the full list while another store is still fetching', (
     tester,

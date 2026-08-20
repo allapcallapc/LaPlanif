@@ -6,6 +6,7 @@ import '../models/meal_plan_preview.dart';
 import '../models/store_config.dart';
 import '../services/ai_config_repository.dart';
 import '../services/ai_deal_extraction_service.dart';
+import '../services/deal_cache_repository.dart';
 import '../services/deal_preference_repository.dart';
 import '../services/flyer_scraper_service.dart';
 import '../services/meal_plan_config_repository.dart';
@@ -41,6 +42,7 @@ class PlanifScreen extends StatefulWidget {
     AiDealExtractionService? extractionService,
     AiConfigRepository? aiConfigRepository,
     DealPreferenceRepository? preferenceRepository,
+    DealCacheRepository? cacheRepository,
     MealPlanConfigRepository? mealPlanConfigRepository,
     MealPlanPreviewService? previewService,
     Duration? rateLimitWait,
@@ -49,6 +51,7 @@ class PlanifScreen extends StatefulWidget {
        extractionService = extractionService ?? AiDealExtractionService(),
        aiConfigRepository = aiConfigRepository ?? AiConfigRepository(),
        preferenceRepository = preferenceRepository ?? DealPreferenceRepository(),
+       cacheRepository = cacheRepository ?? DealCacheRepository(),
        mealPlanConfigRepository = mealPlanConfigRepository ?? MealPlanConfigRepository(),
        previewService = previewService ?? MealPlanPreviewService(),
        rateLimitWait = rateLimitWait ?? const Duration(minutes: 1),
@@ -59,6 +62,7 @@ class PlanifScreen extends StatefulWidget {
   final AiDealExtractionService extractionService;
   final AiConfigRepository aiConfigRepository;
   final DealPreferenceRepository preferenceRepository;
+  final DealCacheRepository cacheRepository;
   final MealPlanConfigRepository mealPlanConfigRepository;
   final MealPlanPreviewService previewService;
 
@@ -88,6 +92,25 @@ class _PlanifScreenState extends State<PlanifScreen> {
   bool _showPreview = false;
   final Set<int> _regeneratingSlots = {};
 
+  @override
+  void initState() {
+    super.initState();
+    _loadCachedItems();
+  }
+
+  // Shows the last fetch's results immediately on open, so the user isn't
+  // forced to re-fetch every time just to see deals they already pulled.
+  Future<void> _loadCachedItems() async {
+    final cached = await widget.cacheRepository.load();
+    if (cached.isEmpty) return;
+    final withPreferences = await _applyPreferences(cached);
+    if (!mounted) return;
+    setState(() {
+      _items = withPreferences;
+      _hasRun = true;
+    });
+  }
+
   Future<void> _fetchAll() async {
     final apiKey = await widget.aiConfigRepository.loadApiKey();
     if (apiKey.isEmpty) {
@@ -97,6 +120,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
       ).showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
       return;
     }
+
+    // An explicit reload starts over: last fetch's priority/excluded
+    // selections were made against items that are about to be replaced, so
+    // keeping them around would silently misapply old choices to new deals.
+    await widget.preferenceRepository.clearAll();
 
     final models = await widget.aiConfigRepository.loadModels();
     final stores = await widget.repository.load();
@@ -120,6 +148,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     }
 
     final withPreferences = await _applyPreferences(items);
+    await widget.cacheRepository.save(withPreferences);
     if (!mounted) return;
     setState(() {
       _items = withPreferences;
@@ -310,9 +339,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
     setState(() => _isRunning = true);
     final rawItems = await _fetchStore(state, apiKey, _models);
     final items = await _applyPreferences(rawItems);
+    final merged = [..._items.where((item) => item.storeName != state.store.name), ...items];
+    await widget.cacheRepository.save(merged);
     if (!mounted) return;
     setState(() {
-      _items = [..._items.where((item) => item.storeName != state.store.name), ...items];
+      _items = merged;
       // A retry can drop the filtered store to zero items, which would
       // otherwise leave _storeFilter pointing at a name _buildResults can no
       // longer find - reset it rather than showing an unexplained empty list.

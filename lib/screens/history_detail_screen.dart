@@ -1,0 +1,320 @@
+import 'package:flutter/material.dart';
+
+import '../models/meal_history.dart';
+import '../models/meal_plan_full.dart';
+import '../models/meal_plan_preview.dart';
+import '../services/meal_history_repository.dart';
+import '../widgets/meal_slot_full_card.dart';
+
+/// Views and edits one saved week's plan. A slot's recipe name and anchor
+/// deal items can be changed manually (reusing [MealSlotFullCard] for
+/// display); re-saving overwrites this week's history entry, matching the
+/// "one plan per week" storage rule.
+class HistoryDetailScreen extends StatefulWidget {
+  HistoryDetailScreen({super.key, required this.entry, MealHistoryRepository? repository})
+    : repository = repository ?? MealHistoryRepository();
+
+  final MealHistoryEntry entry;
+  final MealHistoryRepository repository;
+
+  @override
+  State<HistoryDetailScreen> createState() => _HistoryDetailScreenState();
+}
+
+class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
+  late List<MealSlotFull> _slots;
+  bool _isDirty = false;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _slots = List.of(widget.entry.slots);
+  }
+
+  Future<void> _editSlot(int index) async {
+    final updated = await showDialog<MealSlotFull>(
+      context: context,
+      builder: (_) => _EditSlotDialog(slot: _slots[index]),
+    );
+    if (updated == null) return;
+    setState(() {
+      _slots[index] = updated;
+      _isDirty = true;
+    });
+  }
+
+  Future<void> _save() async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+    final updated = widget.entry.copyWith(savedAt: DateTime.now(), slots: _slots);
+    await widget.repository.saveWeek(updated);
+    if (!mounted) return;
+    setState(() {
+      _isSaving = false;
+      _isDirty = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Week updated.')));
+  }
+
+  Future<void> _delete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete this week?'),
+        content: Text('This removes the saved plan for ${widget.entry.weekId}. This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await widget.repository.deleteWeek(widget.entry.weekId);
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.entry.weekId),
+        actions: [
+          IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Delete this week', onPressed: _delete),
+        ],
+      ),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _slots.length,
+        itemBuilder: (context, i) => MealSlotFullCard(
+          slot: _slots[i],
+          trailing: IconButton(
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            tooltip: 'Edit this slot',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _editSlot(i),
+          ),
+        ),
+      ),
+      bottomNavigationBar: _isDirty
+          ? SafeArea(
+              minimum: const EdgeInsets.all(12),
+              child: FilledButton.icon(
+                onPressed: _isSaving ? null : _save,
+                icon: _isSaving
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.save_outlined),
+                label: Text(_isSaving ? 'Saving…' : 'Save changes'),
+                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+              ),
+            )
+          : null,
+    );
+  }
+}
+
+/// Per-component editable state: name plus the deal items anchoring it.
+/// [usesWeeklyDeal] is derived from whether any deal items remain rather
+/// than kept as a separate toggle, so it can never drift out of sync with
+/// the list a user is actually editing.
+class _ComponentEdit {
+  _ComponentEdit(MealComponent component)
+    : nameController = TextEditingController(text: component.name),
+      dealItems = List.of(component.dealItems),
+      type = component.type,
+      recipeUrl = component.recipeUrl,
+      ingredients = component.ingredients,
+      instructions = component.instructions,
+      note = component.note;
+
+  final TextEditingController nameController;
+  List<AnchorItem> dealItems;
+  final MealComponentType type;
+  final String? recipeUrl;
+  final List<Ingredient> ingredients;
+  final List<String> instructions;
+  final String note;
+
+  MealComponent toComponent() => MealComponent(
+    type: type,
+    name: nameController.text.trim(),
+    recipeUrl: recipeUrl,
+    ingredients: ingredients,
+    instructions: instructions,
+    note: note,
+    usesWeeklyDeal: dealItems.isNotEmpty,
+    dealItems: dealItems,
+  );
+
+  void dispose() => nameController.dispose();
+}
+
+class _EditSlotDialog extends StatefulWidget {
+  const _EditSlotDialog({required this.slot});
+
+  final MealSlotFull slot;
+
+  @override
+  State<_EditSlotDialog> createState() => _EditSlotDialogState();
+}
+
+class _EditSlotDialogState extends State<_EditSlotDialog> {
+  late final _ComponentEdit _protein;
+  late final _ComponentEdit _carb;
+  late final _ComponentEdit _vegetable;
+
+  @override
+  void initState() {
+    super.initState();
+    _protein = _ComponentEdit(widget.slot.proteinComponent);
+    _carb = _ComponentEdit(widget.slot.carbComponent);
+    _vegetable = _ComponentEdit(widget.slot.vegetableComponent);
+  }
+
+  @override
+  void dispose() {
+    _protein.dispose();
+    _carb.dispose();
+    _vegetable.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addAnchor(_ComponentEdit component) async {
+    final anchor = await showDialog<AnchorItem>(context: context, builder: (_) => const _AnchorEditDialog());
+    if (anchor == null) return;
+    setState(() => component.dealItems = [...component.dealItems, anchor]);
+  }
+
+  Future<void> _editAnchor(_ComponentEdit component, AnchorItem current) async {
+    final anchor = await showDialog<AnchorItem>(context: context, builder: (_) => _AnchorEditDialog(existing: current));
+    if (anchor == null) return;
+    setState(() {
+      component.dealItems = component.dealItems.map((a) => identical(a, current) ? anchor : a).toList();
+    });
+  }
+
+  void _removeAnchor(_ComponentEdit component, AnchorItem anchor) {
+    setState(() => component.dealItems = component.dealItems.where((a) => !identical(a, anchor)).toList());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit slot'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildComponentEditor('Protein', _protein),
+              const SizedBox(height: 16),
+              _buildComponentEditor('Carb', _carb),
+              const SizedBox(height: 16),
+              _buildComponentEditor('Vegetable', _vegetable),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () {
+            final updated = widget.slot.copyWith(
+              proteinComponent: _protein.toComponent(),
+              carbComponent: _carb.toComponent(),
+              vegetableComponent: _vegetable.toComponent(),
+            );
+            Navigator.of(context).pop(updated);
+          },
+          child: const Text('Done'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildComponentEditor(String label, _ComponentEdit component) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        TextField(
+          controller: component.nameController,
+          decoration: const InputDecoration(labelText: 'Recipe name', isDense: true),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final anchor in component.dealItems)
+              InputChip(
+                avatar: const Icon(Icons.local_offer_outlined, size: 16),
+                label: Text('${anchor.name} · ${anchor.store}'),
+                tooltip: 'Tap to edit, or use the × to remove',
+                onPressed: () => _editAnchor(component, anchor),
+                deleteIcon: const Icon(Icons.close, size: 16),
+                onDeleted: () => _removeAnchor(component, anchor),
+              ),
+            ActionChip(
+              avatar: const Icon(Icons.add, size: 16),
+              label: const Text('Add anchor'),
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _addAnchor(component),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AnchorEditDialog extends StatefulWidget {
+  const _AnchorEditDialog({this.existing});
+
+  final AnchorItem? existing;
+
+  @override
+  State<_AnchorEditDialog> createState() => _AnchorEditDialogState();
+}
+
+class _AnchorEditDialogState extends State<_AnchorEditDialog> {
+  late final _nameController = TextEditingController(text: widget.existing?.name ?? '');
+  late final _storeController = TextEditingController(text: widget.existing?.store ?? '');
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _storeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.existing == null ? 'Add anchor item' : 'Edit anchor item'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Item name')),
+          TextField(controller: _storeController, decoration: const InputDecoration(labelText: 'Store')),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () {
+            final name = _nameController.text.trim();
+            final store = _storeController.text.trim();
+            if (name.isEmpty) return;
+            Navigator.of(context).pop(AnchorItem(name: name, store: store));
+          },
+          child: const Text('Save'),
+        ),
+      ],
+    );
+  }
+}

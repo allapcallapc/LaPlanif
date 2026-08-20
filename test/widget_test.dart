@@ -44,6 +44,18 @@ void main() {
     await tester.pumpAndSettle();
 
     final stack = tester.widget<IndexedStack>(find.byKey(const Key('home_tab_stack')));
+    expect(stack.index, 2);
+  });
+
+  testWidgets('shows the History tab and its empty state', (WidgetTester tester) async {
+    await tester.pumpWidget(const LaPlanifApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(navDestination('History'));
+    await tester.pumpAndSettle();
+
+    final stack = tester.widget<IndexedStack>(find.byKey(const Key('home_tab_stack')));
     expect(stack.index, 1);
+    expect(find.textContaining('No saved weeks yet'), findsOneWidget);
   });
 }

@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:laplanif/models/deal_item.dart';
+import 'package:laplanif/models/meal_history.dart';
 import 'package:laplanif/models/meal_plan_config.dart';
 import 'package:laplanif/models/meal_plan_preview.dart';
 import 'package:laplanif/services/ai_call_activity.dart';
@@ -242,6 +243,65 @@ void main() {
   test('omitting alreadyUsedAnchors sends an empty list, not a missing section', () async {
     final client = MockClient((request) async {
       expect(request.body, contains('already used as anchors elsewhere'));
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'note',
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+    );
+  });
+
+  test('includes recently used recipes and their deal items as a soft diversity hint', () async {
+    final client = MockClient((request) async {
+      expect(request.body, contains('Recently used'));
+      expect(request.body, contains('General Tao Chicken'));
+      expect(request.body, contains('Chicken thighs (IGA)'));
+
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'note',
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+      recentlyUsed: const [
+        RecentHistoryItem(
+          recipeName: 'General Tao Chicken',
+          dealItemsUsed: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+        ),
+      ],
+    );
+  });
+
+  test('omitting recentlyUsed sends an empty list, not a missing section', () async {
+    final client = MockClient((request) async {
+      expect(request.body, contains('Recently used'));
       return _successResponse(
         slots: [
           {

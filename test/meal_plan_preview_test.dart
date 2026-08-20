@@ -10,6 +10,15 @@ void main() {
     expect(anchor.store, 'IGA');
   });
 
+  test('AnchorItem round-trips through JSON', () {
+    final anchor = AnchorItem(name: 'Chicken thighs', store: 'IGA');
+
+    final restored = AnchorItem.fromJson(anchor.toJson());
+
+    expect(restored.name, 'Chicken thighs');
+    expect(restored.store, 'IGA');
+  });
+
   test('MealSlotPreview exposes the fields it was constructed with', () {
     final slot = MealSlotPreview(
       mealType: MealType.lunch,

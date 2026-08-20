@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import 'screens/config_screen.dart';
+import 'screens/history_screen.dart';
 import 'screens/planif_screen.dart';
 import 'services/ai_config_repository.dart';
 import 'services/ai_deal_extraction_service.dart';
 import 'services/flyer_scraper_service.dart';
+import 'services/meal_history_repository.dart';
 import 'services/store_config_repository.dart';
 
 void main() {
@@ -40,6 +42,7 @@ class _HomeShellState extends State<HomeShell> {
   final AiConfigRepository _aiConfigRepository = AiConfigRepository();
   final FlyerScraperService _scraperService = FlyerScraperService();
   final AiDealExtractionService _extractionService = AiDealExtractionService();
+  final MealHistoryRepository _mealHistoryRepository = MealHistoryRepository();
   int _tabIndex = 0;
 
   @override
@@ -50,7 +53,9 @@ class _HomeShellState extends State<HomeShell> {
         scraperService: _scraperService,
         extractionService: _extractionService,
         aiConfigRepository: _aiConfigRepository,
+        mealHistoryRepository: _mealHistoryRepository,
       ),
+      HistoryScreen(repository: _mealHistoryRepository),
       ConfigScreen(repository: _storeRepository, aiConfigRepository: _aiConfigRepository),
     ];
     return Scaffold(
@@ -67,6 +72,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.checklist_outlined),
             selectedIcon: Icon(Icons.checklist),
             label: 'Planif',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.history_outlined),
+            selectedIcon: Icon(Icons.history),
+            label: 'History',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),

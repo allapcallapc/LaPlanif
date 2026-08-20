@@ -42,6 +42,11 @@ class Ingredient {
 
   final String name;
   final String amount;
+
+  Map<String, dynamic> toJson() => {'name': name, 'amount': amount};
+
+  factory Ingredient.fromJson(Map<String, dynamic> json) =>
+      Ingredient(name: json['name'] as String, amount: json['amount'] as String);
 }
 
 /// One of a [MealSlotFull]'s three components (protein, carb, vegetable).
@@ -81,6 +86,32 @@ class MealComponent {
 
   /// The deal item(s) this component draws on, when [usesWeeklyDeal] is true.
   final List<AnchorItem> dealItems;
+
+  Map<String, dynamic> toJson() => {
+    'type': type.value,
+    'name': name,
+    'recipeUrl': recipeUrl,
+    'ingredients': ingredients.map((i) => i.toJson()).toList(),
+    'instructions': instructions,
+    'note': note,
+    'usesWeeklyDeal': usesWeeklyDeal,
+    'dealItems': dealItems.map((d) => d.toJson()).toList(),
+  };
+
+  factory MealComponent.fromJson(Map<String, dynamic> json) => MealComponent(
+    type: MealComponentType.fromValue(json['type'] as String),
+    name: json['name'] as String,
+    recipeUrl: json['recipeUrl'] as String?,
+    ingredients: (json['ingredients'] as List<dynamic>? ?? const [])
+        .map((i) => Ingredient.fromJson(i as Map<String, dynamic>))
+        .toList(),
+    instructions: (json['instructions'] as List<dynamic>? ?? const []).cast<String>(),
+    note: json['note'] as String? ?? '',
+    usesWeeklyDeal: json['usesWeeklyDeal'] as bool,
+    dealItems: (json['dealItems'] as List<dynamic>? ?? const [])
+        .map((d) => AnchorItem.fromJson(d as Map<String, dynamic>))
+        .toList(),
+  );
 }
 
 /// One fully generated meal: a batch-cooked recipe (protein + carb +
@@ -106,6 +137,60 @@ class MealSlotFull {
   final MealComponent vegetableComponent;
 
   int get totalPortionsNeeded => count * portionsPerMeal;
+
+  /// The recipe name for this slot - the batch-cooked recipe is built around
+  /// its protein, so the protein component's name stands in for the slot's
+  /// overall recipe name (matches how the full-plan card already leads with
+  /// the protein component).
+  String get recipeName => proteinComponent.name;
+
+  /// Every deal item this slot draws on, across all three components,
+  /// deduped by name+store - used as the diversity-window lookup key for
+  /// history entries so the same anchor isn't counted twice just because two
+  /// components happened to share it.
+  List<AnchorItem> get dealItemsUsed {
+    final seen = <String>{};
+    final result = <AnchorItem>[];
+    for (final component in [proteinComponent, carbComponent, vegetableComponent]) {
+      if (!component.usesWeeklyDeal) continue;
+      for (final item in component.dealItems) {
+        final key = '${item.name.trim().toLowerCase()}::${item.store.trim().toLowerCase()}';
+        if (seen.add(key)) result.add(item);
+      }
+    }
+    return result;
+  }
+
+  Map<String, dynamic> toJson() => {
+    'mealType': mealType.name,
+    'protein': protein,
+    'count': count,
+    'portionsPerMeal': portionsPerMeal,
+    'proteinComponent': proteinComponent.toJson(),
+    'carbComponent': carbComponent.toJson(),
+    'vegetableComponent': vegetableComponent.toJson(),
+  };
+
+  factory MealSlotFull.fromJson(Map<String, dynamic> json) => MealSlotFull(
+    mealType: MealType.fromName(json['mealType'] as String),
+    protein: json['protein'] as String,
+    count: json['count'] as int,
+    portionsPerMeal: json['portionsPerMeal'] as int,
+    proteinComponent: MealComponent.fromJson(json['proteinComponent'] as Map<String, dynamic>),
+    carbComponent: MealComponent.fromJson(json['carbComponent'] as Map<String, dynamic>),
+    vegetableComponent: MealComponent.fromJson(json['vegetableComponent'] as Map<String, dynamic>),
+  );
+
+  MealSlotFull copyWith({MealComponent? proteinComponent, MealComponent? carbComponent, MealComponent? vegetableComponent}) =>
+      MealSlotFull(
+        mealType: mealType,
+        protein: protein,
+        count: count,
+        portionsPerMeal: portionsPerMeal,
+        proteinComponent: proteinComponent ?? this.proteinComponent,
+        carbComponent: carbComponent ?? this.carbComponent,
+        vegetableComponent: vegetableComponent ?? this.vegetableComponent,
+      );
 }
 
 class MealPlanFull {

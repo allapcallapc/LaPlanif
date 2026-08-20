@@ -118,6 +118,13 @@ class _PlanifScreenState extends State<PlanifScreen> {
   MealPlanFull? _fullPlan;
   bool _isGeneratingFullPlan = false;
 
+  // One stable key per category, so a quick-jump chip can scroll the deals
+  // list to that section's header regardless of how many/which categories
+  // are actually present in a given fetch.
+  final Map<DealCategory, GlobalKey> _sectionKeys = {
+    for (final category in DealCategory.values) category: GlobalKey(),
+  };
+
   @override
   void initState() {
     super.initState();
@@ -546,37 +553,44 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // The full-plan CTA lives in a persistent footer instead of at the
+    // bottom of the preview list - it stays reachable without scrolling and
+    // sits far enough from the (deliberately smaller/outlined) "Regenerate
+    // preview" button up top that the two are no longer easy to mix up.
+    final showGenerateFullPlanBar = _viewMode == _ViewMode.preview && _preview != null;
     return Scaffold(
-      appBar: AppBar(title: const Text('Planif')),
-      body: Column(
-        children: [
+      appBar: AppBar(
+        title: const Text('Planif'),
+        actions: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-            child: Row(
-              children: [
-                Text('Step 1', style: Theme.of(context).textTheme.titleSmall),
-                const Spacer(),
-                FilledButton.icon(
-                  onPressed: _isRunning ? null : _fetchAll,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: Text(_isRunning ? 'Fetching…' : 'Fetch deals'),
-                  style: FilledButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  ),
+            padding: const EdgeInsets.only(right: 12),
+            child: Center(
+              child: FilledButton.icon(
+                onPressed: _isRunning ? null : _fetchAll,
+                icon: _isRunning
+                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.refresh, size: 18),
+                label: Text(_isRunning ? 'Fetching…' : 'Fetch deals'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                 ),
-              ],
+              ),
             ),
           ),
+        ],
+      ),
+      body: Column(
+        children: [
           if (_states.isNotEmpty) ...[
-            const Divider(height: 1),
             if (_hasRun) _buildStatusSummary() else ..._states.map(_buildStatusRow),
             const Divider(height: 1),
           ],
-          if (_hasRun && _items.isNotEmpty) ...[_buildStep2Row(), const Divider(height: 1)],
+          if (_hasRun && _items.isNotEmpty) ...[_buildStep2Bar(), const Divider(height: 1)],
           Expanded(child: _buildBody()),
         ],
       ),
+      bottomNavigationBar: showGenerateFullPlanBar ? _buildGenerateFullPlanBar() : null,
     );
   }
 
@@ -675,21 +689,25 @@ class _PlanifScreenState extends State<PlanifScreen> {
       grouped.putIfAbsent(item.category, () => []).add(item);
     }
 
+    final presentCategories = [
+      for (final category in _sectionOrder)
+        if ((grouped[category] ?? const []).isNotEmpty) category,
+    ];
+
     // filtered can't be empty here: _storeFilter is only ever set to a name
     // drawn from storeNames, which is itself derived from _items, so at
     // least one item always matches.
     return Column(
       children: [
-        _buildPreferenceSummary(),
-        if (storeNames.length > 1) _buildStoreFilterRow(storeNames),
+        _buildFilterBar(storeNames),
+        if (presentCategories.length > 1) _buildCategoryJumpRow(presentCategories),
         Expanded(
           child: ListView(
             children: [
-              for (final category in _sectionOrder)
-                if ((grouped[category] ?? const []).isNotEmpty) ...[
-                  _buildSectionHeader(category.label),
-                  ..._coverFirst(grouped[category]!).map(_buildItemTile),
-                ],
+              for (final category in presentCategories) ...[
+                _buildSectionHeader(category),
+                ..._coverFirst(grouped[category]!).map(_buildItemTile),
+              ],
             ],
           ),
         ),
@@ -697,45 +715,84 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  Widget _buildPreferenceSummary() {
+  // Preference summary and store filter share one compact row instead of
+  // two stacked ones, so switching stores/categories doesn't cost as much
+  // vertical space before the actual deal list starts.
+  Widget _buildFilterBar(List<String> storeNames) {
     final priorityCount = _items.where((item) => item.preference == DealPreference.priority).length;
     final excludedCount = _items.where((item) => item.preference == DealPreference.excluded).length;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Text(
-          '$priorityCount priority, $excludedCount excluded',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStoreFilterRow(List<String> storeNames) {
-    return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          Text(
+            '$priorityCount priority, $excludedCount excluded',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          if (storeNames.length > 1) ...[
             ChoiceChip(
               label: const Text('All'),
               selected: _storeFilter == null,
               onSelected: (_) => setState(() => _storeFilter = null),
             ),
-            for (final name in storeNames) ...[
-              const SizedBox(width: 8),
+            for (final name in storeNames)
               ChoiceChip(
                 label: Text(name),
                 selected: _storeFilter == name,
                 onSelected: (_) => setState(() => _storeFilter = name),
               ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // A row of icon-only chips (no category label text - the section headers
+  // already own that text, and duplicating it would just be more clutter)
+  // that jump the deals list straight to a category, so finding e.g. carbs
+  // doesn't mean scrolling past everything ahead of it.
+  Widget _buildCategoryJumpRow(List<DealCategory> categories) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final category in categories) ...[
+              Tooltip(
+                message: category.label,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _scrollToSection(category),
+                  child: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: Icon(_categoryIcon(category), size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
             ],
           ],
         ),
       ),
     );
+  }
+
+  IconData _categoryIcon(DealCategory category) => switch (category) {
+    DealCategory.protein => Icons.set_meal_outlined,
+    DealCategory.vegetables => Icons.eco_outlined,
+    DealCategory.carbs => Icons.bakery_dining_outlined,
+    DealCategory.uncategorized => Icons.category_outlined,
+  };
+
+  void _scrollToSection(DealCategory category) {
+    final sectionContext = _sectionKeys[category]?.currentContext;
+    if (sectionContext == null) return;
+    Scrollable.ensureVisible(sectionContext, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
   }
 
   List<DealItem> _coverFirst(List<DealItem> items) {
@@ -744,11 +801,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
     return [...cover, ...rest];
   }
 
-  Widget _buildSectionHeader(String label) {
+  Widget _buildSectionHeader(DealCategory category) {
     return Padding(
+      key: _sectionKeys[category],
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Text(
-        label,
+        category.label,
         style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
       ),
     );
@@ -792,71 +850,62 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  Widget _buildStep2Row() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Row(
-            children: [
-              Text('Step 2', style: Theme.of(context).textTheme.titleSmall),
-              const Spacer(),
-              FilledButton.icon(
-                onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _generatePreview,
-                icon: _isPreviewLoading
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.restaurant_menu, size: 18),
-                label: Text(
-                  _isPreviewLoading
-                      ? 'Generating…'
-                      : (_preview == null ? 'Preview meal plan' : 'Regenerate preview'),
-                ),
-                style: FilledButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                ),
-              ),
-            ],
+  // View-mode chips and the preview/regenerate action share one compact row.
+  // The regenerate action is deliberately a small outlined button here -
+  // not a big filled pill like "Fetch deals" or the full-plan CTA - so it
+  // reads as a secondary action and isn't easy to mistake for the primary
+  // "generate full plan" button in the footer.
+  Widget _buildStep2Bar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: _preview == null
+                ? const SizedBox.shrink()
+                // Wrap instead of a Row: at narrow widths the chips together
+                // can outgrow the line, and Wrap drops the overflow to a new
+                // line instead of overflowing or needing a scroll gesture.
+                : Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Deal items'),
+                        selected: _viewMode == _ViewMode.deals,
+                        onSelected: (_) => setState(() => _viewMode = _ViewMode.deals),
+                      ),
+                      ChoiceChip(
+                        label: const Text('Meal plan preview'),
+                        selected: _viewMode == _ViewMode.preview,
+                        onSelected: (_) => setState(() => _viewMode = _ViewMode.preview),
+                      ),
+                      if (_fullPlan != null)
+                        ChoiceChip(
+                          label: const Text('Full meal plan'),
+                          selected: _viewMode == _ViewMode.full,
+                          onSelected: (_) => setState(() => _viewMode = _ViewMode.full),
+                        ),
+                    ],
+                  ),
           ),
-        ),
-        if (_preview != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              // Wrap instead of a Row: at narrow widths both chips together
-              // can outgrow the line, and Wrap drops the second one to a new
-              // line instead of overflowing or needing a scroll gesture to
-              // reach it.
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ChoiceChip(
-                    label: const Text('Deal items'),
-                    selected: _viewMode == _ViewMode.deals,
-                    onSelected: (_) => setState(() => _viewMode = _ViewMode.deals),
-                  ),
-                  ChoiceChip(
-                    label: const Text('Meal plan preview'),
-                    selected: _viewMode == _ViewMode.preview,
-                    onSelected: (_) => setState(() => _viewMode = _ViewMode.preview),
-                  ),
-                  if (_fullPlan != null)
-                    ChoiceChip(
-                      label: const Text('Full meal plan'),
-                      selected: _viewMode == _ViewMode.full,
-                      onSelected: (_) => setState(() => _viewMode = _ViewMode.full),
-                    ),
-                ],
-              ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _generatePreview,
+            icon: _isPreviewLoading
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.restaurant_menu, size: 16),
+            label: Text(
+              _isPreviewLoading ? 'Generating…' : (_preview == null ? 'Preview meal plan' : 'Regenerate preview'),
+              style: const TextStyle(fontSize: 13),
+            ),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -864,26 +913,28 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final preview = _preview!;
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: preview.slots.length + 1,
-      itemBuilder: (context, i) {
-        if (i == preview.slots.length) {
-          return Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: FilledButton.icon(
-              onPressed: (_isGeneratingFullPlan || _isPreviewLoading || _regeneratingSlots.isNotEmpty)
-                  ? null
-                  : _generateFullPlan,
-              icon: _isGeneratingFullPlan
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.arrow_forward),
-              label: Text(
-                _isGeneratingFullPlan ? 'Generating full recipes…' : 'Looks good, generate full plan →',
-              ),
-            ),
-          );
-        }
-        return _buildPreviewCard(i, preview.slots[i]);
-      },
+      itemCount: preview.slots.length,
+      itemBuilder: (context, i) => _buildPreviewCard(i, preview.slots[i]),
+    );
+  }
+
+  // The primary CTA for the preview step: pinned to the bottom of the
+  // screen (not the end of a scrollable list) so it's always reachable
+  // without scrolling, and visually far from the small "Regenerate preview"
+  // button up top so the two don't get tapped by mistake for each other.
+  Widget _buildGenerateFullPlanBar() {
+    return SafeArea(
+      minimum: const EdgeInsets.all(12),
+      child: FilledButton.icon(
+        onPressed: (_isGeneratingFullPlan || _isPreviewLoading || _regeneratingSlots.isNotEmpty)
+            ? null
+            : _generateFullPlan,
+        icon: _isGeneratingFullPlan
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.arrow_forward),
+        label: Text(_isGeneratingFullPlan ? 'Generating full recipes…' : 'Looks good, generate full plan →'),
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+      ),
     );
   }
 

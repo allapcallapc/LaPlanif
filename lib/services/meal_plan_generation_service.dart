@@ -524,7 +524,9 @@ For every link you propose (protein, carb, or vegetable), you must have actually
 
 Excluded deal items must never be used in any component.
 
-Write your findings as clear, per-slot notes covering: the protein recipe name and verified URL (or "no verified link found" plus an AI-recipe sketch), whether the carb/vegetable are covered by that recipe, and for each uncovered component its proposed name, verified URL (if any) or AI-recipe sketch or simple-side note, and whether it uses a deal item (naming the item and store).
+A component "uses a deal item" only when that component's own ingredient is itself one of the named deal items below - never because it happens to be cooked on the same pan/tray or in the same recipe as a protein that is a deal item. E.g. a one-pan "roasted sausages and green beans" recipe where only the sausages are a deal item means the vegetable does NOT use a deal item, even though it shares the recipe with one that does. Report each component's deal-item status independently and explicitly say "no" when it doesn't match a named deal item, rather than leaving it implied.
+
+Write your findings as clear, per-slot notes covering: the protein recipe name and verified URL (or "no verified link found" plus an AI-recipe sketch), whether the carb/vegetable are covered by that recipe, and for each uncovered component its proposed name, verified URL (if any) or AI-recipe sketch or simple-side note, and whether IT SPECIFICALLY (not the recipe as a whole) uses a deal item (naming the exact item and store, only if that component's own ingredient matches one).
 ''';
 
 const _extractionSystemPrompt = '''
@@ -539,7 +541,7 @@ For every component, choose exactly one type: "link" (a real recipe found via se
 
 sourceIndex: for type "link", set this to the number of the matching entry in the verified search source list (match by title/description against what the research notes describe). Do NOT write out the URL yourself under any circumstance, even if you recognize it or are confident you know it - these are long opaque redirect links, and retyping one from memory instead of citing it by number will silently produce a dead link. For every component that is not type "link" (including covered_by_protein, which reuses the protein's own link automatically), set sourceIndex to -1. If no source in the list matches a component, use ai_recipe or simple_side instead of guessing an index.
 
-Set usesWeeklyDeal and dealItems (name + store, from the deal items given) truthfully for each component, based on whether it draws on one of this week's deal items - most protein components will, carb/vegetable only when the research notes say so.
+Set usesWeeklyDeal and dealItems (name + store, from the deal items given) truthfully for each component, based on whether THAT COMPONENT'S OWN ingredient matches one of this week's named deal items - most protein components will. A carb/vegetable does NOT use a deal item merely because it shares a recipe or a pan with a protein that does (e.g. a "roasted sausages and green beans" sheet-pan recipe where only the sausages are a deal item: the vegetable's usesWeeklyDeal must be false and dealItems empty, even though the research notes discuss it in the same breath as the protein). Only set usesWeeklyDeal true for carb/vegetable when the research notes name that specific component's ingredient as a deal item in its own right.
 
 Leave ingredients/instructions empty for simple_side and covered_by_protein. Leave note empty except for simple_side, where it holds the short prep note.
 

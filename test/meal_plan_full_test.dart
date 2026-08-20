@@ -15,7 +15,10 @@ void main() {
   });
 
   test('Ingredient exposes the fields it was constructed with', () {
-    const ingredient = Ingredient(name: 'chicken thighs', amount: '1.5 kg');
+    // Deliberately not const: a const invocation is folded at compile time
+    // and never executes at runtime, which would leave this constructor
+    // showing as uncovered.
+    final ingredient = Ingredient(name: 'chicken thighs', amount: '1.5 kg');
 
     expect(ingredient.name, 'chicken thighs');
     expect(ingredient.amount, '1.5 kg');

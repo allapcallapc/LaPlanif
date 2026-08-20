@@ -22,6 +22,14 @@ import '../widgets/rate_limit_dialog.dart';
 /// Which of Step 2's results the screen is currently showing.
 enum _ViewMode { deals, preview, full }
 
+/// Opens a recipe link. Injectable so tests can avoid driving a real
+/// platform URL launcher.
+typedef RecipeLinkLauncher = Future<void> Function(Uri uri);
+
+/// Default [RecipeLinkLauncher]: hands the URL to the platform's own
+/// browser/app handler.
+Future<void> openRecipeLink(Uri uri) => launchUrl(uri, mode: LaunchMode.externalApplication);
+
 const _sectionOrder = [
   DealCategory.protein,
   DealCategory.vegetables,
@@ -54,6 +62,7 @@ class PlanifScreen extends StatefulWidget {
     MealPlanGenerationService? generationService,
     Duration? rateLimitWait,
     RateLimitPrompt? rateLimitPrompt,
+    RecipeLinkLauncher? launchRecipeLink,
   }) : scraperService = scraperService ?? FlyerScraperService(),
        extractionService = extractionService ?? AiDealExtractionService(),
        aiConfigRepository = aiConfigRepository ?? AiConfigRepository(),
@@ -63,7 +72,8 @@ class PlanifScreen extends StatefulWidget {
        previewService = previewService ?? MealPlanPreviewService(),
        generationService = generationService ?? MealPlanGenerationService(),
        rateLimitWait = rateLimitWait ?? const Duration(minutes: 1),
-       rateLimitPrompt = rateLimitPrompt ?? showRateLimitDialog;
+       rateLimitPrompt = rateLimitPrompt ?? showRateLimitDialog,
+       launchRecipeLink = launchRecipeLink ?? openRecipeLink;
 
   final StoreConfigRepository repository;
   final FlyerScraperService scraperService;
@@ -82,6 +92,10 @@ class PlanifScreen extends StatefulWidget {
   /// Asks what to do when a call is still rate limited after that retry.
   /// Injectable so tests can avoid driving a real dialog.
   final RateLimitPrompt rateLimitPrompt;
+
+  /// Opens a recipe link. Injectable so tests can avoid driving a real
+  /// platform URL launcher.
+  final RecipeLinkLauncher launchRecipeLink;
 
   @override
   State<PlanifScreen> createState() => _PlanifScreenState();
@@ -424,7 +438,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final uri = Uri.tryParse(url);
     if (uri == null) return;
     try {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      await widget.launchRecipeLink(uri);
     } catch (_) {
       // Non-fatal: if the platform can't launch it (e.g. no browser handler
       // available), the user still has the URL visible in the card to copy.

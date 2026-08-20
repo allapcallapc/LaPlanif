@@ -337,4 +337,158 @@ void main() {
     expect(log.storeName, 'Meal plan generation (research)');
     expect(log.errorMessage, contains('Could not reach the AI API'));
   });
+
+  test('throws and logs a research-phase failure on a generic non-200, non-429 HTTP status', () async {
+    final client = MockClient((request) async => http.Response('nope', 500));
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+
+    await expectLater(service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items), throwsException);
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.storeName, 'Meal plan generation (research)');
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('HTTP 500'));
+  });
+
+  test('throws and logs a research-phase failure when the response body is not valid JSON', () async {
+    final client = MockClient((request) async => http.Response('not json', 200));
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+
+    await expectLater(service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items), throwsException);
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('Invalid JSON'));
+  });
+
+  test('throws and logs a research-phase failure when no candidates are returned, citing the block reason', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({
+          'candidates': <dynamic>[],
+          'promptFeedback': {'blockReason': 'SAFETY'},
+          'usageMetadata': {'promptTokenCount': 8, 'candidatesTokenCount': 0},
+        }),
+        200,
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+
+    await expectLater(service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items), throwsException);
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('no candidates returned (blockReason: SAFETY)'));
+  });
+
+  test('throws and logs a research-phase failure when a candidate has no content, citing the finish reason', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({
+          'candidates': [
+            {'finishReason': 'MAX_TOKENS'},
+          ],
+          'usageMetadata': {'promptTokenCount': 8, 'candidatesTokenCount': 0},
+        }),
+        200,
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+
+    await expectLater(service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items), throwsException);
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('no content in response (finishReason: MAX_TOKENS)'));
+  });
+
+  test('throws and logs a research-phase failure when the response has content but no parts', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        jsonEncode({
+          'candidates': [
+            {
+              'content': {'role': 'model'},
+            },
+          ],
+          'usageMetadata': {'promptTokenCount': 8, 'candidatesTokenCount': 0},
+        }),
+        200,
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+
+    await expectLater(service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items), throwsException);
+
+    final log = (await logRepository.loadAll()).single;
+    expect(log.storeName, 'Meal plan generation (research)');
+    expect(log.success, isFalse);
+    expect(log.errorMessage, contains('no content in response'));
+  });
+
+  test('throws and logs an extraction failure when the response has content but no parts', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) return _researchResponse(text: 'Research notes.');
+      return http.Response(
+        jsonEncode({
+          'candidates': [
+            {
+              'content': {'role': 'model'},
+            },
+          ],
+          'usageMetadata': {'promptTokenCount': 8, 'candidatesTokenCount': 0},
+        }),
+        200,
+      );
+    });
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+
+    await expectLater(service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items), throwsException);
+
+    final logs = await logRepository.loadAll();
+    expect(logs[0].storeName, 'Meal plan generation (extraction)');
+    expect(logs[0].success, isFalse);
+    expect(logs[0].errorMessage, contains('no content in response'));
+  });
+
+  test('throws and logs an extraction failure when the response has no functionCall part', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) return _researchResponse(text: 'Research notes.');
+      return http.Response(
+        jsonEncode({
+          'candidates': [
+            {
+              'content': {
+                'parts': [
+                  {'text': 'Sorry, nothing found.'},
+                ],
+                'role': 'model',
+              },
+            },
+          ],
+          'usageMetadata': {'promptTokenCount': 10, 'candidatesTokenCount': 5},
+        }),
+        200,
+      );
+    });
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanGenerationService(client: client, logRepository: logRepository);
+
+    await expectLater(service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items), throwsException);
+
+    final logs = await logRepository.loadAll();
+    expect(logs[0].storeName, 'Meal plan generation (extraction)');
+    expect(logs[0].success, isFalse);
+    expect(logs[0].errorMessage, contains('no functionCall in response'));
+  });
 }

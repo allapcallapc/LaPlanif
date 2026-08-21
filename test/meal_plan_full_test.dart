@@ -74,6 +74,93 @@ void main() {
     expect(slot.vegetableComponent, vegetable);
   });
 
+  test('MealSlotFull.copyWith replaces each component independently and keeps the rest', () {
+    const protein = MealComponent(type: MealComponentType.link, name: 'Chicken stir-fry', usesWeeklyDeal: true);
+    const carb = MealComponent(type: MealComponentType.coveredByProtein, name: 'Rice', usesWeeklyDeal: false);
+    const vegetable = MealComponent(type: MealComponentType.simpleSide, name: 'Broccoli', usesWeeklyDeal: false);
+    const slot = MealSlotFull(
+      mealType: MealType.lunch,
+      protein: 'meat',
+      count: 5,
+      portionsPerMeal: 3,
+      proteinComponent: protein,
+      carbComponent: carb,
+      vegetableComponent: vegetable,
+    );
+    const newProtein = MealComponent(type: MealComponentType.link, name: 'Pulled pork', usesWeeklyDeal: true);
+    const newCarb = MealComponent(type: MealComponentType.simpleSide, name: 'Buns', usesWeeklyDeal: false);
+    const newVegetable = MealComponent(type: MealComponentType.simpleSide, name: 'Coleslaw', usesWeeklyDeal: false);
+
+    final withNewProtein = slot.copyWith(proteinComponent: newProtein);
+    expect(withNewProtein.proteinComponent, newProtein);
+    expect(withNewProtein.carbComponent, carb);
+    expect(withNewProtein.vegetableComponent, vegetable);
+
+    final withNewCarb = slot.copyWith(carbComponent: newCarb);
+    expect(withNewCarb.proteinComponent, protein);
+    expect(withNewCarb.carbComponent, newCarb);
+    expect(withNewCarb.vegetableComponent, vegetable);
+
+    final withNewVegetable = slot.copyWith(vegetableComponent: newVegetable);
+    expect(withNewVegetable.proteinComponent, protein);
+    expect(withNewVegetable.carbComponent, carb);
+    expect(withNewVegetable.vegetableComponent, newVegetable);
+
+    final unchanged = slot.copyWith();
+    expect(unchanged.proteinComponent, protein);
+    expect(unchanged.carbComponent, carb);
+    expect(unchanged.vegetableComponent, vegetable);
+  });
+
+  test('Ingredient round-trips through JSON', () {
+    final ingredient = Ingredient(name: 'chicken thighs', amount: '1.5 kg');
+
+    final restored = Ingredient.fromJson(ingredient.toJson());
+
+    expect(restored.name, 'chicken thighs');
+    expect(restored.amount, '1.5 kg');
+  });
+
+  test('MealComponent round-trips through JSON, including a null recipeUrl', () {
+    const component = MealComponent(
+      type: MealComponentType.aiRecipe,
+      name: 'Big-batch chicken thigh stir-fry',
+      ingredients: [Ingredient(name: 'chicken thighs', amount: '1.5 kg')],
+      instructions: ['Sear the chicken.', 'Add the vegetables.'],
+      note: 'note',
+      usesWeeklyDeal: true,
+      dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+    );
+
+    final restored = MealComponent.fromJson(component.toJson());
+
+    expect(restored.type, MealComponentType.aiRecipe);
+    expect(restored.name, 'Big-batch chicken thigh stir-fry');
+    expect(restored.recipeUrl, isNull);
+    expect(restored.ingredients.single.name, 'chicken thighs');
+    expect(restored.instructions, ['Sear the chicken.', 'Add the vegetables.']);
+    expect(restored.note, 'note');
+    expect(restored.usesWeeklyDeal, isTrue);
+    expect(restored.dealItems.single.name, 'Chicken thighs');
+  });
+
+  test('MealSlotFull.recipeName mirrors the protein component name', () {
+    const protein = MealComponent(type: MealComponentType.link, name: 'Slow-roasted pulled pork', usesWeeklyDeal: true);
+    const carb = MealComponent(type: MealComponentType.coveredByProtein, name: 'Rice', usesWeeklyDeal: false);
+    const vegetable = MealComponent(type: MealComponentType.simpleSide, name: 'Broccoli', usesWeeklyDeal: false);
+    const slot = MealSlotFull(
+      mealType: MealType.lunch,
+      protein: 'meat',
+      count: 5,
+      portionsPerMeal: 3,
+      proteinComponent: protein,
+      carbComponent: carb,
+      vegetableComponent: vegetable,
+    );
+
+    expect(slot.recipeName, 'Slow-roasted pulled pork');
+  });
+
   test('MealPlanFull exposes the slots it was constructed with', () {
     const protein = MealComponent(type: MealComponentType.link, name: 'Chicken stir-fry', usesWeeklyDeal: true);
     const carb = MealComponent(type: MealComponentType.coveredByProtein, name: 'Rice', usesWeeklyDeal: false);

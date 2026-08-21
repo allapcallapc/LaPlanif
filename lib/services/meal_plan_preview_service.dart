@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/ai_call_log.dart';
 import '../models/deal_item.dart';
+import '../models/meal_history.dart';
 import '../models/meal_plan_config.dart';
 import '../models/meal_plan_preview.dart';
 import '../utils/error_formatting.dart';
@@ -44,12 +45,17 @@ class MealPlanPreviewService {
   /// slot even when it's a priority item. When every slot is generated in
   /// one call, cross-slot uniqueness is instead enforced by the prompt
   /// alone, since the AI sees every slot at once.
+  ///
+  /// [recentlyUsed] lists recipes/deal items from saved plan history within
+  /// the configured diversity window - a soft "try to vary" hint, unlike
+  /// [alreadyUsedAnchors] which is a hard same-plan exclusion.
   Future<MealPlanPreview> previewMealPlan({
     required String apiKey,
     required List<MealSlot> mealSlots,
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
     String? model,
   }) async {
@@ -62,6 +68,7 @@ class MealPlanPreviewService {
         portionsPerMeal: portionsPerMeal,
         items: items,
         alreadyUsedAnchors: alreadyUsedAnchors,
+        recentlyUsed: recentlyUsed,
         dietaryNotes: dietaryNotes,
         model: effectiveModel,
       );
@@ -76,12 +83,15 @@ class MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     required List<AnchorItem> alreadyUsedAnchors,
+    required List<RecentHistoryItem> recentlyUsed,
     required String dietaryNotes,
     required String model,
   }) async {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
-    final body = jsonEncode(_buildRequestBody(mealSlots, portionsPerMeal, items, alreadyUsedAnchors, dietaryNotes));
+    final body = jsonEncode(
+      _buildRequestBody(mealSlots, portionsPerMeal, items, alreadyUsedAnchors, recentlyUsed, dietaryNotes),
+    );
 
     final http.Response response;
     try {
@@ -154,6 +164,7 @@ class MealPlanPreviewService {
     int portionsPerMeal,
     List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors,
+    List<RecentHistoryItem> recentlyUsed,
     String dietaryNotes,
   ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
@@ -178,7 +189,11 @@ class MealPlanPreviewService {
         'Excluded deal items (never propose these):\n${_itemsText(excluded)}\n\n'
         'All other available deal items:\n${_itemsText(available)}\n\n'
         'Deal items already used as anchors elsewhere in this plan - never propose any of these '
-        'for the slot(s) below, even if they are priority items:\n${_anchorItemsText(alreadyUsedAnchors)}';
+        'for the slot(s) below, even if they are priority items:\n${_anchorItemsText(alreadyUsedAnchors)}\n\n'
+        'Recently used (within the last diversity-window days, from saved history) - try to vary '
+        'away from these rather than repeating them, but a repeat is fine if it is clearly the best '
+        'fit for this week\'s deals (e.g. an exceptional price on the same protein). This is guidance, '
+        'not an exclusion:\n${_recentHistoryText(recentlyUsed)}';
 
     return {
       'systemInstruction': {
@@ -219,6 +234,18 @@ class MealPlanPreviewService {
   String _anchorItemsText(List<AnchorItem> list) {
     if (list.isEmpty) return '(none)';
     return list.map((a) => '- ${a.name} (${a.store})').join('\n');
+  }
+
+  String _recentHistoryText(List<RecentHistoryItem> list) {
+    if (list.isEmpty) return '(none)';
+    return list
+        .map((r) => '- "${r.recipeName}" using ${_anchorItemsInlineText(r.dealItemsUsed)}')
+        .join('\n');
+  }
+
+  String _anchorItemsInlineText(List<AnchorItem> list) {
+    if (list.isEmpty) return '(no tracked deal items)';
+    return list.map((a) => '${a.name} (${a.store})').join(', ');
   }
 
   MealPlanPreview _parsePreview(Map<String, dynamic> decoded, List<MealSlot> mealSlots, int portionsPerMeal) {
@@ -291,6 +318,8 @@ For each meal slot, propose the anchor item(s) that define this slot's big-batch
 No ingredient may anchor more than one slot in this plan, even a priority item that would otherwise fit several slots well - each slot's anchors must be entirely distinct from every other slot's. This means the same product, not just the same exact listing: don't anchor one slot on broccoli from one store and another slot on broccoli from a different store (or a differently-worded listing of the same thing) - that still counts as reusing the same ingredient. When multiple slots are given in the same call, check your own choices for cross-slot duplicates (by ingredient, not just by exact name/store) as you go. A list of deal items already used as anchors elsewhere in this plan may also be given below - never reuse any of those either, by the same ingredient-level rule, and pick a different item for any slot that would otherwise repeat one.
 
 Standing planning instructions may be given below the meal slots - these are hard constraints from the user that apply across every slot in this plan, and take priority over item preference (priority/cover-deal) when the two conflict. Follow them exactly as written.
+
+A list of recently used recipes and their deal items, drawn from saved plan history within the configured diversity window, may also be given below - this is a soft preference, not a rule: prefer a different recipe or anchor over repeating one of these, but a repeat is still fine when it's clearly the best fit for this week's deals (e.g. an exceptional price on the same protein). Never let this override a standing planning instruction or an excluded item.
 
 Also write a one-line note describing the direction for that slot's recipe (e.g. "Big-batch chicken thigh stir-fry with rice, portioned across the week.").
 

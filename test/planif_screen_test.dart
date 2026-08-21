@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:laplanif/models/deal_item.dart';
 import 'package:laplanif/models/flyer_page.dart';
+import 'package:laplanif/models/meal_history.dart';
 import 'package:laplanif/models/meal_plan_config.dart';
 import 'package:laplanif/models/meal_plan_full.dart';
 import 'package:laplanif/models/meal_plan_preview.dart';
@@ -16,6 +17,7 @@ import 'package:laplanif/services/ai_deal_extraction_service.dart';
 import 'package:laplanif/services/deal_cache_repository.dart';
 import 'package:laplanif/services/deal_preference_repository.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
+import 'package:laplanif/services/meal_history_repository.dart';
 import 'package:laplanif/services/meal_plan_config_repository.dart';
 import 'package:laplanif/services/meal_plan_generation_service.dart';
 import 'package:laplanif/services/meal_plan_preview_service.dart';
@@ -138,6 +140,7 @@ class _FakePreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
     String? model,
   }) {
@@ -161,6 +164,7 @@ class _FakeDeferredPreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
     String? model,
   }) {
@@ -184,6 +188,7 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
     String? model,
   }) {
@@ -1762,6 +1767,122 @@ void main() {
     await tester.tap(find.byTooltip('Full meal plan'));
     await tester.pumpAndSettle();
     expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
+  });
+
+  testWidgets('saves the full plan to history as this week\'s entry, overwriting on a second save', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+
+    final generationService = _FakeGenerationService(
+      (slots, items) async => MealPlanFull(
+        slots: [
+          MealSlotFull(
+            mealType: slots.single.mealType,
+            protein: slots.single.protein,
+            count: slots.single.count,
+            portionsPerMeal: slots.single.portionsPerMeal,
+            proteinComponent: const MealComponent(
+              type: MealComponentType.link,
+              name: 'General Tao Chicken',
+              usesWeeklyDeal: true,
+              dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            ),
+            carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+            vegetableComponent: const MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Broccoli',
+              usesWeeklyDeal: false,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final mealHistoryRepository = MealHistoryRepository();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          generationService: generationService,
+          mealHistoryRepository: mealHistoryRepository,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Save this week\'s plan'), findsOneWidget);
+    await tester.tap(find.text('Save this week\'s plan'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Saved this week\'s plan to history.'), findsOneWidget);
+    final saved = await mealHistoryRepository.loadAll();
+    expect(saved.length, 1);
+    expect(saved.single.slots.single.recipeName, 'General Tao Chicken');
+
+    // Saving again for the same week overwrites rather than adding a second
+    // entry - simulated here by writing directly with the same weekId a
+    // regenerated plan would also resolve to (isoWeekId of "now").
+    await tester.tap(find.text('Save this week\'s plan'));
+    await tester.pumpAndSettle();
+
+    final savedAgain = await mealHistoryRepository.loadAll();
+    expect(savedAgain.length, 1);
   });
 
   testWidgets('shows an error snackbar and re-enables the button when full-plan generation fails', (tester) async {

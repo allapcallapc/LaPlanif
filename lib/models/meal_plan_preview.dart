@@ -7,6 +7,11 @@ class AnchorItem {
 
   final String name;
   final String store;
+
+  Map<String, dynamic> toJson() => {'name': name, 'store': store};
+
+  factory AnchorItem.fromJson(Map<String, dynamic> json) =>
+      AnchorItem(name: json['name'] as String, store: json['store'] as String);
 }
 
 /// The AI's proposed direction for one [MealSlot]'s batch-cooked recipe: a

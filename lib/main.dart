@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import 'screens/config_screen.dart';
+import 'screens/history_screen.dart';
 import 'screens/planif_screen.dart';
 import 'services/ai_config_repository.dart';
 import 'services/ai_deal_extraction_service.dart';
 import 'services/flyer_scraper_service.dart';
+import 'services/meal_history_repository.dart';
 import 'services/store_config_repository.dart';
 
 void main() {
@@ -40,7 +42,19 @@ class _HomeShellState extends State<HomeShell> {
   final AiConfigRepository _aiConfigRepository = AiConfigRepository();
   final FlyerScraperService _scraperService = FlyerScraperService();
   final AiDealExtractionService _extractionService = AiDealExtractionService();
+  final MealHistoryRepository _mealHistoryRepository = MealHistoryRepository();
   int _tabIndex = 0;
+
+  // IndexedStack (below) deliberately keeps every tab's State alive across
+  // switches - e.g. Planif needs to keep an in-progress fetch/preview when
+  // the user tabs away and back. History is the exception: it only loads
+  // its list once, in initState, so without this it would keep showing
+  // whatever it saw on the very first build (typically empty) even after a
+  // plan gets saved from Planif. Bumping this on every switch INTO History
+  // changes HistoryScreen's key, which makes Flutter tear down and recreate
+  // its State - re-running initState's load - without affecting the other
+  // tabs' persisted state.
+  int _historyReloadTick = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +64,9 @@ class _HomeShellState extends State<HomeShell> {
         scraperService: _scraperService,
         extractionService: _extractionService,
         aiConfigRepository: _aiConfigRepository,
+        mealHistoryRepository: _mealHistoryRepository,
       ),
+      HistoryScreen(key: ValueKey(_historyReloadTick), repository: _mealHistoryRepository),
       ConfigScreen(repository: _storeRepository, aiConfigRepository: _aiConfigRepository),
     ];
     return Scaffold(
@@ -61,12 +77,20 @@ class _HomeShellState extends State<HomeShell> {
       body: IndexedStack(key: const Key('home_tab_stack'), index: _tabIndex, children: screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
-        onDestinationSelected: (i) => setState(() => _tabIndex = i),
+        onDestinationSelected: (i) => setState(() {
+          _tabIndex = i;
+          if (i == 1) _historyReloadTick++;
+        }),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.checklist_outlined),
             selectedIcon: Icon(Icons.checklist),
             label: 'Planif',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.history_outlined),
+            selectedIcon: Icon(Icons.history),
+            label: 'History',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),

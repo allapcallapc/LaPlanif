@@ -4,12 +4,14 @@ import '../models/meal_history.dart';
 import '../models/meal_plan_full.dart';
 import '../models/meal_plan_preview.dart';
 import '../services/meal_history_repository.dart';
+import '../utils/iso_week.dart';
 import '../widgets/meal_slot_full_card.dart';
 
 /// Views and edits one saved week's plan. A slot's recipe name and anchor
 /// deal items can be changed manually (reusing [MealSlotFullCard] for
-/// display); re-saving overwrites this week's history entry, matching the
-/// "one plan per week" storage rule.
+/// display), and the entry can be moved to a different week entirely;
+/// re-saving overwrites this week's (or the newly picked week's) history
+/// entry, matching the "one plan per week" storage rule.
 class HistoryDetailScreen extends StatefulWidget {
   HistoryDetailScreen({super.key, required this.entry, MealHistoryRepository? repository})
     : repository = repository ?? MealHistoryRepository();
@@ -22,6 +24,7 @@ class HistoryDetailScreen extends StatefulWidget {
 }
 
 class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
+  late String _weekId;
   late List<MealSlotFull> _slots;
   bool _isDirty = false;
   bool _isSaving = false;
@@ -29,6 +32,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _weekId = widget.entry.weekId;
     _slots = List.of(widget.entry.slots);
   }
 
@@ -44,11 +48,59 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
     });
   }
 
+  // weekId is this entry's identity (the repository's overwrite key), not
+  // just another field - "changing" it is really moving the plan to a
+  // different week's slot, so a pick that lands on a week another saved
+  // entry already occupies needs confirmation before it silently clobbers
+  // that other entry on save.
+  Future<void> _changeWeek() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: mondayOfIsoWeek(_weekId),
+      firstDate: DateTime.utc(2020),
+      lastDate: DateTime.now().add(const Duration(days: 730)),
+      helpText: 'Pick any date in the target week',
+    );
+    if (picked == null) return;
+
+    final newWeekId = isoWeekId(picked);
+    if (newWeekId == _weekId) return;
+
+    final existing = await widget.repository.loadAll();
+    final conflict = existing.any((e) => e.weekId == newWeekId && e.weekId != widget.entry.weekId);
+    if (conflict) {
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Replace existing plan?'),
+          content: Text('$newWeekId already has a saved plan. Moving this one there will replace it.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Replace')),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    setState(() {
+      _weekId = newWeekId;
+      _isDirty = true;
+    });
+  }
+
   Future<void> _save() async {
     if (_isSaving) return;
     setState(() => _isSaving = true);
-    final updated = widget.entry.copyWith(savedAt: DateTime.now(), slots: _slots);
+    final updated = MealHistoryEntry(weekId: _weekId, savedAt: DateTime.now(), slots: _slots);
     await widget.repository.saveWeek(updated);
+    // The original entry only needs cleaning up if this save actually moved
+    // it to a different week's key - saveWeek above already overwrote the
+    // right entry when the week stayed the same.
+    if (_weekId != widget.entry.weekId) {
+      await widget.repository.deleteWeek(widget.entry.weekId);
+    }
     if (!mounted) return;
     setState(() {
       _isSaving = false;
@@ -79,8 +131,9 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.entry.weekId),
+        title: Text(_weekId),
         actions: [
+          IconButton(icon: const Icon(Icons.edit_calendar_outlined), tooltip: 'Change week', onPressed: _changeWeek),
           IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Delete this week', onPressed: _delete),
         ],
       ),

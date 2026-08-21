@@ -89,13 +89,13 @@ void main() {
             protein: 'meat',
             count: 5,
             portionsPerMeal: 3,
-            proteinComponent: const MealComponent(
+            proteinComponent: MealComponent(
               type: MealComponentType.link,
               name: 'General Tao Chicken',
               usesWeeklyDeal: false,
             ),
-            carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
-            vegetableComponent: const MealComponent(
+            carbComponent: MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+            vegetableComponent: MealComponent(
               type: MealComponentType.simpleSide,
               name: 'Broccoli',
               usesWeeklyDeal: false,

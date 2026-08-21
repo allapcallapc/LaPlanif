@@ -24,4 +24,24 @@ void main() {
   test('week numbers are zero-padded to two digits', () {
     expect(isoWeekId(DateTime(2026, 1, 5)), '2026-W02');
   });
+
+  test('mondayOfIsoWeek returns the Monday of a mid-year week', () {
+    final monday = mondayOfIsoWeek('2026-W34');
+    expect(monday.year, 2026);
+    expect(monday.month, 8);
+    expect(monday.day, 17);
+    expect(monday.weekday, DateTime.monday);
+  });
+
+  test('mondayOfIsoWeek round-trips with isoWeekId across a full year', () {
+    for (var week = 1; week <= 52; week++) {
+      final id = '2026-W${week.toString().padLeft(2, '0')}';
+      expect(isoWeekId(mondayOfIsoWeek(id)), id);
+    }
+  });
+
+  test('mondayOfIsoWeek round-trips across a year boundary', () {
+    expect(isoWeekId(mondayOfIsoWeek('2022-W52')), '2022-W52');
+    expect(isoWeekId(mondayOfIsoWeek('2023-W01')), '2023-W01');
+  });
 }

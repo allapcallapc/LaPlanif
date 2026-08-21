@@ -78,6 +78,30 @@ void main() {
     expect(saved.single.slots.single.recipeName, 'Honey Garlic Chicken');
   });
 
+  testWidgets('editing a slot recipe link and saving persists the new link', (tester) async {
+    final repository = MealHistoryRepository();
+    await repository.saveWeek(_entry());
+
+    await tester.pumpWidget(
+      MaterialApp(home: HistoryDetailScreen(entry: _entry(), repository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Edit this slot'));
+    await tester.pumpAndSettle();
+
+    final urlField = find.widgetWithText(TextField, 'Recipe link (optional)').first;
+    await tester.enterText(urlField, 'https://example.com/general-tao-chicken');
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final saved = await repository.loadAll();
+    expect(saved.single.slots.single.proteinComponent.recipeUrl, 'https://example.com/general-tao-chicken');
+  });
+
   testWidgets('falls back to a default repository when none is provided', (tester) async {
     await tester.pumpWidget(MaterialApp(home: HistoryDetailScreen(entry: _entry())));
     await tester.pumpAndSettle();

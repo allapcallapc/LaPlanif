@@ -78,6 +78,30 @@ void main() {
     expect(saved.single.slots.single.recipeName, 'Honey Garlic Chicken');
   });
 
+  testWidgets('editing a slot recipe link and saving persists the new link', (tester) async {
+    final repository = MealHistoryRepository();
+    await repository.saveWeek(_entry());
+
+    await tester.pumpWidget(
+      MaterialApp(home: HistoryDetailScreen(entry: _entry(), repository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Edit this slot'));
+    await tester.pumpAndSettle();
+
+    final urlField = find.widgetWithText(TextField, 'Recipe link (optional)').first;
+    await tester.enterText(urlField, 'https://example.com/general-tao-chicken');
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final saved = await repository.loadAll();
+    expect(saved.single.slots.single.proteinComponent.recipeUrl, 'https://example.com/general-tao-chicken');
+  });
+
   testWidgets('falls back to a default repository when none is provided', (tester) async {
     await tester.pumpWidget(MaterialApp(home: HistoryDetailScreen(entry: _entry())));
     await tester.pumpAndSettle();
@@ -99,8 +123,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // The vegetable component starts with no anchors, so its "Add anchor"
-    // chip is the second of the three sections' chips.
-    await tester.tap(find.text('Add anchor').at(2));
+    // chip is the second of the three sections' chips. The dialog content
+    // is taller than the test surface, so scroll it into view before tapping.
+    final addVegetableAnchor = find.text('Add anchor').at(2);
+    await tester.ensureVisible(addVegetableAnchor);
+    await tester.pumpAndSettle();
+    await tester.tap(addVegetableAnchor);
     await tester.pumpAndSettle();
 
     expect(find.text('Add anchor item'), findsOneWidget);
@@ -118,6 +146,8 @@ void main() {
     expect(find.text('Broccoli · IGA'), findsOneWidget);
 
     // Editing the newly-added anchor: Cancel leaves it unchanged.
+    await tester.ensureVisible(find.text('Broccoli · IGA'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Broccoli · IGA'));
     await tester.pumpAndSettle();
     expect(find.text('Edit anchor item'), findsOneWidget);
@@ -128,6 +158,8 @@ void main() {
     expect(find.text('Broccoli · IGA'), findsOneWidget);
 
     // Editing again and saving updates the chip.
+    await tester.ensureVisible(find.text('Broccoli · IGA'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Broccoli · IGA'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Item name'), 'Carrots');
@@ -139,7 +171,10 @@ void main() {
 
     // Removing it via the chip's delete icon.
     final chip = find.ancestor(of: find.text('Carrots · IGA'), matching: find.byType(InputChip));
-    await tester.tap(find.descendant(of: chip, matching: find.byIcon(Icons.close)));
+    final deleteIcon = find.descendant(of: chip, matching: find.byIcon(Icons.close));
+    await tester.ensureVisible(deleteIcon);
+    await tester.pumpAndSettle();
+    await tester.tap(deleteIcon);
     await tester.pumpAndSettle();
 
     expect(find.text('Carrots · IGA'), findsNothing);

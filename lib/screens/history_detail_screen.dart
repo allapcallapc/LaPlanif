@@ -174,17 +174,17 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
 class _ComponentEdit {
   _ComponentEdit(MealComponent component)
     : nameController = TextEditingController(text: component.name),
+      recipeUrlController = TextEditingController(text: component.recipeUrl ?? ''),
       dealItems = List.of(component.dealItems),
       type = component.type,
-      recipeUrl = component.recipeUrl,
       ingredients = component.ingredients,
       instructions = component.instructions,
       note = component.note;
 
   final TextEditingController nameController;
+  final TextEditingController recipeUrlController;
   List<AnchorItem> dealItems;
   final MealComponentType type;
-  final String? recipeUrl;
   final List<Ingredient> ingredients;
   final List<String> instructions;
   final String note;
@@ -192,7 +192,7 @@ class _ComponentEdit {
   MealComponent toComponent() => MealComponent(
     type: type,
     name: nameController.text.trim(),
-    recipeUrl: recipeUrl,
+    recipeUrl: recipeUrlController.text.trim().isEmpty ? null : recipeUrlController.text.trim(),
     ingredients: ingredients,
     instructions: instructions,
     note: note,
@@ -200,7 +200,10 @@ class _ComponentEdit {
     dealItems: dealItems,
   );
 
-  void dispose() => nameController.dispose();
+  void dispose() {
+    nameController.dispose();
+    recipeUrlController.dispose();
+  }
 }
 
 class _EditSlotDialog extends StatefulWidget {
@@ -297,6 +300,12 @@ class _EditSlotDialogState extends State<_EditSlotDialog> {
         TextField(
           controller: component.nameController,
           decoration: const InputDecoration(labelText: 'Recipe name', isDense: true),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: component.recipeUrlController,
+          decoration: const InputDecoration(labelText: 'Recipe link (optional)', isDense: true),
+          keyboardType: TextInputType.url,
         ),
         const SizedBox(height: 8),
         Wrap(

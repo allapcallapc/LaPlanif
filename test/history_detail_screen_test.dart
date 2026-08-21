@@ -123,8 +123,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // The vegetable component starts with no anchors, so its "Add anchor"
-    // chip is the second of the three sections' chips.
-    await tester.tap(find.text('Add anchor').at(2));
+    // chip is the second of the three sections' chips. The dialog content
+    // is taller than the test surface, so scroll it into view before tapping.
+    final addVegetableAnchor = find.text('Add anchor').at(2);
+    await tester.ensureVisible(addVegetableAnchor);
+    await tester.pumpAndSettle();
+    await tester.tap(addVegetableAnchor);
     await tester.pumpAndSettle();
 
     expect(find.text('Add anchor item'), findsOneWidget);
@@ -142,6 +146,8 @@ void main() {
     expect(find.text('Broccoli · IGA'), findsOneWidget);
 
     // Editing the newly-added anchor: Cancel leaves it unchanged.
+    await tester.ensureVisible(find.text('Broccoli · IGA'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Broccoli · IGA'));
     await tester.pumpAndSettle();
     expect(find.text('Edit anchor item'), findsOneWidget);
@@ -152,6 +158,8 @@ void main() {
     expect(find.text('Broccoli · IGA'), findsOneWidget);
 
     // Editing again and saving updates the chip.
+    await tester.ensureVisible(find.text('Broccoli · IGA'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Broccoli · IGA'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Item name'), 'Carrots');
@@ -163,7 +171,10 @@ void main() {
 
     // Removing it via the chip's delete icon.
     final chip = find.ancestor(of: find.text('Carrots · IGA'), matching: find.byType(InputChip));
-    await tester.tap(find.descendant(of: chip, matching: find.byIcon(Icons.close)));
+    final deleteIcon = find.descendant(of: chip, matching: find.byIcon(Icons.close));
+    await tester.ensureVisible(deleteIcon);
+    await tester.pumpAndSettle();
+    await tester.tap(deleteIcon);
     await tester.pumpAndSettle();
 
     expect(find.text('Carrots · IGA'), findsNothing);

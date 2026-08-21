@@ -520,7 +520,7 @@ For any component NOT already covered by the protein recipe:
 - carb: pick a complementary carb. It does not need to come from this week's deals - pantry staples (rice, couscous, quinoa, pasta, etc.) are always fine. Use a deal item only if a good fit exists this week. PREFER a verified real recipe link over an AI-authored recipe; a short "simple side" prep note (no full recipe) is also a valid and often better choice for a plain carb.
 - vegetable: same logic - prefer a deal item if a good fit exists this week, otherwise any vegetable. PREFER a verified real recipe link; a simple side prep note is also valid.
 
-For every link you propose (protein, carb, or vegetable), you must have actually used your search tool to find and confirm it is a real, working recipe URL. If you cannot verify a link for a component, say so explicitly and instead sketch a short AI-authored recipe or a simple-side note for it.
+For every link you propose (protein, carb, or vegetable), you must have actually used your search tool to find and confirm it is a real, working recipe URL. The link must be a text/article recipe page - never a video URL (YouTube, TikTok, Instagram Reels, Facebook video, etc.), even if it is the top search result and clearly a recipe. If the best verified match for a component is a video, treat it as "no verified link found" for that component and fall back to an AI-authored recipe or simple-side note instead. If you cannot verify a (non-video) link for a component, say so explicitly and instead sketch a short AI-authored recipe or a simple-side note for it.
 
 Excluded deal items must never be used in any component.
 

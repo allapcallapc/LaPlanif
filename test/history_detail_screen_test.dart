@@ -21,6 +21,7 @@ MealHistoryEntry _entry() => MealHistoryEntry(
       proteinComponent: MealComponent(
         type: MealComponentType.link,
         name: 'General Tao Chicken',
+        recipeUrl: 'https://example.com/general-tao-chicken',
         ingredients: [Ingredient(name: 'Chicken thighs', amount: '1.5 kg'), Ingredient(name: 'Soy sauce', amount: '3 tbsp')],
         usesWeeklyDeal: true,
         dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
@@ -48,6 +49,29 @@ void main() {
     expect(find.text('2026-W34'), findsOneWidget);
     expect(find.text('General Tao Chicken'), findsOneWidget);
     expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+  });
+
+  testWidgets('tapping a recipe link launches it', (tester) async {
+    final repository = MealHistoryRepository();
+    await repository.saveWeek(_entry());
+
+    final openedUris = <Uri>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HistoryDetailScreen(
+          entry: _entry(),
+          repository: repository,
+          launchRecipeLink: (uri) async => openedUris.add(uri),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('https://example.com/general-tao-chicken'));
+    await tester.pumpAndSettle();
+
+    expect(openedUris, [Uri.parse('https://example.com/general-tao-chicken')]);
   });
 
   testWidgets('extracts and shows the ingredient list for the saved week', (tester) async {

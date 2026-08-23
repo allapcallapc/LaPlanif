@@ -197,4 +197,63 @@ class MealPlanFull {
   const MealPlanFull({required this.slots});
 
   final List<MealSlotFull> slots;
+
+  /// The consolidated shopping list for this week's plan - see
+  /// [MealSlotFullListShoppingList.shoppingList].
+  List<ShoppingListItem> get shoppingList => slots.shoppingList;
+}
+
+/// One consolidated shopping-list line: an ingredient name plus every amount
+/// it's needed in across the week, combined when the same ingredient is
+/// used by more than one recipe.
+class ShoppingListItem {
+  const ShoppingListItem({required this.name, required this.amounts});
+
+  final String name;
+
+  /// Every distinct, non-empty amount this ingredient was requested in,
+  /// deduplicated but not summed (amounts are free-form strings like
+  /// "2 cups", not always safe to add together).
+  final List<String> amounts;
+}
+
+/// Extracts a shopping list from a week's worth of [MealSlotFull]s: every
+/// recipe ingredient, plus one line per simple-side component (which has no
+/// structured ingredients of its own - the component's name is the item to
+/// buy), deduplicated by name across the whole week.
+extension MealSlotFullListShoppingList on List<MealSlotFull> {
+  List<ShoppingListItem> get shoppingList {
+    final amountsByKey = <String, List<String>>{};
+    final displayNameByKey = <String, String>{};
+
+    void addIngredient(String name, String amount) {
+      final trimmedName = name.trim();
+      if (trimmedName.isEmpty) return;
+      final key = trimmedName.toLowerCase();
+      displayNameByKey.putIfAbsent(key, () => trimmedName);
+      final amounts = amountsByKey.putIfAbsent(key, () => []);
+      final trimmedAmount = amount.trim();
+      if (trimmedAmount.isNotEmpty && !amounts.contains(trimmedAmount)) {
+        amounts.add(trimmedAmount);
+      }
+    }
+
+    for (final slot in this) {
+      for (final component in [slot.proteinComponent, slot.carbComponent, slot.vegetableComponent]) {
+        // Already covered by the protein component's own ingredients above -
+        // listing it again here would double it on the shopping list.
+        if (component.type == MealComponentType.coveredByProtein) continue;
+        if (component.ingredients.isNotEmpty) {
+          for (final ingredient in component.ingredients) {
+            addIngredient(ingredient.name, ingredient.amount);
+          }
+        } else {
+          addIngredient(component.name, '');
+        }
+      }
+    }
+
+    final keys = amountsByKey.keys.toList()..sort((a, b) => displayNameByKey[a]!.compareTo(displayNameByKey[b]!));
+    return [for (final key in keys) ShoppingListItem(name: displayNameByKey[key]!, amounts: amountsByKey[key]!)];
+  }
 }

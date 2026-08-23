@@ -5,6 +5,7 @@ import '../models/meal_plan_full.dart';
 import '../models/meal_plan_preview.dart';
 import '../services/meal_history_repository.dart';
 import '../utils/iso_week.dart';
+import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
 
 /// Views and edits one saved week's plan. A slot's recipe name and anchor
@@ -133,6 +134,11 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
       appBar: AppBar(
         title: Text(_weekId),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.receipt_long_outlined),
+            tooltip: 'Extract ingredient list',
+            onPressed: () => showIngredientListDialog(context, _slots),
+          ),
           IconButton(icon: const Icon(Icons.edit_calendar_outlined), tooltip: 'Change week', onPressed: _changeWeek),
           IconButton(icon: const Icon(Icons.delete_outline), tooltip: 'Delete this week', onPressed: _delete),
         ],

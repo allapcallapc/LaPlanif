@@ -49,6 +49,29 @@ void main() {
     expect(find.text('Chicken thighs · IGA'), findsOneWidget);
   });
 
+  testWidgets('extracts and shows the ingredient list for the saved week', (tester) async {
+    final repository = MealHistoryRepository();
+    await repository.saveWeek(_entry());
+
+    await tester.pumpWidget(
+      MaterialApp(home: HistoryDetailScreen(entry: _entry(), repository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Extract ingredient list'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ingredient list'), findsOneWidget);
+    // Each name also still shows in the (now-covered) card behind the
+    // dialog, so these appear twice: once there, once in the extracted list.
+    // General Tao Chicken (a "link" component with no structured
+    // ingredients) and both simple sides fall back to listing the
+    // component's own name.
+    expect(find.text('General Tao Chicken'), findsNWidgets(2));
+    expect(find.text('Rice'), findsNWidgets(2));
+    expect(find.text('Broccoli'), findsNWidgets(2));
+  });
+
   testWidgets('editing a slot recipe name and saving overwrites the week in the repository', (tester) async {
     final repository = MealHistoryRepository();
     await repository.saveWeek(_entry());

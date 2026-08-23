@@ -20,6 +20,7 @@ import '../services/model_fallback_controller.dart';
 import '../services/store_config_repository.dart';
 import '../utils/error_formatting.dart';
 import '../utils/iso_week.dart';
+import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
 import '../widgets/rate_limit_dialog.dart';
 
@@ -696,8 +697,17 @@ class _PlanifScreenState extends State<PlanifScreen> {
       if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildPreferenceSummary(),
       if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildFilterButton(),
       if (_viewMode == _ViewMode.preview && _preview != null) _buildRegenerateButton(),
+      if (_viewMode == _ViewMode.full && _fullPlan != null) _buildIngredientListButton(),
       const SizedBox(width: 4),
     ];
+  }
+
+  Widget _buildIngredientListButton() {
+    return IconButton(
+      icon: const Icon(Icons.receipt_long_outlined),
+      tooltip: 'Extract ingredient list',
+      onPressed: () => showIngredientListDialog(context, _fullPlan!.slots),
+    );
   }
 
   // Immediate feedback that tapping an item actually did something -

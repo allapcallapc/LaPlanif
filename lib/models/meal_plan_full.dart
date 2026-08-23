@@ -70,8 +70,10 @@ class MealComponent {
   /// the protein component). Null otherwise.
   final String? recipeUrl;
 
-  /// Populated for [MealComponentType.aiRecipe] (and optionally
-  /// [MealComponentType.link]); empty otherwise.
+  /// Populated for [MealComponentType.aiRecipe] and [MealComponentType.link]
+  /// - the shopping-list feature is built from this field, so a "link"
+  /// component still carries its own ingredients even though the
+  /// step-by-step instructions live at [recipeUrl]. Empty otherwise.
   final List<Ingredient> ingredients;
 
   /// Populated for [MealComponentType.aiRecipe]; empty otherwise.
@@ -197,4 +199,69 @@ class MealPlanFull {
   const MealPlanFull({required this.slots});
 
   final List<MealSlotFull> slots;
+
+  /// The consolidated shopping list for this week's plan - see
+  /// [MealSlotFullListShoppingList.shoppingList].
+  List<ShoppingListItem> get shoppingList => slots.shoppingList;
+}
+
+/// One consolidated shopping-list line: an ingredient name plus every amount
+/// it's needed in across the week, combined when the same ingredient is
+/// used by more than one recipe.
+class ShoppingListItem {
+  const ShoppingListItem({required this.name, required this.amounts});
+
+  final String name;
+
+  /// Every distinct, non-empty amount this ingredient was requested in,
+  /// deduplicated but not summed (amounts are free-form strings like
+  /// "2 cups", not always safe to add together).
+  final List<String> amounts;
+}
+
+/// Extracts a shopping list from a week's worth of [MealSlotFull]s: the real
+/// ingredients of every link/AI recipe, plus one line per simple-side
+/// component (which has no recipe of its own - the component's name, e.g.
+/// "Broccoli", is itself the item to buy), deduplicated by name across the
+/// whole week.
+extension MealSlotFullListShoppingList on List<MealSlotFull> {
+  List<ShoppingListItem> get shoppingList {
+    final amountsByKey = <String, List<String>>{};
+    final displayNameByKey = <String, String>{};
+
+    void addIngredient(String name, String amount) {
+      final trimmedName = name.trim();
+      if (trimmedName.isEmpty) return;
+      final key = trimmedName.toLowerCase();
+      displayNameByKey.putIfAbsent(key, () => trimmedName);
+      final amounts = amountsByKey.putIfAbsent(key, () => []);
+      final trimmedAmount = amount.trim();
+      if (trimmedAmount.isNotEmpty && !amounts.contains(trimmedAmount)) {
+        amounts.add(trimmedAmount);
+      }
+    }
+
+    for (final slot in this) {
+      for (final component in [slot.proteinComponent, slot.carbComponent, slot.vegetableComponent]) {
+        // Already covered by the protein component's own ingredients above -
+        // listing it again here would double it on the shopping list.
+        if (component.type == MealComponentType.coveredByProtein) continue;
+        if (component.type == MealComponentType.simpleSide) {
+          // No recipe of its own - the component's name (e.g. "Broccoli")
+          // is the actual grocery item, not a recipe title to discard.
+          addIngredient(component.name, '');
+          continue;
+        }
+        // Real recipes (link or AI-authored): use their own ingredient list
+        // rather than falling back to the recipe's dish name, which isn't
+        // itself something you can buy at a store.
+        for (final ingredient in component.ingredients) {
+          addIngredient(ingredient.name, ingredient.amount);
+        }
+      }
+    }
+
+    final keys = amountsByKey.keys.toList()..sort((a, b) => displayNameByKey[a]!.compareTo(displayNameByKey[b]!));
+    return [for (final key in keys) ShoppingListItem(name: displayNameByKey[key]!, amounts: amountsByKey[key]!)];
+  }
 }

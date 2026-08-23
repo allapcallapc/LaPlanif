@@ -547,7 +547,7 @@ Matching is a hard search you must perform carefully, not a quick skim - falling
 
 Set usesWeeklyDeal and dealItems (name + store, from the deal items given) truthfully for each component, based on whether THAT COMPONENT'S OWN ingredient matches one of this week's named deal items - most protein components will. A carb/vegetable does NOT use a deal item merely because it shares a recipe or a pan with a protein that does (e.g. a "roasted sausages and green beans" sheet-pan recipe where only the sausages are a deal item: the vegetable's usesWeeklyDeal must be false and dealItems empty, even though the research notes discuss it in the same breath as the protein). Only set usesWeeklyDeal true for carb/vegetable when the research notes name that specific component's ingredient as a deal item in its own right.
 
-Leave ingredients/instructions empty for simple_side and covered_by_protein. Leave note empty except for simple_side, where it holds the short prep note.
+For type "link", still record its full ingredients list, scaled to totalPortionsNeeded - this is what the app's shopping-list feature is built from, so it must reflect real grocery items even though the step-by-step instructions live at the linked page. Draw on the research notes if they mention specific ingredients or quantities; otherwise give your best standard ingredient list for that specific dish. Leave instructions empty for type "link" (the linked page has them). Leave both ingredients and instructions empty for simple_side and covered_by_protein. Leave note empty except for simple_side, where it holds the short prep note.
 
 Record exactly one entry per meal slot, in the same order the slots were given, by calling record_meal_components.
 ''';

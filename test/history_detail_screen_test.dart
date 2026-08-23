@@ -21,6 +21,7 @@ MealHistoryEntry _entry() => MealHistoryEntry(
       proteinComponent: MealComponent(
         type: MealComponentType.link,
         name: 'General Tao Chicken',
+        ingredients: [Ingredient(name: 'Chicken thighs', amount: '1.5 kg'), Ingredient(name: 'Soy sauce', amount: '3 tbsp')],
         usesWeeklyDeal: true,
         dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
       ),
@@ -47,6 +48,29 @@ void main() {
     expect(find.text('2026-W34'), findsOneWidget);
     expect(find.text('General Tao Chicken'), findsOneWidget);
     expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+  });
+
+  testWidgets('extracts and shows the ingredient list for the saved week', (tester) async {
+    final repository = MealHistoryRepository();
+    await repository.saveWeek(_entry());
+
+    await tester.pumpWidget(
+      MaterialApp(home: HistoryDetailScreen(entry: _entry(), repository: repository)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Extract ingredient list'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ingredient list'), findsOneWidget);
+    // The "link" protein's own ingredients are used - not its recipe name.
+    expect(find.text('Chicken thighs — 1.5 kg'), findsOneWidget);
+    expect(find.text('Soy sauce — 3 tbsp'), findsOneWidget);
+    expect(find.text('General Tao Chicken'), findsOneWidget); // only in the (now-covered) card behind the dialog
+    // Simple sides have no recipe of their own, so their name is the item to
+    // buy - these also still show once in the covered card behind the dialog.
+    expect(find.text('Rice'), findsNWidgets(2));
+    expect(find.text('Broccoli'), findsNWidgets(2));
   });
 
   testWidgets('editing a slot recipe name and saving overwrites the week in the repository', (tester) async {

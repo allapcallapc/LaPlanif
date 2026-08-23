@@ -1,4 +1,24 @@
-import 'package:fetch_api/fetch_api.dart';
+import 'dart:js_interop';
+
+/// Hand-written, minimal Fetch API binding - just enough to make a
+/// cross-origin HEAD request and read the resolved URL after any redirects.
+///
+/// Deliberately built directly on `dart:js_interop` (part of the Dart SDK
+/// itself, so it can never be version-skewed against it) rather than
+/// `package:web` or a third-party fetch-wrapper package: both pulled in
+/// unrelated internal helper code (event-stream plumbing, JS iterator
+/// protocol support, etc.) that didn't compile against this project's Dart
+/// SDK version, for functionality this file doesn't even use.
+@JS('fetch')
+external JSPromise<_FetchResponse> _fetch(JSString input, _FetchInit init);
+
+extension type _FetchInit._(JSObject _) implements JSObject {
+  external factory _FetchInit({String method, String mode, String redirect});
+}
+
+extension type _FetchResponse._(JSObject _) implements JSObject {
+  external JSString get url;
+}
 
 /// Follows [url]'s HTTP redirect chain via the browser's `fetch()` API and
 /// returns the final destination URL, or null if it can't be determined.
@@ -23,11 +43,9 @@ import 'package:fetch_api/fetch_api.dart';
 /// read as text.
 Future<String?> resolveRedirectUrl(String url, {Duration timeout = const Duration(seconds: 6)}) async {
   try {
-    final response = await fetch(
-      url,
-      FetchOptions(method: 'HEAD', mode: RequestMode.cors, redirect: RequestRedirect.follow),
-    ).timeout(timeout);
-    final finalUrl = response.url;
+    final init = _FetchInit(method: 'HEAD', mode: 'cors', redirect: 'follow');
+    final response = await _fetch(url.toJS, init).toDart.timeout(timeout);
+    final finalUrl = response.url.toDart;
     return finalUrl.isEmpty ? null : finalUrl;
   } catch (_) {
     return null;

@@ -25,10 +25,15 @@ void main() {
   Future<void> pumpAndOpen(WidgetTester tester, List<MealSlotFull> slots) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: Builder(
-          builder: (context) => ElevatedButton(
-            onPressed: () => showIngredientListDialog(context, slots),
-            child: const Text('open'),
+        // A real Scaffold ancestor - not just MaterialApp's implicit
+        // ScaffoldMessenger - is required for showSnackBar to have
+        // somewhere to present the copy-confirmation snackbar to.
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => showIngredientListDialog(context, slots),
+              child: const Text('open'),
+            ),
           ),
         ),
       ),

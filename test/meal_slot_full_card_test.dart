@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:laplanif/models/meal_plan_config.dart';
 import 'package:laplanif/models/meal_plan_full.dart';
-import 'package:laplanif/models/meal_plan_preview.dart';
 import 'package:laplanif/widgets/meal_slot_full_card.dart';
 
 const _slot = MealSlotFull(

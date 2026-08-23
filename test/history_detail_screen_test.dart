@@ -21,6 +21,7 @@ MealHistoryEntry _entry() => MealHistoryEntry(
       proteinComponent: MealComponent(
         type: MealComponentType.link,
         name: 'General Tao Chicken',
+        ingredients: [Ingredient(name: 'Chicken thighs', amount: '1.5 kg'), Ingredient(name: 'Soy sauce', amount: '3 tbsp')],
         usesWeeklyDeal: true,
         dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
       ),
@@ -62,12 +63,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Ingredient list'), findsOneWidget);
-    // Each name also still shows in the (now-covered) card behind the
-    // dialog, so these appear twice: once there, once in the extracted list.
-    // General Tao Chicken (a "link" component with no structured
-    // ingredients) and both simple sides fall back to listing the
-    // component's own name.
-    expect(find.text('General Tao Chicken'), findsNWidgets(2));
+    // The "link" protein's own ingredients are used - not its recipe name.
+    expect(find.text('Chicken thighs — 1.5 kg'), findsOneWidget);
+    expect(find.text('Soy sauce — 3 tbsp'), findsOneWidget);
+    expect(find.text('General Tao Chicken'), findsOneWidget); // only in the (now-covered) card behind the dialog
+    // Simple sides have no recipe of their own, so their name is the item to
+    // buy - these also still show once in the covered card behind the dialog.
     expect(find.text('Rice'), findsNWidgets(2));
     expect(find.text('Broccoli'), findsNWidgets(2));
   });

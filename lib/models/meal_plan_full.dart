@@ -70,8 +70,10 @@ class MealComponent {
   /// the protein component). Null otherwise.
   final String? recipeUrl;
 
-  /// Populated for [MealComponentType.aiRecipe] (and optionally
-  /// [MealComponentType.link]); empty otherwise.
+  /// Populated for [MealComponentType.aiRecipe] and [MealComponentType.link]
+  /// - the shopping-list feature is built from this field, so a "link"
+  /// component still carries its own ingredients even though the
+  /// step-by-step instructions live at [recipeUrl]. Empty otherwise.
   final List<Ingredient> ingredients;
 
   /// Populated for [MealComponentType.aiRecipe]; empty otherwise.
@@ -217,10 +219,11 @@ class ShoppingListItem {
   final List<String> amounts;
 }
 
-/// Extracts a shopping list from a week's worth of [MealSlotFull]s: every
-/// recipe ingredient, plus one line per simple-side component (which has no
-/// structured ingredients of its own - the component's name is the item to
-/// buy), deduplicated by name across the whole week.
+/// Extracts a shopping list from a week's worth of [MealSlotFull]s: the real
+/// ingredients of every link/AI recipe, plus one line per simple-side
+/// component (which has no recipe of its own - the component's name, e.g.
+/// "Broccoli", is itself the item to buy), deduplicated by name across the
+/// whole week.
 extension MealSlotFullListShoppingList on List<MealSlotFull> {
   List<ShoppingListItem> get shoppingList {
     final amountsByKey = <String, List<String>>{};
@@ -243,12 +246,17 @@ extension MealSlotFullListShoppingList on List<MealSlotFull> {
         // Already covered by the protein component's own ingredients above -
         // listing it again here would double it on the shopping list.
         if (component.type == MealComponentType.coveredByProtein) continue;
-        if (component.ingredients.isNotEmpty) {
-          for (final ingredient in component.ingredients) {
-            addIngredient(ingredient.name, ingredient.amount);
-          }
-        } else {
+        if (component.type == MealComponentType.simpleSide) {
+          // No recipe of its own - the component's name (e.g. "Broccoli")
+          // is the actual grocery item, not a recipe title to discard.
           addIngredient(component.name, '');
+          continue;
+        }
+        // Real recipes (link or AI-authored): use their own ingredient list
+        // rather than falling back to the recipe's dish name, which isn't
+        // itself something you can buy at a store.
+        for (final ingredient in component.ingredients) {
+          addIngredient(ingredient.name, ingredient.amount);
         }
       }
     }

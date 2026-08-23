@@ -246,4 +246,56 @@ void main() {
     expect(list.where((i) => i.name == 'Rice'), hasLength(1));
     expect(list.where((i) => i.name == 'Carrots'), hasLength(1));
   });
+
+  test('shoppingList uses a link component\'s own ingredients, not its recipe name', () {
+    const protein = MealComponent(
+      type: MealComponentType.link,
+      name: 'General Tao Chicken',
+      recipeUrl: 'https://example.com/general-tao-chicken',
+      ingredients: [Ingredient(name: 'Chicken thighs', amount: '1.5 kg')],
+      usesWeeklyDeal: true,
+      dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+    );
+    const carb = MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false);
+    const vegetable = MealComponent(type: MealComponentType.simpleSide, name: 'Broccoli', usesWeeklyDeal: false);
+    const slot = MealSlotFull(
+      mealType: MealType.lunch,
+      protein: 'meat',
+      count: 5,
+      portionsPerMeal: 3,
+      proteinComponent: protein,
+      carbComponent: carb,
+      vegetableComponent: vegetable,
+    );
+
+    final list = MealPlanFull(slots: [slot]).shoppingList;
+
+    expect(list.map((i) => i.name), ['Broccoli', 'Chicken thighs', 'Rice']);
+    expect(list.any((i) => i.name == 'General Tao Chicken'), isFalse);
+  });
+
+  test('shoppingList drops a link/aiRecipe component with no ingredients rather than listing its recipe name', () {
+    const protein = MealComponent(
+      type: MealComponentType.link,
+      name: 'General Tao Chicken',
+      recipeUrl: 'https://example.com/general-tao-chicken',
+      usesWeeklyDeal: true,
+      dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+    );
+    const carb = MealComponent(type: MealComponentType.aiRecipe, name: 'Fried rice', usesWeeklyDeal: false);
+    const vegetable = MealComponent(type: MealComponentType.simpleSide, name: 'Broccoli', usesWeeklyDeal: false);
+    const slot = MealSlotFull(
+      mealType: MealType.lunch,
+      protein: 'meat',
+      count: 5,
+      portionsPerMeal: 3,
+      proteinComponent: protein,
+      carbComponent: carb,
+      vegetableComponent: vegetable,
+    );
+
+    final list = MealPlanFull(slots: [slot]).shoppingList;
+
+    expect(list.map((i) => i.name), ['Broccoli']);
+  });
 }

@@ -446,8 +446,12 @@ class MealPlanGenerationService {
     // covered_by_protein always points at the same recipe as the protein
     // component - resolve it from the protein's own (already-verified)
     // recipeUrl rather than trusting a second independent sourceIndex.
-    if (carb.type == MealComponentType.coveredByProtein) carb = _withRecipeUrl(carb, protein.recipeUrl);
-    if (vegetable.type == MealComponentType.coveredByProtein) vegetable = _withRecipeUrl(vegetable, protein.recipeUrl);
+    if (carb.type == MealComponentType.coveredByProtein) {
+      carb = _withRecipeLink(carb, protein.recipeUrl, protein.recipeSourceTitle);
+    }
+    if (vegetable.type == MealComponentType.coveredByProtein) {
+      vegetable = _withRecipeLink(vegetable, protein.recipeUrl, protein.recipeSourceTitle);
+    }
     return MealSlotFull(
       mealType: slot.mealType,
       protein: slot.protein,
@@ -459,10 +463,11 @@ class MealPlanGenerationService {
     );
   }
 
-  MealComponent _withRecipeUrl(MealComponent component, String? recipeUrl) => MealComponent(
+  MealComponent _withRecipeLink(MealComponent component, String? recipeUrl, String? recipeSourceTitle) => MealComponent(
     type: component.type,
     name: component.name,
     recipeUrl: recipeUrl,
+    recipeSourceTitle: recipeSourceTitle,
     ingredients: component.ingredients,
     instructions: component.instructions,
     note: component.note,
@@ -473,6 +478,7 @@ class MealPlanGenerationService {
   MealComponent _parseComponent(Map<String, dynamic> raw, List<_GroundingSource> sources) {
     var type = MealComponentType.fromValue(raw['type'] as String);
     String? recipeUrl;
+    String? recipeSourceTitle;
     if (type == MealComponentType.link) {
       // The model never writes out the URL itself - it only picks a
       // sourceIndex into the verified search-grounding source list (see
@@ -484,6 +490,8 @@ class MealPlanGenerationService {
       final sourceIndex = (raw['sourceIndex'] as num?)?.toInt() ?? -1;
       if (sourceIndex >= 0 && sourceIndex < sources.length) {
         recipeUrl = sources[sourceIndex].uri;
+        final title = sources[sourceIndex].title;
+        recipeSourceTitle = title.isEmpty ? null : title;
       } else {
         type = MealComponentType.aiRecipe;
       }
@@ -492,6 +500,7 @@ class MealPlanGenerationService {
       type: type,
       name: (raw['name'] as String).trim(),
       recipeUrl: recipeUrl,
+      recipeSourceTitle: recipeSourceTitle,
       ingredients: (raw['ingredients'] as List<dynamic>? ?? const [])
           .map((e) => e as Map<String, dynamic>)
           .map((e) => Ingredient(name: (e['name'] as String).trim(), amount: (e['amount'] as String).trim()))

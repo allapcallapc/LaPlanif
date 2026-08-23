@@ -55,6 +55,7 @@ class MealComponent {
     required this.type,
     required this.name,
     this.recipeUrl,
+    this.recipeSourceTitle,
     this.ingredients = const [],
     this.instructions = const [],
     this.note = '',
@@ -68,7 +69,20 @@ class MealComponent {
   /// A verified recipe URL - set for [MealComponentType.link], and for
   /// [MealComponentType.coveredByProtein] (pointing at the same recipe as
   /// the protein component). Null otherwise.
+  ///
+  /// This is Google Search grounding's own redirect link
+  /// (`vertexaisearch.cloud.google.com/grounding-api-redirect/...`), not the
+  /// underlying recipe page's real URL - the Gemini API never exposes that
+  /// real URL, only this opaque, working-but-unreadable redirect. It's still
+  /// the right thing to open the link with; [recipeSourceTitle] is what
+  /// should be shown as the link's visible label instead of this string.
   final String? recipeUrl;
+
+  /// The search result's title for [recipeUrl], as Google Search grounding
+  /// returned it - a human-readable label to display in place of the opaque
+  /// redirect URL itself. Set alongside [recipeUrl]; null otherwise, or when
+  /// grounding didn't return a title for that source.
+  final String? recipeSourceTitle;
 
   /// Populated for [MealComponentType.aiRecipe] and [MealComponentType.link]
   /// - the shopping-list feature is built from this field, so a "link"
@@ -93,6 +107,7 @@ class MealComponent {
     'type': type.value,
     'name': name,
     'recipeUrl': recipeUrl,
+    'recipeSourceTitle': recipeSourceTitle,
     'ingredients': ingredients.map((i) => i.toJson()).toList(),
     'instructions': instructions,
     'note': note,
@@ -104,6 +119,7 @@ class MealComponent {
     type: MealComponentType.fromValue(json['type'] as String),
     name: json['name'] as String,
     recipeUrl: json['recipeUrl'] as String?,
+    recipeSourceTitle: json['recipeSourceTitle'] as String?,
     ingredients: (json['ingredients'] as List<dynamic>? ?? const [])
         .map((i) => Ingredient.fromJson(i as Map<String, dynamic>))
         .toList(),

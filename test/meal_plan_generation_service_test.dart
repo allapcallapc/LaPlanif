@@ -222,11 +222,13 @@ void main() {
     expect(slot.proteinComponent.type, MealComponentType.link);
     expect(slot.proteinComponent.name, 'Big-batch chicken thigh stir-fry');
     expect(slot.proteinComponent.recipeUrl, 'https://example.com/chicken-stir-fry');
+    expect(slot.proteinComponent.recipeSourceTitle, 'Big-batch chicken thigh stir-fry');
     expect(slot.proteinComponent.usesWeeklyDeal, isTrue);
     expect(slot.proteinComponent.dealItems.single.name, 'Chicken thighs');
 
     expect(slot.carbComponent.type, MealComponentType.coveredByProtein);
     expect(slot.carbComponent.recipeUrl, 'https://example.com/chicken-stir-fry');
+    expect(slot.carbComponent.recipeSourceTitle, 'Big-batch chicken thigh stir-fry');
 
     expect(slot.vegetableComponent.type, MealComponentType.simpleSide);
     expect(slot.vegetableComponent.note, 'Steam 5 min, toss with butter.');
@@ -316,6 +318,7 @@ void main() {
     final protein = plan.slots.single.proteinComponent;
     expect(protein.type, MealComponentType.link);
     expect(protein.recipeUrl, 'https://example.com/second-recipe');
+    expect(protein.recipeSourceTitle, 'Second recipe');
   });
 
   test('empty recipeUrl parses to null and blank ingredients/instructions parse to empty lists', () async {

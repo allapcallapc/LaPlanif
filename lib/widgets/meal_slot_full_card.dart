@@ -97,7 +97,7 @@ class MealSlotFullCard extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(component.name, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-        if (component.recipeUrl != null) _buildRecipeLink(context, component.recipeUrl!),
+        if (component.recipeUrl != null) _buildRecipeLink(context, component.recipeUrl!, component.recipeSourceTitle),
         if (component.type == MealComponentType.simpleSide && component.note.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -168,29 +168,38 @@ class MealSlotFullCard extends StatelessWidget {
     );
   }
 
-  Widget _buildRecipeLink(BuildContext context, String url) {
+  // [url] is Google Search grounding's own opaque redirect link (it works
+  // fine when opened, but is meaningless to read) - [sourceTitle], the
+  // search result's title, is shown instead whenever grounding provided one,
+  // falling back to the raw redirect URL only when it didn't.
+  Widget _buildRecipeLink(BuildContext context, String url, String? sourceTitle) {
     final launcher = onOpenRecipeLink;
+    final label = sourceTitle?.trim();
+    final displayText = (label == null || label.isEmpty) ? url : label;
     return Padding(
       padding: const EdgeInsets.only(top: 4),
-      child: InkWell(
-        onTap: launcher == null ? null : () => launcher(url),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.open_in_new, size: 14, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                url,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.primary,
-                  decoration: TextDecoration.underline,
-                  fontSize: 12,
+      child: Tooltip(
+        message: url,
+        child: InkWell(
+          onTap: launcher == null ? null : () => launcher(url),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.open_in_new, size: 14, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  displayText,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                    fontSize: 12,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
-                overflow: TextOverflow.ellipsis,
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

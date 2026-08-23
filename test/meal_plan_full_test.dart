@@ -222,7 +222,7 @@ void main() {
       vegetableComponent: MealComponent(type: MealComponentType.simpleSide, name: 'Carrots', usesWeeklyDeal: false),
     );
     const slot2 = MealSlotFull(
-      mealType: MealType.dinner,
+      mealType: MealType.supper,
       protein: 'meat',
       count: 1,
       portionsPerMeal: 1,

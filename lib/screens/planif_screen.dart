@@ -794,7 +794,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
         'Fetching…',
       ),
       StoreFetchStatus.done => (
-        const Icon(Icons.check_circle, color: Colors.green),
+        Icon(
+          state.itemCount > 0 ? Icons.check_circle : Icons.warning,
+          color: state.itemCount > 0 ? Colors.green : Colors.amber.shade700,
+        ),
         '${state.itemCount} items',
       ),
       StoreFetchStatus.failed => (
@@ -838,8 +841,13 @@ class _PlanifScreenState extends State<PlanifScreen> {
       );
     }
     if (state.status == StoreFetchStatus.done) {
+      final hasDeals = state.itemCount > 0;
       return Chip(
-        avatar: const Icon(Icons.check_circle, size: 16, color: Colors.green),
+        avatar: Icon(
+          hasDeals ? Icons.check_circle : Icons.warning,
+          size: 16,
+          color: hasDeals ? Colors.green : Colors.amber.shade700,
+        ),
         label: Text('${state.store.name} · ${state.itemCount}', style: const TextStyle(fontSize: 12)),
         visualDensity: VisualDensity.compact,
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,

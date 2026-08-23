@@ -39,16 +39,33 @@ import 'model_fallback_controller.dart';
 ///    index, downgrades to an AI-authored recipe rather than a dead link).
 ///    This call has no grounding requirement, so it uses the caller's chosen
 ///    [model] like any other call in the app.
+///
+/// Each grounding source's URL is itself an opaque
+/// `vertexaisearch.cloud.google.com/grounding-api-redirect/...` link, not
+/// the real recipe page - [_resolveRecipeLink] gets one chance to resolve it
+/// to the real destination (see `redirect_resolver.dart`) right after the
+/// research call, before it's shown to the extraction step or the user; on
+/// any failure (most likely: the redirect target doesn't allow a
+/// cross-origin read) the original redirect link is kept as-is, since it
+/// still works as a plain link even though it can't be read as text.
 class MealPlanGenerationService {
   MealPlanGenerationService({
     http.Client? client,
     String? model,
     List<String>? groundingModels,
     AiCallLogRepository? logRepository,
+    Future<String?> Function(String url)? resolveRecipeLink,
   }) : model = model ?? AiConfigRepository.defaultModels.first,
        groundingModels = groundingModels ?? AiConfigRepository.defaultGroundingModels,
        _client = client ?? http.Client(),
        _logRepository = logRepository ?? AiCallLogRepository(),
+       // Defaults to a no-op (keep the original redirect link) rather than
+       // the real fetch-based resolver - the real one is wired in
+       // explicitly at this app's one production call site
+       // (PlanifScreen's default generationService), so tests that
+       // construct this service directly never touch a real network/browser
+       // API. See redirect_resolver.dart for why resolution can fail.
+       _resolveRecipeLink = resolveRecipeLink ?? ((_) async => null),
        assert(
          (groundingModels ?? AiConfigRepository.defaultGroundingModels).isNotEmpty,
          'groundingModels must not be empty',
@@ -59,6 +76,7 @@ class MealPlanGenerationService {
 
   final http.Client _client;
   final AiCallLogRepository _logRepository;
+  final Future<String?> Function(String url) _resolveRecipeLink;
   final String model;
 
   /// Models to try, in order, for the grounded research call. Defaults to
@@ -186,7 +204,7 @@ class MealPlanGenerationService {
         inputTokens: (usage?['promptTokenCount'] as num?)?.toInt() ?? 0,
         outputTokens: (usage?['candidatesTokenCount'] as num?)?.toInt() ?? 0,
       );
-      return (text, _groundingSources(decoded));
+      return (text, await _resolveSources(_groundingSources(decoded)));
     } catch (e) {
       await _log(model: model, phase: 'research', success: false, errorMessage: stripExceptionPrefix(e));
       rethrow;
@@ -216,6 +234,25 @@ class MealPlanGenerationService {
       sources.add(_GroundingSource(uri: uri, title: (web?['title'] as String? ?? '').trim()));
     }
     return sources;
+  }
+
+  /// Gives [_resolveRecipeLink] one chance per source to swap its opaque
+  /// redirect [_GroundingSource.uri] for the real destination URL, in
+  /// parallel. A resolver failure (null, or any thrown exception - a
+  /// custom-injected resolver isn't trusted to always catch its own) keeps
+  /// that source's original redirect link rather than dropping it.
+  Future<List<_GroundingSource>> _resolveSources(List<_GroundingSource> sources) {
+    return Future.wait(
+      sources.map((source) async {
+        String? resolvedUrl;
+        try {
+          resolvedUrl = await _resolveRecipeLink(source.uri);
+        } catch (_) {
+          resolvedUrl = null;
+        }
+        return resolvedUrl == null ? source : _GroundingSource(uri: resolvedUrl, title: source.title);
+      }),
+    );
   }
 
   // --- Phase 2: structured extraction ----------------------------------

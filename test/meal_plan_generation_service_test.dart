@@ -353,6 +353,121 @@ void main() {
     expect(vegetable.recipeSourceTitle, 'Sheet-pan sausage and veggies');
   });
 
+  test('with no resolveRecipeLink given, the grounding redirect link is used as-is', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) {
+        return _researchResponse(
+          text: 'Slot 1 protein: verified link.',
+          sources: const [
+            {'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque', 'title': 'A recipe'},
+          ],
+        );
+      }
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'link', name: 'A recipe', sourceIndex: 0),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+          },
+        ],
+      );
+    });
+
+    // No resolveRecipeLink passed - matches how every other test in this
+    // file constructs the service, and confirms that omitting it doesn't
+    // reach out to a real network/browser API (it would hang or crash the
+    // test run if it did).
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+    final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+    expect(
+      plan.slots.single.proteinComponent.recipeUrl,
+      'https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque',
+    );
+  });
+
+  test('resolveRecipeLink swaps the grounding redirect link for the real URL it resolves to', () async {
+    var callCount = 0;
+    final resolvedUrls = <String>[];
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) {
+        return _researchResponse(
+          text: 'Slot 1 protein: verified link.',
+          sources: const [
+            {'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque', 'title': 'A recipe'},
+          ],
+        );
+      }
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'link', name: 'A recipe', sourceIndex: 0),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanGenerationService(
+      client: client,
+      logRepository: AiCallLogRepository(),
+      resolveRecipeLink: (url) async {
+        resolvedUrls.add(url);
+        return 'https://realsite.example.com/a-recipe';
+      },
+    );
+    final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+    expect(resolvedUrls, ['https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque']);
+    expect(plan.slots.single.proteinComponent.recipeUrl, 'https://realsite.example.com/a-recipe');
+    // The search result's title is untouched by resolution - it's still the
+    // same recipe, just linked at its real URL instead of the redirect.
+    expect(plan.slots.single.proteinComponent.recipeSourceTitle, 'A recipe');
+  });
+
+  test('falls back to the original redirect link when resolveRecipeLink returns null or throws', () async {
+    for (final resolver in <Future<String?> Function(String)>[(_) async => null, (_) async => throw Exception('boom')]) {
+      var callCount = 0;
+      final client = MockClient((request) async {
+        callCount++;
+        if (callCount == 1) {
+          return _researchResponse(
+            text: 'Slot 1 protein: verified link.',
+            sources: const [
+              {'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque', 'title': 'A recipe'},
+            ],
+          );
+        }
+        return _extractionResponse(
+          slots: [
+            {
+              'protein': _rawComponent(type: 'link', name: 'A recipe', sourceIndex: 0),
+              'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+              'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+            },
+          ],
+        );
+      });
+
+      final service = MealPlanGenerationService(
+        client: client,
+        logRepository: AiCallLogRepository(),
+        resolveRecipeLink: resolver,
+      );
+      final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+      expect(
+        plan.slots.single.proteinComponent.recipeUrl,
+        'https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque',
+      );
+    }
+  });
+
   test('empty recipeUrl parses to null and blank ingredients/instructions parse to empty lists', () async {
     var callCount = 0;
     final client = MockClient((request) async {

@@ -17,6 +17,7 @@ import '../services/meal_plan_config_repository.dart';
 import '../services/meal_plan_generation_service.dart';
 import '../services/meal_plan_preview_service.dart';
 import '../services/model_fallback_controller.dart';
+import '../services/redirect_resolver.dart';
 import '../services/store_config_repository.dart';
 import '../utils/error_formatting.dart';
 import '../utils/iso_week.dart';
@@ -82,7 +83,7 @@ class PlanifScreen extends StatefulWidget {
        mealPlanConfigRepository = mealPlanConfigRepository ?? MealPlanConfigRepository(),
        mealHistoryRepository = mealHistoryRepository ?? MealHistoryRepository(),
        previewService = previewService ?? MealPlanPreviewService(),
-       generationService = generationService ?? MealPlanGenerationService(),
+       generationService = generationService ?? MealPlanGenerationService(resolveRecipeLink: resolveRedirectUrl),
        rateLimitWait = rateLimitWait ?? const Duration(minutes: 1),
        rateLimitPrompt = rateLimitPrompt ?? showRateLimitDialog,
        launchRecipeLink = launchRecipeLink ?? openRecipeLink;

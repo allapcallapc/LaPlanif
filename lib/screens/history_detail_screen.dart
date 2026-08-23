@@ -7,6 +7,7 @@ import '../services/meal_history_repository.dart';
 import '../utils/iso_week.dart';
 import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
+import 'planif_screen.dart' show RecipeLinkLauncher, openRecipeLink;
 
 /// Views and edits one saved week's plan. A slot's recipe name and anchor
 /// deal items can be changed manually (reusing [MealSlotFullCard] for
@@ -14,11 +15,17 @@ import '../widgets/meal_slot_full_card.dart';
 /// re-saving overwrites this week's (or the newly picked week's) history
 /// entry, matching the "one plan per week" storage rule.
 class HistoryDetailScreen extends StatefulWidget {
-  HistoryDetailScreen({super.key, required this.entry, MealHistoryRepository? repository})
-    : repository = repository ?? MealHistoryRepository();
+  HistoryDetailScreen({
+    super.key,
+    required this.entry,
+    MealHistoryRepository? repository,
+    RecipeLinkLauncher? launchRecipeLink,
+  }) : repository = repository ?? MealHistoryRepository(),
+       launchRecipeLink = launchRecipeLink ?? openRecipeLink;
 
   final MealHistoryEntry entry;
   final MealHistoryRepository repository;
+  final RecipeLinkLauncher launchRecipeLink;
 
   @override
   State<HistoryDetailScreen> createState() => _HistoryDetailScreenState();
@@ -35,6 +42,17 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
     super.initState();
     _weekId = widget.entry.weekId;
     _slots = List.of(widget.entry.slots);
+  }
+
+  Future<void> _openRecipeLink(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      await widget.launchRecipeLink(uri);
+    } catch (_) {
+      // Non-fatal: if the platform can't launch it (e.g. no browser handler
+      // available), the user still has the URL visible in the card to copy.
+    }
   }
 
   Future<void> _editSlot(int index) async {
@@ -148,6 +166,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
         itemCount: _slots.length,
         itemBuilder: (context, i) => MealSlotFullCard(
           slot: _slots[i],
+          onOpenRecipeLink: _openRecipeLink,
           trailing: IconButton(
             icon: const Icon(Icons.edit_outlined, size: 18),
             tooltip: 'Edit this slot',

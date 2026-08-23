@@ -131,6 +131,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   final Set<int> _regeneratingSlots = {};
   MealPlanFull? _fullPlan;
   bool _isGeneratingFullPlan = false;
+  final Set<int> _regeneratingFullSlots = {};
   bool _isSavingWeek = false;
 
   @override
@@ -463,6 +464,57 @@ class _PlanifScreenState extends State<PlanifScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Could not generate full meal plan: ${stripExceptionPrefix(e)}')));
+    }
+  }
+
+  // Re-runs the two-phase generation call for just this one slot's confirmed
+  // preview and splices the result back into _fullPlan, leaving every other
+  // slot's recipe untouched. Mirrors _regenerateSlot's splice-at-completion
+  // pattern (reading _fullPlan!.slots live rather than a captured copy), so
+  // two slots regenerating concurrently can't clobber each other's result.
+  Future<void> _regenerateFullSlot(int index) async {
+    final apiKey = _apiKey;
+    final preview = _preview;
+    if (apiKey == null ||
+        preview == null ||
+        _fullPlan == null ||
+        _isGeneratingFullPlan ||
+        _regeneratingFullSlots.contains(index)) {
+      return;
+    }
+
+    setState(() => _regeneratingFullSlots.add(index));
+
+    final dietaryNotes = _mealPlanConfig?.dietaryNotes ?? '';
+    final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
+    try {
+      final result = await controller.run(
+        attempt: (model) => widget.generationService.generateMealPlan(
+          apiKey: apiKey,
+          slots: [preview.slots[index]],
+          items: _items,
+          dietaryNotes: dietaryNotes,
+          model: model,
+          groundingModels: _groundingModels,
+        ),
+        onRateLimited: ({required currentModel, nextModel}) {
+          if (!mounted) return Future.value(RateLimitChoice.retrySame);
+          return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        final slots = [..._fullPlan!.slots];
+        slots[index] = result.slots.single;
+        _fullPlan = MealPlanFull(slots: slots);
+        _regeneratingFullSlots.remove(index);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _regeneratingFullSlots.remove(index));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not regenerate this recipe: ${stripExceptionPrefix(e)}')));
     }
   }
 
@@ -1103,7 +1155,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     return SafeArea(
       minimum: const EdgeInsets.all(12),
       child: FilledButton.icon(
-        onPressed: _isSavingWeek ? null : _saveWeekPlan,
+        onPressed: (_isSavingWeek || _regeneratingFullSlots.isNotEmpty) ? null : _saveWeekPlan,
         icon: _isSavingWeek
             ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
             : const Icon(Icons.save_outlined),
@@ -1195,7 +1247,23 @@ class _PlanifScreenState extends State<PlanifScreen> {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: plan.slots.length,
-      itemBuilder: (context, i) => MealSlotFullCard(slot: plan.slots[i], onOpenRecipeLink: _openRecipeLink),
+      itemBuilder: (context, i) => MealSlotFullCard(
+        slot: plan.slots[i],
+        onOpenRecipeLink: _openRecipeLink,
+        trailing: _buildFullPlanRegenerateButton(i),
+      ),
+    );
+  }
+
+  Widget _buildFullPlanRegenerateButton(int index) {
+    final isRegenerating = _regeneratingFullSlots.contains(index);
+    return IconButton(
+      icon: isRegenerating
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.refresh, size: 18),
+      tooltip: 'Regenerate this recipe',
+      visualDensity: VisualDensity.compact,
+      onPressed: (_isGeneratingFullPlan || isRegenerating) ? null : () => _regenerateFullSlot(index),
     );
   }
 }

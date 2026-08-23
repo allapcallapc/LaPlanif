@@ -321,6 +321,38 @@ void main() {
     expect(protein.recipeSourceTitle, 'Second recipe');
   });
 
+  test('a "covered_by_protein" vegetable resolves its recipeUrl and recipeSourceTitle from the protein component', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) {
+        return _researchResponse(
+          text: 'Slot 1 protein: verified link https://example.com/sheet-pan-sausage. Carb and vegetable both covered.',
+          sources: const [
+            {'uri': 'https://example.com/sheet-pan-sausage', 'title': 'Sheet-pan sausage and veggies'},
+          ],
+        );
+      }
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'link', name: 'Sheet-pan sausage and veggies', sourceIndex: 0),
+            'carb': _rawComponent(type: 'covered_by_protein', name: 'Potatoes (included in the sheet-pan recipe)'),
+            'vegetable': _rawComponent(type: 'covered_by_protein', name: 'Green beans (included in the sheet-pan recipe)'),
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+    final plan = await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+    final vegetable = plan.slots.single.vegetableComponent;
+    expect(vegetable.type, MealComponentType.coveredByProtein);
+    expect(vegetable.recipeUrl, 'https://example.com/sheet-pan-sausage');
+    expect(vegetable.recipeSourceTitle, 'Sheet-pan sausage and veggies');
+  });
+
   test('empty recipeUrl parses to null and blank ingredients/instructions parse to empty lists', () async {
     var callCount = 0;
     final client = MockClient((request) async {

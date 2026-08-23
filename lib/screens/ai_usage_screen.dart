@@ -101,17 +101,37 @@ class _AiUsageScreenState extends State<AiUsageScreen> {
   }
 
   Widget _buildLogRow(AiCallLog log) {
-    return ListTile(
-      leading: Icon(
-        log.success ? Icons.check_circle : Icons.error,
-        color: log.success ? Colors.green : Colors.red,
-      ),
-      title: Text('${log.storeName} · ${log.model}'),
-      subtitle: Text(
-        log.success
-            ? '${_formatTimestamp(log.timestamp)} · ${log.inputTokens} in / ${log.outputTokens} out tokens'
-            : '${_formatTimestamp(log.timestamp)} · ${log.errorMessage ?? "Failed"}',
-      ),
+    final icon = Icon(
+      log.success ? Icons.check_circle : Icons.error,
+      color: log.success ? Colors.green : Colors.red,
+    );
+    final title = Text('${log.storeName} · ${log.model}');
+    final subtitle = Text(
+      log.success
+          ? '${_formatTimestamp(log.timestamp)} · ${log.inputTokens} in / ${log.outputTokens} out tokens'
+          : '${_formatTimestamp(log.timestamp)} · ${log.errorMessage ?? "Failed"}',
+    );
+
+    final sample = log.pageSample;
+    if (sample == null) {
+      return ListTile(leading: icon, title: title, subtitle: subtitle);
+    }
+    // The scraped-page sample is opt-in (tap to expand) rather than always
+    // shown - most rows are unremarkable, and always showing it would bury
+    // the timestamp/token summary that's useful at a glance.
+    return ExpansionTile(
+      leading: icon,
+      title: title,
+      subtitle: subtitle,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: SelectableText(sample, style: Theme.of(context).textTheme.bodySmall),
+          ),
+        ),
+      ],
     );
   }
 

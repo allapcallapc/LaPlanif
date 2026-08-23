@@ -83,7 +83,13 @@ class AiDealExtractionService {
       try {
         response = await _postWithRetry(apiKey: apiKey, storeName: storeName, pages: pages, model: model);
       } catch (_) {
-        await _log(storeName: storeName, model: model, success: false, errorMessage: 'Could not reach the AI API');
+        await _log(
+          storeName: storeName,
+          model: model,
+          success: false,
+          errorMessage: 'Could not reach the AI API',
+          pages: pages,
+        );
         throw Exception('Could not reach the AI API');
       }
 
@@ -93,6 +99,7 @@ class AiDealExtractionService {
           model: model,
           success: false,
           errorMessage: 'AI API HTTP 429',
+          pages: pages,
         );
         throw RateLimitedException(model);
       }
@@ -103,6 +110,7 @@ class AiDealExtractionService {
           model: model,
           success: false,
           errorMessage: 'AI API HTTP ${response.statusCode}',
+          pages: pages,
         );
         throw Exception('AI API HTTP ${response.statusCode}');
       }
@@ -111,7 +119,13 @@ class AiDealExtractionService {
       try {
         decoded = jsonDecode(response.body) as Map<String, dynamic>;
       } catch (_) {
-        await _log(storeName: storeName, model: model, success: false, errorMessage: 'Invalid JSON from the AI API');
+        await _log(
+          storeName: storeName,
+          model: model,
+          success: false,
+          errorMessage: 'Invalid JSON from the AI API',
+          pages: pages,
+        );
         throw Exception('Invalid JSON from the AI API');
       }
 
@@ -127,6 +141,7 @@ class AiDealExtractionService {
           success: true,
           inputTokens: inputTokens,
           outputTokens: outputTokens,
+          pages: pages,
         );
         return items;
       } catch (e) {
@@ -138,6 +153,7 @@ class AiDealExtractionService {
           inputTokens: inputTokens,
           outputTokens: outputTokens,
           errorMessage: 'Could not parse structured output from the AI response: $detail',
+          pages: pages,
         );
         if (attempt == 1 && detail.contains('MALFORMED_FUNCTION_CALL')) {
           await Future<void>.delayed(retryDelay);
@@ -167,7 +183,7 @@ class AiDealExtractionService {
     if (response.statusCode != 503) {
       return response;
     }
-    await _log(storeName: storeName, model: model, success: false, errorMessage: 'AI API HTTP 503');
+    await _log(storeName: storeName, model: model, success: false, errorMessage: 'AI API HTTP 503', pages: pages);
     await Future<void>.delayed(retryDelay);
     return _client.post(uri, headers: headers, body: body);
   }
@@ -181,6 +197,7 @@ class AiDealExtractionService {
     int inputTokens = 0,
     int outputTokens = 0,
     String? errorMessage,
+    List<FlyerPage> pages = const [],
   }) {
     return _logRepository.add(
       AiCallLog(
@@ -191,8 +208,22 @@ class AiDealExtractionService {
         inputTokens: inputTokens,
         outputTokens: outputTokens,
         errorMessage: errorMessage,
+        pageSample: _pageSample(pages),
       ),
     );
+  }
+
+  /// Summarizes what was actually scraped for this call: page count,
+  /// average alt-text length per page, and a snippet of the first page's
+  /// alt text - enough to tell "the flyer had nothing to extract" apart
+  /// from "the AI missed something that was there" at a glance.
+  String? _pageSample(List<FlyerPage> pages) {
+    if (pages.isEmpty) return null;
+    final totalChars = pages.fold<int>(0, (sum, p) => sum + p.altText.length);
+    final avgChars = (totalChars / pages.length).round();
+    final first = pages.first;
+    final snippet = first.altText.length > 300 ? '${first.altText.substring(0, 300)}…' : first.altText;
+    return '${pages.length} page(s), avg $avgChars chars/page. Page ${first.pageNumber}: "$snippet"';
   }
 
   Map<String, dynamic> _buildRequestBody(List<FlyerPage> pages) {

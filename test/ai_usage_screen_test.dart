@@ -51,6 +51,33 @@ void main() {
     expect(find.textContaining('AI API HTTP 500'), findsOneWidget);
   });
 
+  testWidgets('expands a call with a page sample to reveal the scraped text', (tester) async {
+    final repository = AiCallLogRepository();
+    await repository.add(
+      AiCallLog(
+        timestamp: DateTime(2026, 1, 1, 9, 5),
+        storeName: 'Maxi',
+        model: 'gemini-3.5-flash-lite',
+        success: true,
+        inputTokens: 500,
+        outputTokens: 13,
+        pageSample: '2 page(s), avg 45 chars/page. Page 1: "Maxi - Page 1"',
+      ),
+    );
+
+    await tester.pumpWidget(MaterialApp(home: AiUsageScreen(repository: repository)));
+    await tester.pumpAndSettle();
+
+    // Collapsed by default - the raw sample doesn't clutter the row until
+    // asked for.
+    expect(find.textContaining('Maxi - Page 1'), findsNothing);
+
+    await tester.tap(find.textContaining('Maxi · gemini-3.5-flash-lite'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Maxi - Page 1'), findsOneWidget);
+  });
+
   testWidgets('shows currently running calls above the history', (tester) async {
     final activity = ValueNotifier<List<AiInFlightCall>>([
       AiInFlightCall(id: 1, storeName: 'Maxi', model: 'gemini-3.6-flash', startedAt: DateTime(2026, 1, 1, 9, 0)),

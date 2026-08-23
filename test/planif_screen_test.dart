@@ -2455,6 +2455,236 @@ void main() {
     expect(find.text('Original supper recipe'), findsOneWidget);
   });
 
+  testWidgets('shows an error snackbar and re-enables the button when a full-plan slot regeneration fails', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+
+    var generationCallCount = 0;
+    final generationService = _FakeGenerationService((slots, items) async {
+      generationCallCount++;
+      if (generationCallCount == 1) {
+        final slot = slots.single;
+        return MealPlanFull(
+          slots: [
+            MealSlotFull(
+              mealType: slot.mealType,
+              protein: slot.protein,
+              count: slot.count,
+              portionsPerMeal: slot.portionsPerMeal,
+              proteinComponent: const MealComponent(
+                type: MealComponentType.simpleSide,
+                name: 'Original recipe',
+                usesWeeklyDeal: false,
+              ),
+              carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+              vegetableComponent: const MealComponent(
+                type: MealComponentType.simpleSide,
+                name: 'Broccoli',
+                usesWeeklyDeal: false,
+              ),
+            ),
+          ],
+        );
+      }
+      throw Exception('AI API HTTP 500');
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          generationService: generationService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Original recipe'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Could not regenerate this recipe: AI API HTTP 500'), findsOneWidget);
+    // The failed regeneration left the existing recipe in place, and the
+    // button is re-enabled rather than stuck showing its spinner.
+    expect(find.text('Original recipe'), findsOneWidget);
+    expect(tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.refresh)).onPressed, isNotNull);
+  });
+
+  testWidgets(
+    'prompts for the next model when a full-plan slot regeneration call is still rate limited, and continues with it',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
+      await aiConfigRepo.saveModels(['model-a', 'model-b']);
+
+      final mealPlanConfigRepository = MealPlanConfigRepository();
+      await mealPlanConfigRepository.save(
+        const MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+      );
+
+      final scraper = _FakePagesScraper({
+        'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      });
+      final extraction = _FakeExtractionService({
+        'IGA': () async => const [
+          DealItem(
+            name: 'Chicken thighs',
+            price: '3.99\$',
+            unit: 'lb',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 1,
+          ),
+        ],
+      });
+
+      final previewService = _FakePreviewService(
+        (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: mealSlots.single.mealType,
+              protein: mealSlots.single.protein,
+              count: mealSlots.single.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Big-batch chicken thigh stir-fry.',
+            ),
+          ],
+        ),
+      );
+
+      final generationService = _FakeModelAwareGenerationService((model) async {
+        if (model == 'model-a') throw RateLimitedException(model);
+        return const MealPlanFull(
+          slots: [
+            MealSlotFull(
+              mealType: MealType.lunch,
+              protein: 'meat',
+              count: 5,
+              portionsPerMeal: 3,
+              proteinComponent: MealComponent(
+                type: MealComponentType.simpleSide,
+                name: 'Roast chicken thighs',
+                usesWeeklyDeal: false,
+              ),
+              carbComponent: MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+              vegetableComponent: MealComponent(
+                type: MealComponentType.simpleSide,
+                name: 'Broccoli',
+                usesWeeklyDeal: false,
+              ),
+            ),
+          ],
+        );
+      });
+
+      var promptCalls = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            scraperService: scraper,
+            extractionService: extraction,
+            aiConfigRepository: aiConfigRepo,
+            mealPlanConfigRepository: mealPlanConfigRepository,
+            previewService: previewService,
+            generationService: generationService,
+            rateLimitWait: Duration.zero,
+            rateLimitPrompt: (context, {required currentModel, nextModel}) async {
+              promptCalls++;
+              return RateLimitChoice.nextModel;
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Fetch deals'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preview meal plan'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Looks good, generate full plan →'));
+      await tester.pumpAndSettle();
+
+      // Generating the initial full plan already used up one rate-limit
+      // fallback (model-a -> model-b).
+      expect(promptCalls, 1);
+      expect(find.text('Roast chicken thighs'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.refresh));
+      await tester.pumpAndSettle();
+
+      // Regenerating this slot falls back through model-a -> model-b again,
+      // independently of the initial generation call.
+      expect(promptCalls, 2);
+      expect(find.text('Roast chicken thighs'), findsOneWidget);
+    },
+  );
+
   testWidgets('shows an error snackbar and re-enables the button when the preview call fails', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);

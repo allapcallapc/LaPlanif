@@ -204,7 +204,9 @@ class _ComponentEdit {
       type = component.type,
       ingredients = component.ingredients,
       instructions = component.instructions,
-      note = component.note;
+      note = component.note,
+      _originalRecipeUrl = component.recipeUrl,
+      _originalRecipeSourceTitle = component.recipeSourceTitle;
 
   final TextEditingController nameController;
   final TextEditingController recipeUrlController;
@@ -214,16 +216,27 @@ class _ComponentEdit {
   final List<String> instructions;
   final String note;
 
-  MealComponent toComponent() => MealComponent(
-    type: type,
-    name: nameController.text.trim(),
-    recipeUrl: recipeUrlController.text.trim().isEmpty ? null : recipeUrlController.text.trim(),
-    ingredients: ingredients,
-    instructions: instructions,
-    note: note,
-    usesWeeklyDeal: dealItems.isNotEmpty,
-    dealItems: dealItems,
-  );
+  // recipeSourceTitle has no editable field of its own - only the URL is
+  // editable here - so it's carried forward as-is when the URL is
+  // untouched, and dropped when the user retypes it, since a title that
+  // came from grounding no longer describes whatever URL they typed.
+  final String? _originalRecipeUrl;
+  final String? _originalRecipeSourceTitle;
+
+  MealComponent toComponent() {
+    final recipeUrl = recipeUrlController.text.trim().isEmpty ? null : recipeUrlController.text.trim();
+    return MealComponent(
+      type: type,
+      name: nameController.text.trim(),
+      recipeUrl: recipeUrl,
+      recipeSourceTitle: recipeUrl == _originalRecipeUrl ? _originalRecipeSourceTitle : null,
+      ingredients: ingredients,
+      instructions: instructions,
+      note: note,
+      usesWeeklyDeal: dealItems.isNotEmpty,
+      dealItems: dealItems,
+    );
+  }
 
   void dispose() {
     nameController.dispose();

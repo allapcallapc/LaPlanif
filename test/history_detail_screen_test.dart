@@ -150,6 +150,96 @@ void main() {
     expect(saved.single.slots.single.proteinComponent.recipeUrl, 'https://example.com/general-tao-chicken');
   });
 
+  testWidgets('editing an unrelated field keeps the recipe link\'s source title, since the URL itself is untouched', (
+    tester,
+  ) async {
+    final repository = MealHistoryRepository();
+    final entry = MealHistoryEntry(
+      weekId: '2026-W34',
+      savedAt: DateTime.utc(2026, 8, 20),
+      slots: [
+        MealSlotFull(
+          mealType: MealType.lunch,
+          protein: 'meat',
+          count: 5,
+          portionsPerMeal: 3,
+          proteinComponent: const MealComponent(
+            type: MealComponentType.link,
+            name: 'General Tao Chicken',
+            recipeUrl: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque',
+            recipeSourceTitle: 'General Tao Chicken Recipe',
+            usesWeeklyDeal: false,
+          ),
+          carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+          vegetableComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Broccoli', usesWeeklyDeal: false),
+        ),
+      ],
+    );
+    await repository.saveWeek(entry);
+
+    await tester.pumpWidget(MaterialApp(home: HistoryDetailScreen(entry: entry, repository: repository)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Edit this slot'));
+    await tester.pumpAndSettle();
+
+    final nameField = find.byWidgetPredicate((w) => w is TextField && w.controller?.text == 'General Tao Chicken');
+    await tester.enterText(nameField, 'Honey Garlic Chicken');
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final saved = await repository.loadAll();
+    final protein = saved.single.slots.single.proteinComponent;
+    expect(protein.recipeUrl, 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque');
+    expect(protein.recipeSourceTitle, 'General Tao Chicken Recipe');
+  });
+
+  testWidgets('editing the recipe link itself drops the stale source title', (tester) async {
+    final repository = MealHistoryRepository();
+    final entry = MealHistoryEntry(
+      weekId: '2026-W34',
+      savedAt: DateTime.utc(2026, 8, 20),
+      slots: [
+        MealSlotFull(
+          mealType: MealType.lunch,
+          protein: 'meat',
+          count: 5,
+          portionsPerMeal: 3,
+          proteinComponent: const MealComponent(
+            type: MealComponentType.link,
+            name: 'General Tao Chicken',
+            recipeUrl: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/opaque',
+            recipeSourceTitle: 'General Tao Chicken Recipe',
+            usesWeeklyDeal: false,
+          ),
+          carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+          vegetableComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Broccoli', usesWeeklyDeal: false),
+        ),
+      ],
+    );
+    await repository.saveWeek(entry);
+
+    await tester.pumpWidget(MaterialApp(home: HistoryDetailScreen(entry: entry, repository: repository)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Edit this slot'));
+    await tester.pumpAndSettle();
+
+    final urlField = find.widgetWithText(TextField, 'Recipe link (optional)').first;
+    await tester.enterText(urlField, 'https://example.com/general-tao-chicken');
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final saved = await repository.loadAll();
+    final protein = saved.single.slots.single.proteinComponent;
+    expect(protein.recipeUrl, 'https://example.com/general-tao-chicken');
+    expect(protein.recipeSourceTitle, isNull);
+  });
+
   testWidgets('falls back to a default repository when none is provided', (tester) async {
     await tester.pumpWidget(MaterialApp(home: HistoryDetailScreen(entry: _entry())));
     await tester.pumpAndSettle();

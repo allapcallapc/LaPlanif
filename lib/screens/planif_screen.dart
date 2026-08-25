@@ -25,8 +25,11 @@ import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
 import '../widgets/rate_limit_dialog.dart';
 
-/// Which of Step 2's results the screen is currently showing.
-enum _ViewMode { deals, preview, full }
+/// Which of Step 2's results the screen is currently showing. "structure" is
+/// the gate step reached from the deals view's "Preview meal plan" FAB: it
+/// lets the user validate/adjust what to plan (meal slots, portions,
+/// dietary notes) before the AI call that produces "preview" actually runs.
+enum _ViewMode { deals, structure, preview, full }
 
 /// Which top-level step the screen is currently showing: the dedicated
 /// "fetch deals" step, or the browse step (deals/preview/full plan) reached
@@ -127,6 +130,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
   List<String> _groundingModels = [];
   MealPlanPreview? _preview;
   MealPlanConfig? _mealPlanConfig;
+  // Draft edited on the structure step, separate from _mealPlanConfig (the
+  // config the currently-shown preview, if any, was actually generated
+  // from) so navigating to the structure step and cancelling out without
+  // confirming never touches what's already on screen.
+  MealPlanConfig? _structureDraft;
   bool _isPreviewLoading = false;
   _ViewMode _viewMode = _ViewMode.deals;
   _Phase _phase = _Phase.fetch;
@@ -251,7 +259,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
     await widget.preferenceRepository.setPreference(item.preferenceKey, next);
   }
 
-  Future<void> _generatePreview() async {
+  // Config comes from the structure step's confirmed draft on a first
+  // generation; omitted (reloaded from the repository, as before the
+  // structure step existed) when the existing "Regenerate preview" action
+  // re-runs the call against whatever was last confirmed.
+  Future<void> _generatePreview({MealPlanConfig? config}) async {
     if (_isPreviewLoading || _regeneratingSlots.isNotEmpty) return;
     final apiKey = _apiKey;
     if (apiKey == null) {
@@ -261,9 +273,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
       return;
     }
 
-    final config = await widget.mealPlanConfigRepository.load();
+    final resolvedConfig = config ?? await widget.mealPlanConfigRepository.load();
     final recentlyUsed = await widget.mealHistoryRepository.recentlyUsed(
-      diversityWindowDays: config.diversityWindowDays,
+      diversityWindowDays: resolvedConfig.diversityWindowDays,
     );
     setState(() => _isPreviewLoading = true);
 
@@ -272,11 +284,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
       final preview = await controller.run(
         attempt: (model) => widget.previewService.previewMealPlan(
           apiKey: apiKey,
-          mealSlots: config.mealSlots,
-          portionsPerMeal: config.portionsPerMeal,
+          mealSlots: resolvedConfig.mealSlots,
+          portionsPerMeal: resolvedConfig.portionsPerMeal,
           items: _items,
           recentlyUsed: recentlyUsed,
-          dietaryNotes: config.dietaryNotes,
+          dietaryNotes: resolvedConfig.dietaryNotes,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
@@ -287,7 +299,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       if (!mounted) return;
       setState(() {
         _preview = preview;
-        _mealPlanConfig = config;
+        _mealPlanConfig = resolvedConfig;
         _isPreviewLoading = false;
         _viewMode = _ViewMode.preview;
         // A freshly regenerated preview can have entirely different anchors,
@@ -303,6 +315,74 @@ class _PlanifScreenState extends State<PlanifScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('Could not generate preview: ${stripExceptionPrefix(e)}')));
     }
+  }
+
+  // Opens the structure step from the deals view's FAB: the same API-key
+  // check _generatePreview used to do up front, since nothing past this
+  // point can proceed without one either. Seeds the draft from whatever
+  // config the current preview (if any) was generated from, so revisiting
+  // the structure step to tweak and regenerate starts from the confirmed
+  // state rather than silently reloading the repository's copy.
+  Future<void> _openStructureStep() async {
+    final apiKey = _apiKey;
+    if (apiKey == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
+      return;
+    }
+    final config = _mealPlanConfig ?? await widget.mealPlanConfigRepository.load();
+    if (!mounted) return;
+    setState(() {
+      _structureDraft = config;
+      _viewMode = _ViewMode.structure;
+    });
+  }
+
+  // Persists the structure step's edits so they're what Config screen and
+  // any future regenerate call see too, then runs the same generation the
+  // old direct-from-FAB flow used to.
+  Future<void> _confirmStructureAndGeneratePreview() async {
+    final draft = _structureDraft;
+    if (draft == null || _isPreviewLoading) return;
+    await widget.mealPlanConfigRepository.save(draft);
+    if (!mounted) return;
+    await _generatePreview(config: draft);
+  }
+
+  void _updateStructurePortions(String value) {
+    final parsed = int.tryParse(value);
+    if (parsed == null || parsed <= 0) return;
+    setState(() => _structureDraft = _structureDraft!.copyWith(portionsPerMeal: parsed));
+  }
+
+  void _updateStructureDiversity(String value) {
+    final parsed = int.tryParse(value);
+    if (parsed == null || parsed <= 0) return;
+    setState(() => _structureDraft = _structureDraft!.copyWith(diversityWindowDays: parsed));
+  }
+
+  void _updateStructureDietaryNotes(String value) {
+    setState(() => _structureDraft = _structureDraft!.copyWith(dietaryNotes: value));
+  }
+
+  void _addStructureSlot() {
+    final slots = [
+      ..._structureDraft!.mealSlots,
+      MealSlot(id: '${DateTime.now().millisecondsSinceEpoch}', mealType: MealType.lunch, protein: 'meat', count: 1),
+    ];
+    setState(() => _structureDraft = _structureDraft!.copyWith(mealSlots: slots));
+  }
+
+  void _updateStructureSlot(int index, MealSlot slot) {
+    final slots = [..._structureDraft!.mealSlots];
+    slots[index] = slot;
+    setState(() => _structureDraft = _structureDraft!.copyWith(mealSlots: slots));
+  }
+
+  void _removeStructureSlot(int index) {
+    final slots = [..._structureDraft!.mealSlots]..removeAt(index);
+    setState(() => _structureDraft = _structureDraft!.copyWith(mealSlots: slots));
   }
 
   // Re-runs the AI call for just this one slot and splices the result back
@@ -656,6 +736,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
     // there's a full plan to save - the two never show at once since they
     // belong to different view modes.
     final showSaveWeekBar = _phase == _Phase.browse && _viewMode == _ViewMode.full && _fullPlan != null;
+    // Mirrors the other two footers: pinned CTA for the structure step,
+    // shown only while that step is what's on screen.
+    final showStructureBar = _phase == _Phase.browse && _viewMode == _ViewMode.structure && _structureDraft != null;
     // The preview FAB only exists to get a first preview started - once one
     // exists, getting back to it (or regenerating it) goes through the app
     // bar's view toggle and regenerate action instead.
@@ -679,7 +762,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
       ),
       body: _phase == _Phase.fetch ? _buildFetchStep() : _buildBrowseStep(),
       floatingActionButton: showPreviewFab ? _buildPreviewFab() : null,
-      bottomNavigationBar: showGenerateFullPlanBar
+      bottomNavigationBar: showStructureBar
+          ? _buildStructureBar()
+          : showGenerateFullPlanBar
           ? _buildGenerateFullPlanBar()
           : showSaveWeekBar
           ? _buildSaveWeekBar()
@@ -694,13 +779,29 @@ class _PlanifScreenState extends State<PlanifScreen> {
   // while looking at the preview.
   List<Widget> _buildAppBarActions() {
     return [
-      if (_preview != null) _buildViewModeToggle(),
+      // Hidden while the structure step is on screen: it isn't one of the
+      // toggle's own segments (deals/preview/full), so showing it here
+      // would render with nothing selected.
+      if (_preview != null && _viewMode != _ViewMode.structure) _buildViewModeToggle(),
       if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildPreferenceSummary(),
       if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildFilterButton(),
+      if (_viewMode == _ViewMode.preview && _preview != null) _buildEditStructureButton(),
       if (_viewMode == _ViewMode.preview && _preview != null) _buildRegenerateButton(),
       if (_viewMode == _ViewMode.full && _fullPlan != null) _buildIngredientListButton(),
       const SizedBox(width: 4),
     ];
+  }
+
+  // Lets the user get back to the structure step (to change slot counts,
+  // portions, or dietary notes) without going all the way back to the
+  // deals view and re-triggering the FAB - it just re-seeds the draft from
+  // whatever config produced the preview currently on screen.
+  Widget _buildEditStructureButton() {
+    return IconButton(
+      icon: const Icon(Icons.tune),
+      tooltip: 'Edit meal plan structure',
+      onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _openStructureStep,
+    );
   }
 
   Widget _buildIngredientListButton() {
@@ -785,11 +886,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   Widget _buildPreviewFab() {
     return FloatingActionButton.extended(
-      onPressed: _isPreviewLoading ? null : _generatePreview,
-      icon: _isPreviewLoading
-          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.restaurant_menu),
-      label: Text(_isPreviewLoading ? 'Generating…' : 'Preview meal plan'),
+      onPressed: _openStructureStep,
+      icon: const Icon(Icons.restaurant_menu),
+      label: const Text('Preview meal plan'),
     );
   }
 
@@ -842,6 +941,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Widget _buildBody() {
+    if (_viewMode == _ViewMode.structure && _structureDraft != null) return _buildStructureStep();
     if (_viewMode == _ViewMode.preview && _preview != null) return _buildPreviewList();
     if (_viewMode == _ViewMode.full && _fullPlan != null) return _buildFullPlanList();
     return _buildResults();
@@ -1134,6 +1234,157 @@ class _PlanifScreenState extends State<PlanifScreen> {
       child: Text(
         'COVER',
         style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber.shade900),
+      ),
+    );
+  }
+
+  // The gate step reached from the deals view's "Preview meal plan" FAB (or
+  // reopened via the preview app bar's "Edit meal plan structure" action):
+  // lets the user validate/change what to plan - meal slots, portions,
+  // dietary notes - before the AI call behind the actual preview runs.
+  // Mirrors the "Meal plan" section of ConfigScreen, but scoped to this
+  // flow's draft instead of editing the saved config directly.
+  Widget _buildStructureStep() {
+    final draft = _structureDraft!;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      children: [
+        Text(
+          'What to plan',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Confirm or adjust the meal structure before the AI generates a preview.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                key: const ValueKey('structure-portions'),
+                initialValue: '${draft.portionsPerMeal}',
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Portions per meal'),
+                onChanged: _updateStructurePortions,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextFormField(
+                key: const ValueKey('structure-diversity'),
+                initialValue: '${draft.diversityWindowDays}',
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Diversity window (days)'),
+                onChanged: _updateStructureDiversity,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          key: const ValueKey('structure-dietary-notes'),
+          initialValue: draft.dietaryNotes,
+          maxLines: null,
+          minLines: 2,
+          decoration: const InputDecoration(
+            labelText: 'Additional planning instructions',
+            hintText: 'e.g. no more than 2 days of fish per week, no red meat',
+          ),
+          onChanged: _updateStructureDietaryNotes,
+        ),
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Meal slots',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            IconButton(icon: const Icon(Icons.add), tooltip: 'Add meal slot', onPressed: _addStructureSlot),
+          ],
+        ),
+        for (var i = 0; i < draft.mealSlots.length; i++)
+          _buildStructureSlotRow(i, draft.mealSlots[i], draft.mealSlots.length),
+        const SizedBox(height: 8),
+        Text('${draft.mealsPerWeek} meals / week', style: Theme.of(context).textTheme.bodySmall),
+        // Bottom padding so the last row isn't hidden behind the pinned
+        // "generate preview" bar.
+        const SizedBox(height: 72),
+      ],
+    );
+  }
+
+  Widget _buildStructureSlotRow(int index, MealSlot slot, int slotCount) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: DropdownButtonFormField<MealType>(
+              key: ValueKey('structure-meal-type-${slot.id}'),
+              initialValue: slot.mealType,
+              decoration: const InputDecoration(labelText: 'Meal'),
+              items: MealType.values.map((t) => DropdownMenuItem(value: t, child: Text(t.name))).toList(),
+              onChanged: (value) {
+                if (value == null) return;
+                _updateStructureSlot(index, slot.copyWith(mealType: value));
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 2,
+            child: TextFormField(
+              key: ValueKey('structure-protein-${slot.id}'),
+              initialValue: slot.protein,
+              decoration: const InputDecoration(labelText: 'Protein'),
+              onChanged: (value) {
+                final trimmed = value.trim();
+                if (trimmed.isEmpty) return;
+                _updateStructureSlot(index, slot.copyWith(protein: trimmed));
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextFormField(
+              key: ValueKey('structure-count-${slot.id}'),
+              initialValue: '${slot.count}',
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Count'),
+              onChanged: (value) {
+                final parsed = int.tryParse(value);
+                if (parsed == null || parsed < 0) return;
+                _updateStructureSlot(index, slot.copyWith(count: parsed));
+              },
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Remove meal slot',
+            onPressed: slotCount == 1 ? null : () => _removeStructureSlot(index),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Mirrors _buildGenerateFullPlanBar's placement/styling: pinned CTA for
+  // the structure step, shown only while it's the step on screen.
+  Widget _buildStructureBar() {
+    return SafeArea(
+      minimum: const EdgeInsets.all(12),
+      child: FilledButton.icon(
+        onPressed: _isPreviewLoading ? null : _confirmStructureAndGeneratePreview,
+        icon: _isPreviewLoading
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.arrow_forward),
+        label: Text(_isPreviewLoading ? 'Generating…' : 'Looks good, generate preview →'),
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       ),
     );
   }

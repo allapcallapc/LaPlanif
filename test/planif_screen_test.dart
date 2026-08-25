@@ -133,6 +133,12 @@ class _FakePreviewService extends MealPlanPreviewService {
   /// slots already claimed.
   final List<List<AnchorItem>> usedAnchorsCalls = [];
 
+  /// Every portionsPerMeal/dietaryNotes passed to previewMealPlan, in call
+  /// order - lets tests assert the structure step's edits actually reached
+  /// the generation call, not just the meal slots.
+  final List<int> portionsPerMealCalls = [];
+  final List<String> dietaryNotesCalls = [];
+
   @override
   Future<MealPlanPreview> previewMealPlan({
     required String apiKey,
@@ -146,6 +152,8 @@ class _FakePreviewService extends MealPlanPreviewService {
   }) {
     calls.add(mealSlots);
     usedAnchorsCalls.add(alreadyUsedAnchors);
+    portionsPerMealCalls.add(portionsPerMeal);
+    dietaryNotesCalls.add(dietaryNotes);
     return _handler(mealSlots, portionsPerMeal, items);
   }
 }
@@ -4061,4 +4069,448 @@ void main() {
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Rice'), findsOneWidget);
   });
+
+  testWidgets('the structure step shows the current meal plan config before generating', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        dietaryNotes: 'No shellfish.',
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    // The saved config is shown, not yet sent to the AI - the CTA to
+    // actually generate is what's on screen instead of a preview.
+    expect(find.text('What to plan'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'Portions per meal'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('28'), findsOneWidget);
+    expect(find.text('No shellfish.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('structure-protein-lunch-meat')), findsOneWidget);
+    expect(find.text('5 meals / week'), findsOneWidget);
+    expect(find.text('Looks good, generate preview →'), findsOneWidget);
+    expect(find.text('Lunch · meat'), findsNothing);
+  });
+
+  testWidgets('editing the structure step before confirming changes what is generated and persisted', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Note.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Portions per meal'), '4');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Diversity window (days)'), '10');
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Additional planning instructions'),
+      'No fish.',
+    );
+    await tester.enterText(find.byKey(const ValueKey('structure-protein-lunch-meat')), 'chicken');
+    await tester.enterText(find.byKey(const ValueKey('structure-count-lunch-meat')), '6');
+    await tester.pumpAndSettle();
+
+    // Edits aren't sent to the AI yet - still on the structure step.
+    expect(previewService.calls, isEmpty);
+
+    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.pumpAndSettle();
+
+    expect(previewService.calls.single.single.protein, 'chicken');
+    expect(previewService.calls.single.single.count, 6);
+    expect(previewService.portionsPerMealCalls.single, 4);
+    expect(previewService.dietaryNotesCalls.single, 'No fish.');
+    expect(find.text('Lunch · chicken'), findsOneWidget);
+
+    // The edit was also persisted, so Config screen and a future regenerate
+    // see it too - not just this one generation call.
+    final saved = await mealPlanConfigRepository.load();
+    expect(saved.portionsPerMeal, 4);
+    expect(saved.diversityWindowDays, 10);
+    expect(saved.dietaryNotes, 'No fish.');
+    expect(saved.mealSlots.single.protein, 'chicken');
+    expect(saved.mealSlots.single.count, 6);
+  });
+
+  testWidgets('adding a meal slot on the structure step includes it in what is generated and persisted', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          for (final slot in mealSlots)
+            MealSlotPreview(
+              mealType: slot.mealType,
+              protein: slot.protein,
+              count: slot.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Note.',
+            ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextFormField, 'Protein'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Add meal slot'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextFormField, 'Protein'), findsNWidgets(2));
+    expect(find.text('6 meals / week'), findsOneWidget);
+
+    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.pumpAndSettle();
+
+    expect(previewService.calls.single.length, 2);
+    final saved = await mealPlanConfigRepository.load();
+    expect(saved.mealSlots.length, 2);
+  });
+
+  testWidgets(
+    'removing a meal slot on the structure step drops it, disables the last remaining slot delete, and persists',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
+
+      final mealPlanConfigRepository = MealPlanConfigRepository();
+      await mealPlanConfigRepository.save(
+        const MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [
+            MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5),
+            MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4),
+          ],
+        ),
+      );
+
+      final scraper = _FakePagesScraper({
+        'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      });
+      final extraction = _FakeExtractionService({
+        'IGA': () async => const [
+          DealItem(
+            name: 'Chicken thighs',
+            price: '3.99\$',
+            unit: 'lb',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 1,
+          ),
+        ],
+      });
+
+      final previewService = _FakePreviewService(
+        (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: mealSlots.single.mealType,
+              protein: mealSlots.single.protein,
+              count: mealSlots.single.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Note.',
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            scraperService: scraper,
+            extractionService: extraction,
+            aiConfigRepository: aiConfigRepo,
+            mealPlanConfigRepository: mealPlanConfigRepository,
+            previewService: previewService,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Fetch deals'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preview meal plan'));
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextFormField, 'Protein'), findsNWidgets(2));
+
+      await tester.tap(find.byTooltip('Remove meal slot').first);
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextFormField, 'Protein'), findsOneWidget);
+      expect(find.text('4 meals / week'), findsOneWidget);
+      // The only remaining slot can't be removed - at least one slot must
+      // stay configured, same rule as ConfigScreen's own editor.
+      expect(tester.widget<IconButton>(find.byTooltip('Remove meal slot')).onPressed, isNull);
+
+      await tester.tap(find.text('Looks good, generate preview →'));
+      await tester.pumpAndSettle();
+
+      expect(previewService.calls.single.single.protein, 'tofu');
+      final saved = await mealPlanConfigRepository.load();
+      expect(saved.mealSlots.single.protein, 'tofu');
+    },
+  );
+
+  testWidgets(
+    'reopening the structure step from the preview view seeds it with the confirmed config, and regenerating replaces the preview',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
+
+      final mealPlanConfigRepository = MealPlanConfigRepository();
+      await mealPlanConfigRepository.save(
+        const MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+      );
+
+      final scraper = _FakePagesScraper({
+        'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      });
+      final extraction = _FakeExtractionService({
+        'IGA': () async => const [
+          DealItem(
+            name: 'Chicken thighs',
+            price: '3.99\$',
+            unit: 'lb',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 1,
+          ),
+        ],
+      });
+
+      final previewService = _FakePreviewService(
+        (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: mealSlots.single.mealType,
+              protein: mealSlots.single.protein,
+              count: mealSlots.single.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Note for ${mealSlots.single.protein}.',
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            scraperService: scraper,
+            extractionService: extraction,
+            aiConfigRepository: aiConfigRepo,
+            mealPlanConfigRepository: mealPlanConfigRepository,
+            previewService: previewService,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Fetch deals'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preview meal plan'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Looks good, generate preview →'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Lunch · meat'), findsOneWidget);
+      expect(find.text('Note for meat.'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Edit meal plan structure'));
+      await tester.pumpAndSettle();
+
+      // Seeded from the config the preview on screen was actually generated
+      // from, not a fresh reload from the repository.
+      expect(find.byKey(const ValueKey('structure-protein-lunch-meat')), findsOneWidget);
+      final editable = tester.widget<EditableText>(
+        find.descendant(
+          of: find.byKey(const ValueKey('structure-protein-lunch-meat')),
+          matching: find.byType(EditableText),
+        ),
+      );
+      expect(editable.controller.text, 'meat');
+
+      await tester.enterText(find.byKey(const ValueKey('structure-protein-lunch-meat')), 'turkey');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Looks good, generate preview →'));
+      await tester.pumpAndSettle();
+
+      expect(previewService.calls.length, 2);
+      expect(previewService.calls[1].single.protein, 'turkey');
+      expect(find.text('Lunch · turkey'), findsOneWidget);
+      expect(find.text('Note for turkey.'), findsOneWidget);
+      expect(find.text('Lunch · meat'), findsNothing);
+      expect(find.text('Note for meat.'), findsNothing);
+
+      final saved = await mealPlanConfigRepository.load();
+      expect(saved.mealSlots.single.protein, 'turkey');
+    },
+  );
 }

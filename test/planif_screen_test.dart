@@ -4071,6 +4071,11 @@ void main() {
   });
 
   testWidgets('the structure step shows the current meal plan config before generating', (tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4137,6 +4142,11 @@ void main() {
   testWidgets('editing the structure step before confirming changes what is generated and persisted', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4237,6 +4247,11 @@ void main() {
   testWidgets('adding a meal slot on the structure step includes it in what is generated and persisted', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4322,6 +4337,11 @@ void main() {
   testWidgets(
     'removing a meal slot on the structure step drops it, disables the last remaining slot delete, and persists',
     (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       final repository = StoreConfigRepository();
       await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4399,7 +4419,10 @@ void main() {
       expect(find.text('4 meals / week'), findsOneWidget);
       // The only remaining slot can't be removed - at least one slot must
       // stay configured, same rule as ConfigScreen's own editor.
-      expect(tester.widget<IconButton>(find.byTooltip('Remove meal slot')).onPressed, isNull);
+      final removeButton = tester.widget<IconButton>(
+        find.ancestor(of: find.byTooltip('Remove meal slot'), matching: find.byType(IconButton)),
+      );
+      expect(removeButton.onPressed, isNull);
 
       await tester.tap(find.text('Looks good, generate preview →'));
       await tester.pumpAndSettle();
@@ -4413,6 +4436,11 @@ void main() {
   testWidgets(
     'reopening the structure step from the preview view seeds it with the confirmed config, and regenerating replaces the preview',
     (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       final repository = StoreConfigRepository();
       await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 

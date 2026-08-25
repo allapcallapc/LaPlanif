@@ -1741,19 +1741,23 @@ void main() {
 
     expect(find.text('Lunch · meat'), findsOneWidget);
     expect(find.text('15 portions'), findsOneWidget);
-    expect(find.textContaining('Chicken thighs'), findsOneWidget);
+    // Exact chip text (name + store), not a loose substring match - the
+    // picker tile above now also shows the bare anchor name on its own
+    // before a recipe exists, so "contains" would be ambiguous between the
+    // tile and the chip.
+    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
     expect(find.text('Big-batch chicken thigh stir-fry.'), findsOneWidget);
     expect(find.text('Generate recipe'), findsOneWidget);
 
     // Swap the anchor item for another available deal item.
-    await tester.tap(find.textContaining('Chicken thighs'));
+    await tester.tap(find.text('Chicken thighs · IGA'));
     await tester.pumpAndSettle();
     expect(find.text('Swap anchor item'), findsOneWidget);
 
     await tester.tap(find.text('Ground pork'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Ground pork'), findsOneWidget);
+    expect(find.text('Ground pork · IGA'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
     await tester.tap(find.text('Generate recipe'));
@@ -1762,15 +1766,19 @@ void main() {
     // The recipe renders right on the same card as the anchors, and this
     // is the only (and therefore last) slot, so the bar's now offering to
     // save instead of moving to a next meal. The picker tile above the
-    // card also summarizes the same three components once they exist, so
-    // their names each show up twice on screen (tile + card).
-    expect(find.text('Slow-roasted pulled pork'), findsNWidgets(2));
+    // card summarizes protein/carb/veg by their bare deal-item name (e.g.
+    // "Ground pork"), not the recipe's own dish name, so the dish name
+    // itself still shows just once, on the card.
+    expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
     expect(find.text('https://example.com/pulled-pork'), findsOneWidget);
     expect(find.text("This week's deal"), findsOneWidget);
     // Once for the anchor chip up top, once for the recipe's own deal-item
-    // badge below.
+    // badge below - the picker tile shows the bare name without the store,
+    // so it doesn't add a third.
     expect(find.text('Ground pork · IGA'), findsNWidgets(2));
     expect(find.text('This recipe already includes the carb — see above.'), findsOneWidget);
+    // The vegetable side has no deal item of its own, so the tile falls
+    // back to the same name the card shows - hence twice here.
     expect(find.text('Steamed green beans'), findsNWidgets(2));
     expect(find.text('Steam 5 min, toss with butter.'), findsOneWidget);
     expect(find.text("Save this week's plan"), findsOneWidget);
@@ -1783,7 +1791,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Meal plan'));
     await tester.pumpAndSettle();
-    expect(find.text('Slow-roasted pulled pork'), findsNWidgets(2));
+    expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
   });
 
   testWidgets('saves the full plan to history as this week\'s entry, overwriting on a second save', (tester) async {
@@ -2207,8 +2215,9 @@ void main() {
     expect(promptCalls, 1);
     expect(promptedCurrent, 'model-a');
     expect(promptedNext, 'model-b');
-    // Once in the picker tile's ingredient summary, once in the card itself.
-    expect(find.text('Roast chicken thighs'), findsNWidgets(2));
+    // The picker tile shows the underlying deal item ("Chicken thighs"),
+    // not the recipe's own name for the dish, so this only shows once.
+    expect(find.text('Roast chicken thighs'), findsOneWidget);
   });
 
   testWidgets('opens a recipe link via the injected launcher when tapped', (tester) async {
@@ -2988,14 +2997,14 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.textContaining('Chicken thighs'));
+    await tester.tap(find.text('Chicken thighs · IGA'));
     await tester.pumpAndSettle();
     expect(find.text('Swap anchor item'), findsOneWidget);
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Chicken thighs'), findsOneWidget);
+    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
   });
 
   testWidgets('toggles between the deal items list and the meal plan preview', (tester) async {
@@ -3295,16 +3304,21 @@ void main() {
     // AI doesn't reuse an ingredient another slot is already using.
     expect(previewService.usedAnchorsCalls[1].map((a) => a.name), ['Tofu']);
 
-    // The regenerated slot changed...
+    // The regenerated slot changed... The picker tile above now also
+    // guesses at a protein/carb/veg breakdown from the anchors, so the new
+    // anchor's bare name shows up there too, alongside the chip.
     expect(find.text('Regenerated lunch note.'), findsOneWidget);
-    expect(find.textContaining('Ground pork'), findsOneWidget);
+    expect(find.text('Ground pork · IGA'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
-    // ...and stepping to the supper meal shows it's untouched.
+    // ...and stepping to the supper meal shows it's untouched. Its tile
+    // has been showing "Tofu" (its protein-category anchor) the whole
+    // time, independently of which meal's card is on screen; the chip
+    // shows up alongside it once its card is selected.
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
     expect(find.text('Original supper note.'), findsOneWidget);
-    expect(find.textContaining('Tofu'), findsOneWidget);
+    expect(find.text('Tofu · IGA'), findsOneWidget);
   });
 
   testWidgets('adds an anchor item to a slot via the Add item chip', (tester) async {
@@ -3394,7 +3408,10 @@ void main() {
     await tester.tap(find.text('Ground pork'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Chicken thighs'), findsOneWidget);
+    // The picker tile's protein-summary row keeps showing Chicken thighs
+    // (the first protein-category anchor), so its chip is checked by exact
+    // text to avoid also matching the tile.
+    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
     expect(find.textContaining('Ground pork'), findsOneWidget);
   });
 
@@ -3466,7 +3483,9 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Chicken thighs'), findsOneWidget);
+    // Exact chip text - the picker tile above shows the same anchor's bare
+    // name in its own protein-summary row.
+    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
 
     final chip = find.widgetWithText(InputChip, 'Chicken thighs · IGA');
     final deleteIcon = find.descendant(of: chip, matching: find.byIcon(Icons.close));
@@ -3759,7 +3778,9 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Chicken thighs'), findsOneWidget);
+    // Exact chip text - the picker tile above shows the same anchor's bare
+    // name in its own protein-summary row.
+    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
     expect(find.textContaining('Ground pork'), findsNothing);
   });
 
@@ -3960,7 +3981,7 @@ void main() {
     // already used by the lunch slot, so only Ground pork should be offered.
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('Tofu'));
+    await tester.tap(find.text('Tofu · IGA'));
     await tester.pumpAndSettle();
     expect(find.text('Swap anchor item'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing);

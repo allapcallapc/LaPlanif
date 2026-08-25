@@ -1428,20 +1428,19 @@ class _PlanifScreenState extends State<PlanifScreen> {
               ],
             ),
             const SizedBox(height: 3),
-            // Once a recipe exists, the tile trades the generic protein type
-            // (e.g. "meat") for what it actually turned into - the three
-            // components that make up the batch-cooked recipe - so a glance
-            // at the strip says more than just "this one's done".
+            // The same three rows either way - what changes once a recipe
+            // exists is where the names come from: the deal items already
+            // anchoring the slot beforehand, the recipe's own confirmed
+            // deal items after. Either way it's the bare ingredient (e.g.
+            // "Broccoli"), never the recipe's own write-up of it (e.g.
+            // "Steamed fresh broccoli florets"), so the strip stays
+            // scannable at this size.
             if (recipe == null) ...[
-              Text(slot.protein, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
-              const SizedBox(height: 4),
-              Text(
-                'Not reviewed',
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
+              _buildReviewTileIngredient(Icons.set_meal_outlined, _anchorForCategory(slot, DealCategory.protein) ?? slot.protein),
+              _buildReviewTileIngredient(Icons.grain, _anchorForCategory(slot, DealCategory.carbs) ?? '—'),
+              _buildReviewTileIngredient(Icons.eco_outlined, _anchorForCategory(slot, DealCategory.vegetables) ?? '—'),
             ] else ...[
-              _buildReviewTileIngredient(Icons.set_meal_outlined, recipe.proteinComponent.name),
+              _buildReviewTileIngredient(Icons.set_meal_outlined, _tileIngredientLabel(recipe.proteinComponent)),
               _buildReviewTileIngredient(Icons.grain, _tileIngredientLabel(recipe.carbComponent)),
               _buildReviewTileIngredient(Icons.eco_outlined, _tileIngredientLabel(recipe.vegetableComponent)),
             ],
@@ -1451,12 +1450,34 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  // covered_by_protein components carry an internal name (e.g. "Buns
-  // (included in the pulled pork recipe)") meant to explain the merge in
-  // the full card, not to be read as a standalone ingredient in a tile
-  // this small - point back at the protein line instead.
-  String _tileIngredientLabel(MealComponent component) =>
-      component.type == MealComponentType.coveredByProtein ? 'Included above' : component.name;
+  // The first of this slot's anchor items that's actually filed under
+  // [category] in the fetched deals, if any - lets the tile guess at a
+  // protein/carb/vegetable breakdown before a recipe (and its own
+  // confirmed components) exists yet.
+  String? _anchorForCategory(MealSlotPreview slot, DealCategory category) {
+    for (final anchor in slot.anchorItems) {
+      for (final item in _items) {
+        if (item.category == category && _anchorNameKey(item.name) == _anchorNameKey(anchor.name)) {
+          return anchor.name;
+        }
+      }
+    }
+    return null;
+  }
+
+  // The bare ingredient a component draws on (e.g. "Broccoli"), not the
+  // recipe's own write-up of it (e.g. "Steamed fresh broccoli florets") -
+  // the underlying deal item's name already is that bare ingredient, so
+  // it's used whenever the component has one. covered_by_protein carries
+  // an internal name (e.g. "Buns (included in the pulled pork recipe)")
+  // meant to explain the merge in the full card, not to be read as a
+  // standalone ingredient here - it points back at the protein line
+  // instead.
+  String _tileIngredientLabel(MealComponent component) {
+    if (component.type == MealComponentType.coveredByProtein) return 'Included above';
+    if (component.dealItems.isNotEmpty) return component.dealItems.first.name;
+    return component.name;
+  }
 
   Widget _buildReviewTileIngredient(IconData icon, String name) {
     return Padding(

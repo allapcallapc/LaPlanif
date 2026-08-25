@@ -1743,7 +1743,7 @@ void main() {
     expect(find.text('15 portions'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsOneWidget);
     expect(find.text('Big-batch chicken thigh stir-fry.'), findsOneWidget);
-    expect(find.text('Looks good, generate full plan →'), findsOneWidget);
+    expect(find.text('Generate recipe'), findsOneWidget);
 
     // Swap the anchor item for another available deal item.
     await tester.tap(find.textContaining('Chicken thighs'));
@@ -1756,25 +1756,30 @@ void main() {
     expect(find.textContaining('Ground pork'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
-    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
-    // Switches straight to the full-plan view once generation succeeds.
+    // The recipe renders right on the same card as the anchors, and this
+    // is the only (and therefore last) slot, so the bar's now offering to
+    // save instead of moving to a next meal.
     expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
     expect(find.text('https://example.com/pulled-pork'), findsOneWidget);
     expect(find.text("This week's deal"), findsOneWidget);
-    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    // Once for the anchor chip up top, once for the recipe's own deal-item
+    // badge below.
+    expect(find.text('Ground pork · IGA'), findsNWidgets(2));
     expect(find.text('This recipe already includes the carb — see above.'), findsOneWidget);
     expect(find.text('Steamed green beans'), findsOneWidget);
     expect(find.text('Steam 5 min, toss with butter.'), findsOneWidget);
+    expect(find.text("Save this week's plan"), findsOneWidget);
 
-    // The view switcher (now a compact icon toggle in the app bar) offers
-    // the full plan alongside the other two.
-    await tester.tap(find.byTooltip('Meal plan preview'));
+    // The view switcher (now a compact icon toggle in the app bar) still
+    // gets back to the deal items without losing the generated recipe.
+    await tester.tap(find.byTooltip('Deal items'));
     await tester.pumpAndSettle();
-    expect(find.text('Looks good, generate full plan →'), findsOneWidget);
+    expect(find.text('Ground pork'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Full meal plan'));
+    await tester.tap(find.byTooltip('Meal plan'));
     await tester.pumpAndSettle();
     expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
   });
@@ -1875,7 +1880,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
     expect(find.text('Save this week\'s plan'), findsOneWidget);
@@ -1991,7 +1996,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Extract ingredient list'));
@@ -1999,7 +2004,7 @@ void main() {
 
     expect(find.text('Ingredient list'), findsOneWidget);
     expect(find.text('Chicken thighs — 1.5 kg'), findsOneWidget);
-    // "Broccoli" also still shows in the (now-covered) full-plan card behind
+    // "Broccoli" also still shows in the (now-covered) review card behind
     // the dialog, so it appears twice: once there, once in the extracted list.
     expect(find.text('Broccoli'), findsNWidgets(2));
     // The carb component is covered_by_protein, so it isn't listed separately
@@ -2077,11 +2082,11 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Could not generate full meal plan: AI API HTTP 500'), findsOneWidget);
-    expect(find.text('Looks good, generate full plan →'), findsOneWidget);
+    expect(find.text('Could not generate this recipe: AI API HTTP 500'), findsOneWidget);
+    expect(find.text('Generate recipe'), findsOneWidget);
   });
 
   testWidgets('prompts for the next model when the full-plan generation call is still rate limited, and continues with it', (
@@ -2193,7 +2198,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
     expect(promptCalls, 1);
@@ -2297,7 +2302,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('https://example.com/pulled-pork'));
@@ -2400,7 +2405,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
     expect(find.text('AI recipe'), findsOneWidget);
@@ -2477,22 +2482,26 @@ void main() {
       ),
     );
 
-    final generationCalls = <List<MealSlotPreview>>[];
+    // Every generation call is now for exactly one slot - the review step
+    // only ever asks for the meal it's currently showing. A second call for
+    // the same meal type is a regenerate, so the fake tells them apart by
+    // call order per meal type rather than by how many slots were asked for
+    // at once.
+    final lunchCalls = <List<MealSlotPreview>>[];
+    final supperCalls = <List<MealSlotPreview>>[];
     final generationService = _FakeGenerationService((slots, items) async {
-      generationCalls.add(slots);
-      if (slots.length == 2) {
+      final slot = slots.single;
+      if (slot.mealType == MealType.lunch) {
+        lunchCalls.add(slots);
+        final name = lunchCalls.length == 1 ? 'Original lunch recipe' : 'Regenerated lunch recipe';
         return MealPlanFull(
           slots: [
             MealSlotFull(
-              mealType: slots[0].mealType,
-              protein: slots[0].protein,
-              count: slots[0].count,
-              portionsPerMeal: slots[0].portionsPerMeal,
-              proteinComponent: const MealComponent(
-                type: MealComponentType.simpleSide,
-                name: 'Original lunch recipe',
-                usesWeeklyDeal: false,
-              ),
+              mealType: slot.mealType,
+              protein: slot.protein,
+              count: slot.count,
+              portionsPerMeal: slot.portionsPerMeal,
+              proteinComponent: MealComponent(type: MealComponentType.simpleSide, name: name, usesWeeklyDeal: false),
               carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
               vegetableComponent: const MealComponent(
                 type: MealComponentType.simpleSide,
@@ -2500,27 +2509,10 @@ void main() {
                 usesWeeklyDeal: false,
               ),
             ),
-            MealSlotFull(
-              mealType: slots[1].mealType,
-              protein: slots[1].protein,
-              count: slots[1].count,
-              portionsPerMeal: slots[1].portionsPerMeal,
-              proteinComponent: const MealComponent(
-                type: MealComponentType.simpleSide,
-                name: 'Original supper recipe',
-                usesWeeklyDeal: false,
-              ),
-              carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Quinoa', usesWeeklyDeal: false),
-              vegetableComponent: const MealComponent(
-                type: MealComponentType.simpleSide,
-                name: 'Green beans',
-                usesWeeklyDeal: false,
-              ),
-            ),
           ],
         );
       }
-      final slot = slots.single;
+      supperCalls.add(slots);
       return MealPlanFull(
         slots: [
           MealSlotFull(
@@ -2530,13 +2522,13 @@ void main() {
             portionsPerMeal: slot.portionsPerMeal,
             proteinComponent: const MealComponent(
               type: MealComponentType.simpleSide,
-              name: 'Regenerated lunch recipe',
+              name: 'Original supper recipe',
               usesWeeklyDeal: false,
             ),
-            carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Couscous', usesWeeklyDeal: false),
+            carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Quinoa', usesWeeklyDeal: false),
             vegetableComponent: const MealComponent(
               type: MealComponentType.simpleSide,
-              name: 'Carrots',
+              name: 'Green beans',
               usesWeeklyDeal: false,
             ),
           ),
@@ -2565,25 +2557,44 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate full plan →'));
+
+    // Lunch is the first meal on the review step.
+    expect(find.text('Lunch · meat'), findsOneWidget);
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
     expect(find.text('Original lunch recipe'), findsOneWidget);
-    expect(find.text('Original supper recipe'), findsOneWidget);
-    expect(generationCalls.length, 1);
+    expect(lunchCalls.length, 1);
+    expect(supperCalls, isEmpty);
 
-    final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
-    final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
-    await tester.tap(regenerateButton);
+    // Move on to the supper meal and generate its recipe too.
+    await tester.tap(find.text('Next meal →'));
+    await tester.pumpAndSettle();
+    expect(find.text('Supper · tofu'), findsOneWidget);
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
-    expect(generationCalls.length, 2);
-    expect(generationCalls[1].length, 1);
-    expect(generationCalls[1].single.mealType, MealType.lunch);
+    expect(find.text('Original supper recipe'), findsOneWidget);
+    expect(supperCalls.length, 1);
 
-    // Only the regenerated slot changed.
+    // Step back to the lunch meal and regenerate just its recipe - the
+    // supper meal (not on screen) is untouched.
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    expect(find.text('Lunch · meat'), findsOneWidget);
+    expect(find.text('Original lunch recipe'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Regenerate this recipe'));
+    await tester.pumpAndSettle();
+
+    expect(lunchCalls.length, 2);
+    expect(lunchCalls[1].single.mealType, MealType.lunch);
     expect(find.text('Regenerated lunch recipe'), findsOneWidget);
     expect(find.text('Original lunch recipe'), findsNothing);
+    expect(supperCalls.length, 1);
+
+    await tester.tap(find.text('Next meal →'));
+    await tester.pumpAndSettle();
     expect(find.text('Original supper recipe'), findsOneWidget);
   });
 
@@ -2685,19 +2696,24 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate full plan →'));
+    await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
     expect(find.text('Original recipe'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.tap(find.byTooltip('Regenerate this recipe'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Could not regenerate this recipe: AI API HTTP 500'), findsOneWidget);
+    expect(find.text('Could not generate this recipe: AI API HTTP 500'), findsOneWidget);
     // The failed regeneration left the existing recipe in place, and the
     // button is re-enabled rather than stuck showing its spinner.
     expect(find.text('Original recipe'), findsOneWidget);
-    expect(tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.refresh)).onPressed, isNotNull);
+    expect(
+      tester
+          .widget<IconButton>(find.ancestor(of: find.byTooltip('Regenerate this recipe'), matching: find.byType(IconButton)))
+          .onPressed,
+      isNotNull,
+    );
   });
 
   testWidgets(
@@ -2803,15 +2819,15 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Looks good, generate preview →'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Looks good, generate full plan →'));
+      await tester.tap(find.text('Generate recipe'));
       await tester.pumpAndSettle();
 
-      // Generating the initial full plan already used up one rate-limit
+      // Generating the initial recipe already used up one rate-limit
       // fallback (model-a -> model-b).
       expect(promptCalls, 1);
       expect(find.text('Roast chicken thighs'), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.refresh));
+      await tester.tap(find.byTooltip('Regenerate this recipe'));
       await tester.pumpAndSettle();
 
       // Regenerating this slot falls back through model-a -> model-b again,
@@ -3049,7 +3065,7 @@ void main() {
     expect(find.text('Chicken thighs'), findsOneWidget);
     expect(find.text('Lunch · meat'), findsNothing);
 
-    await tester.tap(find.byTooltip('Meal plan preview'));
+    await tester.tap(find.byTooltip('Meal plan'));
     await tester.pumpAndSettle();
     expect(find.text('Lunch · meat'), findsOneWidget);
   });
@@ -3253,13 +3269,14 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
 
+    // Only the current meal (lunch, first on the review step) is on screen
+    // at a time - the supper slot's state still exists, it's just on a
+    // different step.
     expect(find.text('Original lunch note.'), findsOneWidget);
-    expect(find.text('Original supper note.'), findsOneWidget);
+    expect(find.text('Original supper note.'), findsNothing);
     expect(previewService.calls.length, 1);
 
-    final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
-    final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
-    await tester.tap(regenerateButton);
+    await tester.tap(find.byTooltip('Regenerate suggested items'));
     await tester.pumpAndSettle();
 
     expect(previewService.calls.length, 2);
@@ -3269,10 +3286,14 @@ void main() {
     // AI doesn't reuse an ingredient another slot is already using.
     expect(previewService.usedAnchorsCalls[1].map((a) => a.name), ['Tofu']);
 
-    // Only the regenerated slot changed.
+    // The regenerated slot changed...
     expect(find.text('Regenerated lunch note.'), findsOneWidget);
     expect(find.textContaining('Ground pork'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
+
+    // ...and stepping to the supper meal shows it's untouched.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
     expect(find.text('Original supper note.'), findsOneWidget);
     expect(find.textContaining('Tofu'), findsOneWidget);
   });
@@ -3630,15 +3651,20 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
 
-    final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
-    final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
-    await tester.tap(regenerateButton);
+    await tester.tap(find.byTooltip('Regenerate suggested items'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Could not regenerate this recipe: boom'), findsOneWidget);
+    expect(find.text('Could not regenerate these suggestions: boom'), findsOneWidget);
     // The original slot is untouched and the button is usable again.
     expect(find.text('Big-batch chicken thigh stir-fry.'), findsOneWidget);
-    expect(find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh)), findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(
+            find.ancestor(of: find.byTooltip('Regenerate suggested items'), matching: find.byType(IconButton)),
+          )
+          .onPressed,
+      isNotNull,
+    );
   });
 
   testWidgets('cancelling the add-item dialog leaves the anchors unchanged', (tester) async {
@@ -3921,8 +3947,10 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview →'));
     await tester.pumpAndSettle();
 
-    // Swap on the supper slot's Tofu anchor: Chicken thighs is already used
-    // by the lunch slot, so only Ground pork should be offered.
+    // Step to the supper slot and swap its Tofu anchor: Chicken thighs is
+    // already used by the lunch slot, so only Ground pork should be offered.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
     await tester.tap(find.textContaining('Tofu'));
     await tester.pumpAndSettle();
     expect(find.text('Swap anchor item'), findsOneWidget);
@@ -3931,10 +3959,12 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    // Add on the lunch slot: Tofu is already used by the supper slot, so
-    // only Ground pork should be offered there too.
-    final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
-    await tester.tap(find.descendant(of: lunchCard, matching: find.text('Add item')));
+    // Step back to the lunch slot and add an anchor there: Tofu is already
+    // used by the supper slot, so only Ground pork should be offered there
+    // too.
+    await tester.tap(find.byKey(const ValueKey('review-step-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add item'));
     await tester.pumpAndSettle();
     expect(find.text('Add anchor item'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Tofu'), findsNothing);
@@ -4055,9 +4085,11 @@ void main() {
 
     // The lunch slot is anchored on IGA's Brocoli - Metro's Brocoli is the
     // same produce under a different store, so the add picker on the
-    // supper slot must not offer it either.
-    final supperCard = find.ancestor(of: find.text('Supper · meat'), matching: find.byType(Card));
-    await tester.tap(find.descendant(of: supperCard, matching: find.text('Add item')));
+    // supper slot (stepped to below) must not offer it either.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Supper · meat'), findsOneWidget);
+    await tester.tap(find.text('Add item'));
     await tester.pumpAndSettle();
 
     expect(find.text('Add anchor item'), findsOneWidget);

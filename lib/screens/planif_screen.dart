@@ -28,8 +28,11 @@ import '../widgets/rate_limit_dialog.dart';
 /// Which of Step 2's results the screen is currently showing. "structure" is
 /// the gate step reached from the deals view's "Preview meal plan" FAB: it
 /// lets the user validate/adjust what to plan (meal slots, portions,
-/// dietary notes) before the AI call that produces "preview" actually runs.
-enum _ViewMode { deals, structure, preview, full }
+/// dietary notes) before the AI call that produces "review" actually runs.
+/// "review" walks the confirmed slots one meal at a time - anchor items and
+/// that meal's full recipe live on the same card, so there's no separate
+/// preview/full-plan screen pair to keep in sync by hand.
+enum _ViewMode { deals, structure, review }
 
 /// Which top-level step the screen is currently showing: the dedicated
 /// "fetch deals" step, or the browse step (deals/preview/full plan) reached
@@ -139,10 +142,19 @@ class _PlanifScreenState extends State<PlanifScreen> {
   _ViewMode _viewMode = _ViewMode.deals;
   _Phase _phase = _Phase.fetch;
   final Set<int> _regeneratingSlots = {};
-  MealPlanFull? _fullPlan;
-  bool _isGeneratingFullPlan = false;
-  final Set<int> _regeneratingFullSlots = {};
+  // One entry per _preview slot, filled in as each meal's recipe is
+  // generated on the review step - null means "not generated yet". Kept
+  // parallel to _preview!.slots rather than a sparse map so index lookups
+  // (current review slot, anchor edits invalidating just their own slot)
+  // stay simple.
+  List<MealSlotFull?> _slotRecipes = [];
+  int _reviewIndex = 0;
+  final Set<int> _generatingRecipeSlots = {};
   bool _isSavingWeek = false;
+
+  bool get _allSlotsGenerated => _slotRecipes.isNotEmpty && _slotRecipes.every((s) => s != null);
+
+  List<MealSlotFull> get _generatedSlots => _slotRecipes.whereType<MealSlotFull>().toList();
 
   @override
   void initState() {
@@ -301,12 +313,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
         _preview = preview;
         _mealPlanConfig = resolvedConfig;
         _isPreviewLoading = false;
-        _viewMode = _ViewMode.preview;
-        // A freshly regenerated preview can have entirely different anchors,
-        // so any previously generated full plan (recipes built on the old
-        // anchors) is stale - drop it rather than leave a mismatched result
-        // reachable from the view switcher.
-        _fullPlan = null;
+        _viewMode = _ViewMode.review;
+        _reviewIndex = 0;
+        // A freshly (re)generated preview can have entirely different
+        // anchors, and possibly a different number of slots - any
+        // per-slot recipes already generated were built against the old
+        // ones, so they're stale. Reset to one null entry per new slot
+        // rather than trying to carry old recipes forward by index.
+        _slotRecipes = List<MealSlotFull?>.filled(preview.slots.length, null);
       });
     } catch (e) {
       if (!mounted) return;
@@ -431,14 +445,17 @@ class _PlanifScreenState extends State<PlanifScreen> {
         slots[index] = result.slots.single;
         _preview = MealPlanPreview(slots: slots);
         _regeneratingSlots.remove(index);
-        _fullPlan = null;
+        // Only this slot's anchors changed - any recipe already generated
+        // for it no longer matches, but every other slot's recipe is still
+        // good.
+        _slotRecipes[index] = null;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() => _regeneratingSlots.remove(index));
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Could not regenerate this recipe: ${stripExceptionPrefix(e)}')));
+      ).showSnackBar(SnackBar(content: Text('Could not regenerate these suggestions: ${stripExceptionPrefix(e)}')));
     }
   }
 
@@ -472,7 +489,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
           .toList();
       slots[slotIndex] = slot.copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
-      _fullPlan = null;
+      _slotRecipes[slotIndex] = null;
     });
   }
 
@@ -493,7 +510,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       final anchors = [...slots[slotIndex].anchorItems, AnchorItem(name: selected.name, store: selected.storeName)];
       slots[slotIndex] = slots[slotIndex].copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
-      _fullPlan = null;
+      _slotRecipes[slotIndex] = null;
     });
   }
 
@@ -504,68 +521,33 @@ class _PlanifScreenState extends State<PlanifScreen> {
       final anchors = slot.anchorItems.where((a) => !identical(a, anchor)).toList();
       slots[slotIndex] = slot.copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
-      _fullPlan = null;
+      _slotRecipes[slotIndex] = null;
     });
   }
 
-  Future<void> _generateFullPlan() async {
-    final apiKey = _apiKey;
-    final preview = _preview;
-    if (apiKey == null || preview == null || _isGeneratingFullPlan || _isPreviewLoading || _regeneratingSlots.isNotEmpty) {
-      return;
-    }
+  void _goToPreviousMeal() => setState(() => _reviewIndex -= 1);
 
-    setState(() => _isGeneratingFullPlan = true);
+  void _goToNextMeal() => setState(() => _reviewIndex += 1);
 
-    final dietaryNotes = _mealPlanConfig?.dietaryNotes ?? '';
-    final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
-    try {
-      final fullPlan = await controller.run(
-        attempt: (model) => widget.generationService.generateMealPlan(
-          apiKey: apiKey,
-          slots: preview.slots,
-          items: _items,
-          dietaryNotes: dietaryNotes,
-          model: model,
-          groundingModels: _groundingModels,
-        ),
-        onRateLimited: ({required currentModel, nextModel}) {
-          if (!mounted) return Future.value(RateLimitChoice.retrySame);
-          return widget.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
-        },
-      );
-      if (!mounted) return;
-      setState(() {
-        _fullPlan = fullPlan;
-        _isGeneratingFullPlan = false;
-        _viewMode = _ViewMode.full;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isGeneratingFullPlan = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Could not generate full meal plan: ${stripExceptionPrefix(e)}')));
-    }
-  }
+  void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
 
-  // Re-runs the two-phase generation call for just this one slot's confirmed
-  // preview and splices the result back into _fullPlan, leaving every other
-  // slot's recipe untouched. Mirrors _regenerateSlot's splice-at-completion
-  // pattern (reading _fullPlan!.slots live rather than a captured copy), so
-  // two slots regenerating concurrently can't clobber each other's result.
-  Future<void> _regenerateFullSlot(int index) async {
+  // The review step's one action for turning a meal's confirmed anchors
+  // into (or back into, on a re-run after an anchor edit) a full recipe.
+  // Doubles as both "generate" and "regenerate" for a slot - it's the same
+  // call either way - so there's only one code path to keep in sync with
+  // the card's anchors, unlike the old preview/full-plan split.
+  Future<void> _generateSlotRecipe(int index) async {
     final apiKey = _apiKey;
     final preview = _preview;
     if (apiKey == null ||
         preview == null ||
-        _fullPlan == null ||
-        _isGeneratingFullPlan ||
-        _regeneratingFullSlots.contains(index)) {
+        _isPreviewLoading ||
+        _regeneratingSlots.contains(index) ||
+        _generatingRecipeSlots.contains(index)) {
       return;
     }
 
-    setState(() => _regeneratingFullSlots.add(index));
+    setState(() => _generatingRecipeSlots.add(index));
 
     final dietaryNotes = _mealPlanConfig?.dietaryNotes ?? '';
     final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
@@ -586,17 +568,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
       );
       if (!mounted) return;
       setState(() {
-        final slots = [..._fullPlan!.slots];
-        slots[index] = result.slots.single;
-        _fullPlan = MealPlanFull(slots: slots);
-        _regeneratingFullSlots.remove(index);
+        _slotRecipes[index] = result.slots.single;
+        _generatingRecipeSlots.remove(index);
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _regeneratingFullSlots.remove(index));
+      setState(() => _generatingRecipeSlots.remove(index));
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Could not regenerate this recipe: ${stripExceptionPrefix(e)}')));
+      ).showSnackBar(SnackBar(content: Text('Could not generate this recipe: ${stripExceptionPrefix(e)}')));
     }
   }
 
@@ -605,11 +585,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
   // history entry. Saving again for the same ISO week overwrites that
   // week's entry rather than appending a new one.
   Future<void> _saveWeekPlan() async {
-    final plan = _fullPlan;
-    if (plan == null || _isSavingWeek) return;
+    if (!_allSlotsGenerated || _isSavingWeek) return;
 
     setState(() => _isSavingWeek = true);
-    final entry = MealHistoryEntry(weekId: isoWeekId(DateTime.now()), savedAt: DateTime.now(), slots: plan.slots);
+    final entry = MealHistoryEntry(weekId: isoWeekId(DateTime.now()), savedAt: DateTime.now(), slots: _generatedSlots);
     await widget.mealHistoryRepository.saveWeek(entry);
     if (!mounted) return;
     setState(() => _isSavingWeek = false);
@@ -726,18 +705,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // The full-plan CTA lives in a persistent footer instead of at the
-    // bottom of the preview list - it stays reachable without scrolling and
-    // sits far enough from the regenerate action up in the app bar that the
-    // two are no longer easy to mix up.
-    final showGenerateFullPlanBar =
-        _phase == _Phase.browse && _viewMode == _ViewMode.preview && _preview != null;
-    // Same footer placement as the generate-full-plan bar above, once
-    // there's a full plan to save - the two never show at once since they
-    // belong to different view modes.
-    final showSaveWeekBar = _phase == _Phase.browse && _viewMode == _ViewMode.full && _fullPlan != null;
-    // Mirrors the other two footers: pinned CTA for the structure step,
-    // shown only while that step is what's on screen.
+    // The review step's Back/Generate/Next/Save CTA lives in a persistent
+    // footer instead of at the bottom of the card - it stays reachable
+    // without scrolling as the user steps through each meal.
+    final showReviewBar = _phase == _Phase.browse && _viewMode == _ViewMode.review && _preview != null;
+    // Mirrors the review footer: pinned CTA for the structure step, shown
+    // only while that step is what's on screen.
     final showStructureBar = _phase == _Phase.browse && _viewMode == _ViewMode.structure && _structureDraft != null;
     // The preview FAB only exists to get a first preview started - once one
     // exists, getting back to it (or regenerating it) goes through the app
@@ -764,30 +737,31 @@ class _PlanifScreenState extends State<PlanifScreen> {
       floatingActionButton: showPreviewFab ? _buildPreviewFab() : null,
       bottomNavigationBar: showStructureBar
           ? _buildStructureBar()
-          : showGenerateFullPlanBar
-          ? _buildGenerateFullPlanBar()
-          : showSaveWeekBar
-          ? _buildSaveWeekBar()
+          : showReviewBar
+          ? _buildReviewBar()
           : null,
     );
   }
+
+  bool get _reviewBusy =>
+      _isPreviewLoading || _regeneratingSlots.isNotEmpty || _generatingRecipeSlots.isNotEmpty || _isSavingWeek;
 
   // Everything that used to live in a second chrome row now lives here
   // instead: a compact view-mode toggle once there's a preview to switch
   // to, the priority/excluded summary and a filter action (badged when a
   // store filter is active) while browsing deals, and a regenerate action
-  // while looking at the preview.
+  // while reviewing meals.
   List<Widget> _buildAppBarActions() {
     return [
       // Hidden while the structure step is on screen: it isn't one of the
-      // toggle's own segments (deals/preview/full), so showing it here
-      // would render with nothing selected.
+      // toggle's own segments (deals/review), so showing it here would
+      // render with nothing selected.
       if (_preview != null && _viewMode != _ViewMode.structure) _buildViewModeToggle(),
       if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildPreferenceSummary(),
       if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildFilterButton(),
-      if (_viewMode == _ViewMode.preview && _preview != null) _buildEditStructureButton(),
-      if (_viewMode == _ViewMode.preview && _preview != null) _buildRegenerateButton(),
-      if (_viewMode == _ViewMode.full && _fullPlan != null) _buildIngredientListButton(),
+      if (_viewMode == _ViewMode.review && _preview != null) _buildEditStructureButton(),
+      if (_viewMode == _ViewMode.review && _preview != null) _buildRegenerateButton(),
+      if (_viewMode == _ViewMode.review && _allSlotsGenerated) _buildIngredientListButton(),
       const SizedBox(width: 4),
     ];
   }
@@ -797,18 +771,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
   // deals view and re-triggering the FAB - it just re-seeds the draft from
   // whatever config produced the preview currently on screen.
   Widget _buildEditStructureButton() {
-    return IconButton(
-      icon: const Icon(Icons.tune),
-      tooltip: 'Edit meal plan structure',
-      onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _openStructureStep,
-    );
+    return IconButton(icon: const Icon(Icons.tune), tooltip: 'Edit meal plan structure', onPressed: _reviewBusy ? null : _openStructureStep);
   }
 
   Widget _buildIngredientListButton() {
     return IconButton(
       icon: const Icon(Icons.receipt_long_outlined),
       tooltip: 'Extract ingredient list',
-      onPressed: () => showIngredientListDialog(context, _fullPlan!.slots),
+      onPressed: () => showIngredientListDialog(context, _generatedSlots),
     );
   }
 
@@ -833,15 +803,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: SegmentedButton<_ViewMode>(
-        segments: [
-          const ButtonSegment(value: _ViewMode.deals, icon: Icon(Icons.shopping_bag_outlined), tooltip: 'Deal items'),
-          const ButtonSegment(
-            value: _ViewMode.preview,
-            icon: Icon(Icons.restaurant_menu),
-            tooltip: 'Meal plan preview',
-          ),
-          if (_fullPlan != null)
-            const ButtonSegment(value: _ViewMode.full, icon: Icon(Icons.menu_book_outlined), tooltip: 'Full meal plan'),
+        segments: const [
+          ButtonSegment(value: _ViewMode.deals, icon: Icon(Icons.shopping_bag_outlined), tooltip: 'Deal items'),
+          ButtonSegment(value: _ViewMode.review, icon: Icon(Icons.restaurant_menu), tooltip: 'Meal plan'),
         ],
         selected: {_viewMode},
         showSelectedIcon: false,
@@ -874,13 +838,18 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
+  // Re-rolls every slot's suggested anchors at once (and clears every
+  // generated recipe with them, since a slot's recipe is only ever
+  // regenerated one at a time via the review card itself) - a fresh start
+  // for the whole week, as opposed to the per-card refresh icon which only
+  // touches the one meal it's on.
   Widget _buildRegenerateButton() {
     return IconButton(
       icon: _isPreviewLoading
           ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
           : const Icon(Icons.refresh),
-      tooltip: 'Regenerate preview',
-      onPressed: (_isPreviewLoading || _regeneratingSlots.isNotEmpty) ? null : _generatePreview,
+      tooltip: 'Regenerate all suggestions',
+      onPressed: _reviewBusy ? null : _generatePreview,
     );
   }
 
@@ -942,8 +911,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   Widget _buildBody() {
     if (_viewMode == _ViewMode.structure && _structureDraft != null) return _buildStructureStep();
-    if (_viewMode == _ViewMode.preview && _preview != null) return _buildPreviewList();
-    if (_viewMode == _ViewMode.full && _fullPlan != null) return _buildFullPlanList();
+    if (_viewMode == _ViewMode.review && _preview != null) return _buildReviewStep();
     return _buildResults();
   }
 
@@ -1389,56 +1357,78 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  Widget _buildPreviewList() {
+  // One meal at a time: a progress row of tappable step dots, then the
+  // current slot's card (anchors and, once generated, its full recipe)
+  // together - editing an anchor and fixing up its recipe never requires
+  // leaving this card or switching to a different screen.
+  Widget _buildReviewStep() {
     final preview = _preview!;
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: preview.slots.length,
-      itemBuilder: (context, i) => _buildPreviewCard(i, preview.slots[i]),
+    final index = _reviewIndex;
+    return Column(
+      children: [
+        _buildReviewProgress(preview.slots.length),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            children: [_buildReviewCard(index, preview.slots[index], _slotRecipes[index])],
+          ),
+        ),
+      ],
     );
   }
 
-  // The primary CTA for the preview step: pinned to the bottom of the
-  // screen (not the end of a scrollable list) so it's always reachable
-  // without scrolling, and visually far from the small "Regenerate preview"
-  // button up top so the two don't get tapped by mistake for each other.
-  Widget _buildGenerateFullPlanBar() {
-    return SafeArea(
-      minimum: const EdgeInsets.all(12),
-      child: FilledButton.icon(
-        onPressed: (_isGeneratingFullPlan || _isPreviewLoading || _regeneratingSlots.isNotEmpty)
-            ? null
-            : _generateFullPlan,
-        icon: _isGeneratingFullPlan
-            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-            : const Icon(Icons.arrow_forward),
-        label: Text(_isGeneratingFullPlan ? 'Generating full recipes…' : 'Looks good, generate full plan →'),
-        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+  Widget _buildReviewProgress(int slotCount) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var i = 0; i < slotCount; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            _buildReviewStepDot(i),
+          ],
+        ],
       ),
     );
   }
 
-  // Mirrors _buildGenerateFullPlanBar's placement: pinned to the bottom so
-  // it's always reachable once a full plan exists, and only shown while
-  // looking at the full plan view.
-  Widget _buildSaveWeekBar() {
-    return SafeArea(
-      minimum: const EdgeInsets.all(12),
-      child: FilledButton.icon(
-        onPressed: (_isSavingWeek || _regeneratingFullSlots.isNotEmpty) ? null : _saveWeekPlan,
-        icon: _isSavingWeek
-            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-            : const Icon(Icons.save_outlined),
-        label: Text(_isSavingWeek ? 'Saving…' : 'Save this week\'s plan'),
-        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+  Widget _buildReviewStepDot(int index) {
+    final isCurrent = index == _reviewIndex;
+    final isGenerated = _slotRecipes[index] != null;
+    final colorScheme = Theme.of(context).colorScheme;
+    return InkWell(
+      key: ValueKey('review-step-$index'),
+      onTap: () => _jumpToMeal(index),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isCurrent ? colorScheme.primaryContainer : null,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: isCurrent ? colorScheme.primary : Theme.of(context).dividerColor),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isGenerated ? Icons.check_circle : Icons.circle_outlined,
+              size: 14,
+              color: isGenerated ? Colors.green : null,
+            ),
+            const SizedBox(width: 4),
+            Text('${index + 1}', style: TextStyle(fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal)),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildPreviewCard(int index, MealSlotPreview slot) {
-    final isRegenerating = _regeneratingSlots.contains(index);
+  Widget _buildReviewCard(int index, MealSlotPreview slot, MealSlotFull? recipe) {
+    final isRegeneratingAnchors = _regeneratingSlots.contains(index);
+    final isGeneratingRecipe = _generatingRecipeSlots.contains(index);
+    final anchorsDisabled = isRegeneratingAnchors || isGeneratingRecipe;
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -1463,12 +1453,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 IconButton(
-                  icon: isRegenerating
+                  icon: isRegeneratingAnchors
                       ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.refresh, size: 18),
-                  tooltip: 'Regenerate this recipe',
+                  tooltip: 'Regenerate suggested items',
                   visualDensity: VisualDensity.compact,
-                  onPressed: (_isPreviewLoading || isRegenerating) ? null : () => _regenerateSlot(index),
+                  onPressed: anchorsDisabled ? null : () => _regenerateSlot(index),
                 ),
               ],
             ),
@@ -1482,17 +1472,48 @@ class _PlanifScreenState extends State<PlanifScreen> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor, disabled: isRegenerating),
+                for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor, disabled: anchorsDisabled),
                 ActionChip(
                   avatar: const Icon(Icons.add, size: 16),
                   label: const Text('Add item'),
                   visualDensity: VisualDensity.compact,
-                  onPressed: isRegenerating ? null : () => _addAnchorItem(index),
+                  onPressed: anchorsDisabled ? null : () => _addAnchorItem(index),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             Text(slot.note, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontStyle: FontStyle.italic)),
+            const Divider(height: 24),
+            if (recipe != null) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Recipe',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: isGeneratingRecipe
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.refresh, size: 18),
+                    tooltip: 'Regenerate this recipe',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: (isGeneratingRecipe || isRegeneratingAnchors) ? null : () => _generateSlotRecipe(index),
+                  ),
+                ],
+              ),
+              MealSlotFullCard(slot: recipe, onOpenRecipeLink: _openRecipeLink, showHeader: false),
+            ] else if (isGeneratingRecipe)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else
+              Text(
+                'Anchors look good? Generate this meal\'s recipe below.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
           ],
         ),
       ),
@@ -1512,28 +1533,60 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   String _capitalize(String s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
 
-  Widget _buildFullPlanList() {
-    final plan = _fullPlan!;
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: plan.slots.length,
-      itemBuilder: (context, i) => MealSlotFullCard(
-        slot: plan.slots[i],
-        onOpenRecipeLink: _openRecipeLink,
-        trailing: _buildFullPlanRegenerateButton(i),
-      ),
-    );
-  }
+  // The review step's single pinned CTA: its label/action depend on this
+  // meal's state, so there's only ever one primary button to look at
+  // (plus Back, once there's a previous meal to return to) instead of the
+  // old screen's separate regenerate/generate-full-plan/save bars.
+  Widget _buildReviewBar() {
+    final index = _reviewIndex;
+    final slotCount = _preview!.slots.length;
+    final isLast = index == slotCount - 1;
+    final hasRecipe = _slotRecipes[index] != null;
+    final isGenerating = _generatingRecipeSlots.contains(index);
+    final busy = _reviewBusy;
 
-  Widget _buildFullPlanRegenerateButton(int index) {
-    final isRegenerating = _regeneratingFullSlots.contains(index);
-    return IconButton(
-      icon: isRegenerating
-          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.refresh, size: 18),
-      tooltip: 'Regenerate this recipe',
-      visualDensity: VisualDensity.compact,
-      onPressed: (_isGeneratingFullPlan || isRegenerating) ? null : () => _regenerateFullSlot(index),
+    final String label;
+    final IconData icon;
+    final VoidCallback? onPressed;
+    if (!hasRecipe) {
+      label = isGenerating ? 'Generating…' : 'Generate recipe';
+      icon = Icons.auto_awesome;
+      onPressed = busy ? null : () => _generateSlotRecipe(index);
+    } else if (isLast) {
+      label = _isSavingWeek ? 'Saving…' : 'Save this week\'s plan';
+      icon = Icons.save_outlined;
+      onPressed = busy ? null : _saveWeekPlan;
+    } else {
+      label = 'Next meal →';
+      icon = Icons.arrow_forward;
+      onPressed = busy ? null : _goToNextMeal;
+    }
+    final showSpinner = isGenerating || (isLast && hasRecipe && _isSavingWeek);
+
+    return SafeArea(
+      minimum: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          if (index > 0) ...[
+            OutlinedButton.icon(
+              onPressed: busy ? null : _goToPreviousMeal,
+              icon: const Icon(Icons.arrow_back),
+              label: const Text('Back'),
+            ),
+            const SizedBox(width: 12),
+          ],
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: onPressed,
+              icon: showSpinner
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Icon(icon),
+              label: Text(label),
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

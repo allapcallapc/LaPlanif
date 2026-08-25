@@ -10,14 +10,33 @@ import '../models/meal_plan_preview.dart';
 /// History screen's edit affordances) add extra header controls without
 /// this widget needing to know about editing.
 class MealSlotFullCard extends StatelessWidget {
-  const MealSlotFullCard({super.key, required this.slot, this.onOpenRecipeLink, this.trailing});
+  const MealSlotFullCard({super.key, required this.slot, this.onOpenRecipeLink, this.trailing, this.showHeader = true});
 
   final MealSlotFull slot;
   final void Function(String url)? onOpenRecipeLink;
   final Widget? trailing;
 
+  /// When false, renders just the protein/carb/vegetable breakdown with no
+  /// title row, portions chip, or outer [Card] - used by the Planif review
+  /// step, which already renders its own header (with editable anchors) for
+  /// the slot and embeds this widget's component breakdown inside that same
+  /// card instead of a second, redundant one.
+  final bool showHeader;
+
   @override
   Widget build(BuildContext context) {
+    final components = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildComponentBlock(context, 'Protein', slot.proteinComponent),
+        const Divider(height: 20),
+        _buildComponentBlock(context, 'Carb', slot.carbComponent, coveredNoun: 'carb'),
+        const Divider(height: 20),
+        _buildComponentBlock(context, 'Vegetable', slot.vegetableComponent, coveredNoun: 'vegetable'),
+      ],
+    );
+    if (!showHeader) return components;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -46,11 +65,7 @@ class MealSlotFullCard extends StatelessWidget {
             const SizedBox(height: 2),
             Text('${slot.count} meals × ${slot.portionsPerMeal} portions', style: Theme.of(context).textTheme.bodySmall),
             const Divider(height: 20),
-            _buildComponentBlock(context, 'Protein', slot.proteinComponent),
-            const Divider(height: 20),
-            _buildComponentBlock(context, 'Carb', slot.carbComponent, coveredNoun: 'carb'),
-            const Divider(height: 20),
-            _buildComponentBlock(context, 'Vegetable', slot.vegetableComponent, coveredNoun: 'vegetable'),
+            components,
           ],
         ),
       ),

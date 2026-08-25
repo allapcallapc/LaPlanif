@@ -1392,14 +1392,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   Widget _buildReviewTile(int index, MealSlotPreview slot) {
     final isCurrent = index == _reviewIndex;
-    final isGenerated = _slotRecipes[index] != null;
+    final recipe = _slotRecipes[index];
     final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       key: ValueKey('review-step-$index'),
       onTap: () => _jumpToMeal(index),
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        width: 108,
+        width: 124,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: isCurrent ? colorScheme.primaryContainer : null,
@@ -1424,23 +1424,51 @@ class _PlanifScreenState extends State<PlanifScreen> {
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
+                if (recipe != null) Icon(Icons.check_circle, size: 13, color: Colors.green.shade700),
               ],
             ),
-            Text(
-              slot.protein,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              isGenerated ? 'Recipe ready' : 'Not reviewed',
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(color: isGenerated ? Colors.green.shade700 : null),
-            ),
+            const SizedBox(height: 3),
+            // Once a recipe exists, the tile trades the generic protein type
+            // (e.g. "meat") for what it actually turned into - the three
+            // components that make up the batch-cooked recipe - so a glance
+            // at the strip says more than just "this one's done".
+            if (recipe == null) ...[
+              Text(slot.protein, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 4),
+              Text(
+                'Not reviewed',
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            ] else ...[
+              _buildReviewTileIngredient(Icons.set_meal_outlined, recipe.proteinComponent.name),
+              _buildReviewTileIngredient(Icons.grain, _tileIngredientLabel(recipe.carbComponent)),
+              _buildReviewTileIngredient(Icons.eco_outlined, _tileIngredientLabel(recipe.vegetableComponent)),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  // covered_by_protein components carry an internal name (e.g. "Buns
+  // (included in the pulled pork recipe)") meant to explain the merge in
+  // the full card, not to be read as a standalone ingredient in a tile
+  // this small - point back at the protein line instead.
+  String _tileIngredientLabel(MealComponent component) =>
+      component.type == MealComponentType.coveredByProtein ? 'Included above' : component.name;
+
+  Widget _buildReviewTileIngredient(IconData icon, String name) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Row(
+        children: [
+          Icon(icon, size: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          const SizedBox(width: 3),
+          Expanded(
+            child: Text(name, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelSmall),
+          ),
+        ],
       ),
     );
   }

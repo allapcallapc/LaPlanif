@@ -1761,15 +1761,17 @@ void main() {
 
     // The recipe renders right on the same card as the anchors, and this
     // is the only (and therefore last) slot, so the bar's now offering to
-    // save instead of moving to a next meal.
-    expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
+    // save instead of moving to a next meal. The picker tile above the
+    // card also summarizes the same three components once they exist, so
+    // their names each show up twice on screen (tile + card).
+    expect(find.text('Slow-roasted pulled pork'), findsNWidgets(2));
     expect(find.text('https://example.com/pulled-pork'), findsOneWidget);
     expect(find.text("This week's deal"), findsOneWidget);
     // Once for the anchor chip up top, once for the recipe's own deal-item
     // badge below.
     expect(find.text('Ground pork · IGA'), findsNWidgets(2));
     expect(find.text('This recipe already includes the carb — see above.'), findsOneWidget);
-    expect(find.text('Steamed green beans'), findsOneWidget);
+    expect(find.text('Steamed green beans'), findsNWidgets(2));
     expect(find.text('Steam 5 min, toss with butter.'), findsOneWidget);
     expect(find.text("Save this week's plan"), findsOneWidget);
 
@@ -1781,7 +1783,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Meal plan'));
     await tester.pumpAndSettle();
-    expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
+    expect(find.text('Slow-roasted pulled pork'), findsNWidgets(2));
   });
 
   testWidgets('saves the full plan to history as this week\'s entry, overwriting on a second save', (tester) async {
@@ -2004,9 +2006,10 @@ void main() {
 
     expect(find.text('Ingredient list'), findsOneWidget);
     expect(find.text('Chicken thighs — 1.5 kg'), findsOneWidget);
-    // "Broccoli" also still shows in the (now-covered) review card behind
-    // the dialog, so it appears twice: once there, once in the extracted list.
-    expect(find.text('Broccoli'), findsNWidgets(2));
+    // "Broccoli" also still shows in the (now-covered) picker tile and
+    // review card behind the dialog, so it appears three times: tile,
+    // card, and the extracted list.
+    expect(find.text('Broccoli'), findsNWidgets(3));
     // The carb component is covered_by_protein, so it isn't listed separately
     // (and isn't rendered by name in the underlying card either).
     expect(find.text('Rice'), findsNothing);
@@ -2204,7 +2207,8 @@ void main() {
     expect(promptCalls, 1);
     expect(promptedCurrent, 'model-a');
     expect(promptedNext, 'model-b');
-    expect(find.text('Roast chicken thighs'), findsOneWidget);
+    // Once in the picker tile's ingredient summary, once in the card itself.
+    expect(find.text('Roast chicken thighs'), findsNWidgets(2));
   });
 
   testWidgets('opens a recipe link via the injected launcher when tapped', (tester) async {
@@ -2563,7 +2567,8 @@ void main() {
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Original lunch recipe'), findsOneWidget);
+    // Shows once in the picker tile's ingredient summary, once in the card.
+    expect(find.text('Original lunch recipe'), findsNWidgets(2));
     expect(lunchCalls.length, 1);
     expect(supperCalls, isEmpty);
 
@@ -2575,28 +2580,29 @@ void main() {
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Original supper recipe'), findsOneWidget);
+    expect(find.text('Original supper recipe'), findsNWidgets(2));
     expect(supperCalls.length, 1);
 
     // Step back to the lunch meal (via its tile) and regenerate just its
-    // recipe - the supper meal (not on screen) is untouched.
+    // recipe - the supper meal (not on screen) is untouched. Both tiles
+    // keep summarizing their own recipe regardless of which one is open.
     await tester.tap(find.byKey(const ValueKey('review-step-0')));
     await tester.pumpAndSettle();
     expect(find.text('Lunch · meat'), findsOneWidget);
-    expect(find.text('Original lunch recipe'), findsOneWidget);
+    expect(find.text('Original lunch recipe'), findsNWidgets(2));
 
     await tester.tap(find.byTooltip('Regenerate this recipe'));
     await tester.pumpAndSettle();
 
     expect(lunchCalls.length, 2);
     expect(lunchCalls[1].single.mealType, MealType.lunch);
-    expect(find.text('Regenerated lunch recipe'), findsOneWidget);
+    expect(find.text('Regenerated lunch recipe'), findsNWidgets(2));
     expect(find.text('Original lunch recipe'), findsNothing);
     expect(supperCalls.length, 1);
 
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
-    expect(find.text('Original supper recipe'), findsOneWidget);
+    expect(find.text('Original supper recipe'), findsNWidgets(2));
   });
 
   testWidgets('shows an error snackbar and re-enables the button when a full-plan slot regeneration fails', (tester) async {
@@ -2700,15 +2706,16 @@ void main() {
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Original recipe'), findsOneWidget);
+    expect(find.text('Original recipe'), findsNWidgets(2));
 
     await tester.tap(find.byTooltip('Regenerate this recipe'));
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate this recipe: AI API HTTP 500'), findsOneWidget);
     // The failed regeneration left the existing recipe in place, and the
-    // button is re-enabled rather than stuck showing its spinner.
-    expect(find.text('Original recipe'), findsOneWidget);
+    // button is re-enabled rather than stuck showing its spinner. Shows
+    // once in the picker tile's summary, once in the card.
+    expect(find.text('Original recipe'), findsNWidgets(2));
     expect(
       tester
           .widget<IconButton>(find.ancestor(of: find.byTooltip('Regenerate this recipe'), matching: find.byType(IconButton)))
@@ -2824,9 +2831,10 @@ void main() {
       await tester.pumpAndSettle();
 
       // Generating the initial recipe already used up one rate-limit
-      // fallback (model-a -> model-b).
+      // fallback (model-a -> model-b). Shows once in the picker tile's
+      // summary, once in the card.
       expect(promptCalls, 1);
-      expect(find.text('Roast chicken thighs'), findsOneWidget);
+      expect(find.text('Roast chicken thighs'), findsNWidgets(2));
 
       await tester.tap(find.byTooltip('Regenerate this recipe'));
       await tester.pumpAndSettle();
@@ -2834,7 +2842,7 @@ void main() {
       // Regenerating this slot falls back through model-a -> model-b again,
       // independently of the initial generation call.
       expect(promptCalls, 2);
-      expect(find.text('Roast chicken thighs'), findsOneWidget);
+      expect(find.text('Roast chicken thighs'), findsNWidgets(2));
     },
   );
 

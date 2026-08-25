@@ -525,10 +525,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
     });
   }
 
-  void _goToPreviousMeal() => setState(() => _reviewIndex -= 1);
-
-  void _goToNextMeal() => setState(() => _reviewIndex += 1);
-
   void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
 
   // The review step's one action for turning a meal's confirmed anchors
@@ -1357,19 +1353,21 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  // One meal at a time: a progress row of tappable step dots, then the
-  // current slot's card (anchors and, once generated, its full recipe)
-  // together - editing an anchor and fixing up its recipe never requires
-  // leaving this card or switching to a different screen.
+  // A picker strip of one tile per meal, pinned above the detail card and
+  // never hidden - unlike a stepper, every meal's name and status stays on
+  // screen at all times, and switching which one is being edited is a
+  // single tap on its tile rather than a forced Back/Next walk through the
+  // others.
   Widget _buildReviewStep() {
     final preview = _preview!;
     final index = _reviewIndex;
     return Column(
       children: [
-        _buildReviewProgress(preview.slots.length),
+        _buildReviewPicker(preview.slots),
+        const Divider(height: 1),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
             children: [_buildReviewCard(index, preview.slots[index], _slotRecipes[index])],
           ),
         ),
@@ -1377,46 +1375,70 @@ class _PlanifScreenState extends State<PlanifScreen> {
     );
   }
 
-  Widget _buildReviewProgress(int slotCount) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+  Widget _buildReviewPicker(List<MealSlotPreview> slots) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          for (var i = 0; i < slotCount; i++) ...[
+          for (var i = 0; i < slots.length; i++) ...[
             if (i > 0) const SizedBox(width: 8),
-            _buildReviewStepDot(i),
+            _buildReviewTile(i, slots[i]),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildReviewStepDot(int index) {
+  Widget _buildReviewTile(int index, MealSlotPreview slot) {
     final isCurrent = index == _reviewIndex;
     final isGenerated = _slotRecipes[index] != null;
     final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       key: ValueKey('review-step-$index'),
       onTap: () => _jumpToMeal(index),
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        width: 108,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: isCurrent ? colorScheme.primaryContainer : null,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: isCurrent ? colorScheme.primary : Theme.of(context).dividerColor),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              isGenerated ? Icons.check_circle : Icons.circle_outlined,
-              size: 14,
-              color: isGenerated ? Colors.green : null,
+            Row(
+              children: [
+                Icon(
+                  slot.mealType == MealType.lunch ? Icons.wb_sunny_outlined : Icons.nightlight_outlined,
+                  size: 14,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    _capitalize(slot.mealType.name),
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 4),
-            Text('${index + 1}', style: TextStyle(fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal)),
+            Text(
+              slot.protein,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              isGenerated ? 'Recipe ready' : 'Not reviewed',
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.labelSmall?.copyWith(color: isGenerated ? Colors.green.shade700 : null),
+            ),
           ],
         ),
       ),
@@ -1533,14 +1555,15 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
   String _capitalize(String s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
 
-  // The review step's single pinned CTA: its label/action depend on this
-  // meal's state, so there's only ever one primary button to look at
-  // (plus Back, once there's a previous meal to return to) instead of the
-  // old screen's separate regenerate/generate-full-plan/save bars.
+  // The review step's single pinned CTA. There's no forced Back/Next
+  // walk any more - the picker strip above already lets any meal be
+  // reached in one tap - so this bar only ever has one job: generate the
+  // meal currently on screen, or, once every meal has a recipe, save the
+  // week. Anything in between (a meal is done, but others aren't yet)
+  // needs no action here, so the bar disappears rather than showing a
+  // disabled button.
   Widget _buildReviewBar() {
     final index = _reviewIndex;
-    final slotCount = _preview!.slots.length;
-    final isLast = index == slotCount - 1;
     final hasRecipe = _slotRecipes[index] != null;
     final isGenerating = _generatingRecipeSlots.contains(index);
     final busy = _reviewBusy;
@@ -1552,40 +1575,24 @@ class _PlanifScreenState extends State<PlanifScreen> {
       label = isGenerating ? 'Generating…' : 'Generate recipe';
       icon = Icons.auto_awesome;
       onPressed = busy ? null : () => _generateSlotRecipe(index);
-    } else if (isLast) {
+    } else if (_allSlotsGenerated) {
       label = _isSavingWeek ? 'Saving…' : 'Save this week\'s plan';
       icon = Icons.save_outlined;
       onPressed = busy ? null : _saveWeekPlan;
     } else {
-      label = 'Next meal →';
-      icon = Icons.arrow_forward;
-      onPressed = busy ? null : _goToNextMeal;
+      return const SizedBox.shrink();
     }
-    final showSpinner = isGenerating || (isLast && hasRecipe && _isSavingWeek);
+    final showSpinner = isGenerating || _isSavingWeek;
 
     return SafeArea(
       minimum: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          if (index > 0) ...[
-            OutlinedButton.icon(
-              onPressed: busy ? null : _goToPreviousMeal,
-              icon: const Icon(Icons.arrow_back),
-              label: const Text('Back'),
-            ),
-            const SizedBox(width: 12),
-          ],
-          Expanded(
-            child: FilledButton.icon(
-              onPressed: onPressed,
-              icon: showSpinner
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : Icon(icon),
-              label: Text(label),
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-            ),
-          ),
-        ],
+      child: FilledButton.icon(
+        onPressed: onPressed,
+        icon: showSpinner
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : Icon(icon),
+        label: Text(label),
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       ),
     );
   }

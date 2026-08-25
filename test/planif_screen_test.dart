@@ -2567,8 +2567,9 @@ void main() {
     expect(lunchCalls.length, 1);
     expect(supperCalls, isEmpty);
 
-    // Move on to the supper meal and generate its recipe too.
-    await tester.tap(find.text('Next meal →'));
+    // Move on to the supper meal (via its picker tile) and generate its
+    // recipe too.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
     expect(find.text('Supper · tofu'), findsOneWidget);
     await tester.tap(find.text('Generate recipe'));
@@ -2577,9 +2578,9 @@ void main() {
     expect(find.text('Original supper recipe'), findsOneWidget);
     expect(supperCalls.length, 1);
 
-    // Step back to the lunch meal and regenerate just its recipe - the
-    // supper meal (not on screen) is untouched.
-    await tester.tap(find.text('Back'));
+    // Step back to the lunch meal (via its tile) and regenerate just its
+    // recipe - the supper meal (not on screen) is untouched.
+    await tester.tap(find.byKey(const ValueKey('review-step-0')));
     await tester.pumpAndSettle();
     expect(find.text('Lunch · meat'), findsOneWidget);
     expect(find.text('Original lunch recipe'), findsOneWidget);
@@ -2593,7 +2594,7 @@ void main() {
     expect(find.text('Original lunch recipe'), findsNothing);
     expect(supperCalls.length, 1);
 
-    await tester.tap(find.text('Next meal →'));
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
     expect(find.text('Original supper recipe'), findsOneWidget);
   });

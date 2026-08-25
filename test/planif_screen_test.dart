@@ -2018,9 +2018,11 @@ void main() {
     // review card behind the dialog, so it appears three times: tile,
     // card, and the extracted list.
     expect(find.text('Broccoli'), findsNWidgets(3));
-    // The carb component is covered_by_protein, so it isn't listed separately
-    // (and isn't rendered by name in the underlying card either).
-    expect(find.text('Rice'), findsNothing);
+    // The carb component is covered_by_protein, so it isn't listed
+    // separately in the shopping list, and the underlying card still
+    // doesn't render it by name - but the picker tile does, naming the
+    // actual ingredient rather than just pointing back at the protein.
+    expect(find.text('Rice'), findsOneWidget);
   });
 
   testWidgets('shows an error snackbar and re-enables the button when full-plan generation fails', (tester) async {

@@ -1468,13 +1468,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
   // The bare ingredient a component draws on (e.g. "Broccoli"), not the
   // recipe's own write-up of it (e.g. "Steamed fresh broccoli florets") -
   // the underlying deal item's name already is that bare ingredient, so
-  // it's used whenever the component has one. covered_by_protein carries
-  // an internal name (e.g. "Buns (included in the pulled pork recipe)")
-  // meant to explain the merge in the full card, not to be read as a
-  // standalone ingredient here - it points back at the protein line
-  // instead.
+  // it's used whenever the component has one. Applies the same way to a
+  // covered_by_protein component (e.g. buns baked into the pulled-pork
+  // recipe) - the tile still names the actual ingredient rather than
+  // pointing back at the protein line, even though the full card explains
+  // it's covered there.
   String _tileIngredientLabel(MealComponent component) {
-    if (component.type == MealComponentType.coveredByProtein) return 'Included above';
     if (component.dealItems.isNotEmpty) return component.dealItems.first.name;
     return component.name;
   }

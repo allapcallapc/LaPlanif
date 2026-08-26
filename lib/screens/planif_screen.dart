@@ -545,6 +545,25 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
     setState(() => _generatingRecipeSlots.add(index));
 
+    // Every other meal this week, so the AI generating just this one slot
+    // still knows what the rest of the week looks like - deal items can't
+    // collide across slots regardless (anchors are already kept distinct),
+    // but nothing else stops two independently-generated recipes from
+    // landing on the same dish or prep style without this.
+    final otherMeals = [
+      for (var i = 0; i < preview.slots.length; i++)
+        if (i != index)
+          OtherWeekMeal(
+            mealType: preview.slots[i].mealType,
+            protein: preview.slots[i].protein,
+            anchorItems: preview.slots[i].anchorItems,
+            recipeNames: switch (_slotRecipes[i]) {
+              null => const [],
+              final recipe => [recipe.proteinComponent.name, recipe.carbComponent.name, recipe.vegetableComponent.name],
+            },
+          ),
+    ];
+
     final dietaryNotes = _mealPlanConfig?.dietaryNotes ?? '';
     final controller = ModelFallbackController(models: _models, waitBeforeRetry: widget.rateLimitWait);
     try {
@@ -556,6 +575,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
           dietaryNotes: dietaryNotes,
           model: model,
           groundingModels: _groundingModels,
+          otherMeals: otherMeals,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
           if (!mounted) return Future.value(RateLimitChoice.retrySame);

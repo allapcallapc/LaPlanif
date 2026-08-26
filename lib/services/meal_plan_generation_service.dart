@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/ai_call_log.dart';
 import '../models/deal_item.dart';
+import '../models/meal_plan_config.dart';
 import '../models/meal_plan_full.dart';
 import '../models/meal_plan_preview.dart';
 import '../utils/error_formatting.dart';
@@ -48,6 +49,29 @@ import 'model_fallback_controller.dart';
 /// any failure (most likely: the redirect target doesn't allow a
 /// cross-origin read) the original redirect link is kept as-is, since it
 /// still works as a plain link even though it can't be read as text.
+///
+/// One other meal already planned for this week, given to
+/// [MealPlanGenerationService.generateMealPlan] as context when it's
+/// generating just one (or some) of the week's slots - e.g. Planif's
+/// review step, which generates a single meal's recipe at a time. Deal
+/// items can't collide across slots regardless (the app already keeps
+/// anchors distinct before this call is ever made), but nothing else stops
+/// two independently-generated meals from landing on the same dish or
+/// prep style - this is what lets the model tell them apart.
+class OtherWeekMeal {
+  const OtherWeekMeal({required this.mealType, required this.protein, required this.anchorItems, this.recipeNames = const []});
+
+  final MealType mealType;
+  final String protein;
+  final List<AnchorItem> anchorItems;
+
+  /// This meal's own protein/carb/vegetable component names, in that
+  /// order, once it has been generated - empty if it hasn't yet, in which
+  /// case [protein] and [anchorItems] are the only hint of what it might
+  /// become.
+  final List<String> recipeNames;
+}
+
 class MealPlanGenerationService {
   MealPlanGenerationService({
     http.Client? client,
@@ -93,6 +117,7 @@ class MealPlanGenerationService {
     String dietaryNotes = '',
     String? model,
     List<String>? groundingModels,
+    List<OtherWeekMeal> otherMeals = const [],
   }) async {
     final effectiveModel = model ?? this.model;
     final effectiveGroundingModels = groundingModels ?? this.groundingModels;
@@ -104,6 +129,7 @@ class MealPlanGenerationService {
         items: items,
         dietaryNotes: dietaryNotes,
         groundingModels: effectiveGroundingModels,
+        otherMeals: otherMeals,
       );
       return await _extract(
         apiKey: apiKey,
@@ -112,6 +138,7 @@ class MealPlanGenerationService {
         research: research,
         sources: sources,
         model: effectiveModel,
+        otherMeals: otherMeals,
       );
     } finally {
       AiCallActivity.finish(activityId);
@@ -132,6 +159,7 @@ class MealPlanGenerationService {
     required List<DealItem> items,
     required String dietaryNotes,
     required List<String> groundingModels,
+    required List<OtherWeekMeal> otherMeals,
   }) async {
     RateLimitedException? lastRateLimitError;
     for (final groundingModel in groundingModels) {
@@ -142,6 +170,7 @@ class MealPlanGenerationService {
           items: items,
           dietaryNotes: dietaryNotes,
           model: groundingModel,
+          otherMeals: otherMeals,
         );
       } on RateLimitedException catch (e) {
         lastRateLimitError = e;
@@ -162,6 +191,7 @@ class MealPlanGenerationService {
     required List<DealItem> items,
     required String dietaryNotes,
     required String model,
+    required List<OtherWeekMeal> otherMeals,
   }) async {
     final body = jsonEncode({
       'systemInstruction': {
@@ -173,7 +203,7 @@ class MealPlanGenerationService {
         {
           'role': 'user',
           'parts': [
-            {'text': _slotsUserText(slots, items, dietaryNotes)},
+            {'text': _slotsUserText(slots, items, dietaryNotes, otherMeals)},
           ],
         },
       ],
@@ -264,9 +294,10 @@ class MealPlanGenerationService {
     required String research,
     required List<_GroundingSource> sources,
     required String model,
+    required List<OtherWeekMeal> otherMeals,
   }) async {
     final userText =
-        '${_slotsUserText(slots, items, '')}\n\n'
+        '${_slotsUserText(slots, items, '', otherMeals)}\n\n'
         'Research notes from the search step, for context on which recipe fits which slot:\n$research\n\n'
         'Verified search sources, numbered - the ONLY sources you may ever cite for type "link". These are '
         'the actual links Google Search returned, not the research notes\' prose. To use one, match it to '
@@ -400,7 +431,12 @@ class MealPlanGenerationService {
 
   // --- Prompt building ----------------------------------------------------
 
-  String _slotsUserText(List<MealSlotPreview> slots, List<DealItem> items, String dietaryNotes) {
+  String _slotsUserText(
+    List<MealSlotPreview> slots,
+    List<DealItem> items,
+    String dietaryNotes,
+    List<OtherWeekMeal> otherMeals,
+  ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
     final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
     final available = items.where((i) => i.preference == DealPreference.neutral).toList();
@@ -418,10 +454,22 @@ class MealPlanGenerationService {
         .join('\n');
 
     return 'Confirmed meal slots to generate full meals for, in order:\n$slotsText\n\n'
+        '${otherMeals.isEmpty ? '' : 'Other meals already planned for this week, not part of this call - see the '
+              'system instructions for how to use these:\n${_otherMealsText(otherMeals)}\n\n'}'
         '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - follow these across every slot:\n${dietaryNotes.trim()}\n\n'}'
         'Priority deal items (prefer these for carb/vegetable when a good fit exists):\n${_itemsText(priority)}\n\n'
         'Excluded deal items (never use these):\n${_itemsText(excluded)}\n\n'
         'All other available deal items:\n${_itemsText(available)}';
+  }
+
+  String _otherMealsText(List<OtherWeekMeal> otherMeals) {
+    return otherMeals
+        .map((meal) {
+          final anchors = meal.anchorItems.map((a) => '${a.name} (${a.store})').join(', ');
+          final recipe = meal.recipeNames.isEmpty ? 'not generated yet' : meal.recipeNames.join(', ');
+          return '${meal.mealType.name} (${meal.protein}): anchors $anchors - recipe: $recipe';
+        })
+        .join('\n');
   }
 
   String _sourcesText(List<_GroundingSource> sources) {
@@ -573,6 +621,8 @@ When you do cite a link, quote its search-result title EXACTLY as it appeared in
 Excluded deal items must never be used in any component.
 
 A component "uses a deal item" only when that component's own ingredient is itself one of the named deal items below - never because it happens to be cooked on the same pan/tray or in the same recipe as a protein that is a deal item. E.g. a one-pan "roasted sausages and green beans" recipe where only the sausages are a deal item means the vegetable does NOT use a deal item, even though it shares the recipe with one that does. Report each component's deal-item status independently and explicitly say "no" when it doesn't match a named deal item, rather than leaving it implied.
+
+If the user message lists other meals already planned for this week (a separate call may be generating just one slot at a time, so those meals aren't part of what you're researching here): treat their recipe names, once known, as dishes to stay clearly different from - not just a different named dish, but a different shape of meal (e.g. don't propose another sheet-pan roast, another stir-fry, or another dish built on the same sauce/marinade, if one of those meals is already one of those). This applies even when the protein differs. For a listed meal that has no recipe yet (still "not generated yet"), you only know its protein and anchors - lean away from an obvious overlap with those where you reasonably can, but don't strain for it the way you should once an actual recipe name is given. Never let this override a hard requirement above (a real verified link, an excluded deal item) - if the closest well-supported recipe you can verify happens to be similar in shape to another meal, use it anyway rather than inventing a weaker option just to be different.
 
 Write your findings as clear, per-slot notes covering: the protein recipe name and verified URL (or "no verified link found" plus an AI-recipe sketch), whether the carb/vegetable are covered by that recipe, and for each uncovered component its proposed name, verified URL (if any) or AI-recipe sketch or simple-side note, and whether IT SPECIFICALLY (not the recipe as a whole) uses a deal item (naming the exact item and store, only if that component's own ingredient matches one).
 ''';

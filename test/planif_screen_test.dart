@@ -212,6 +212,11 @@ class _FakeGenerationService extends MealPlanGenerationService {
 
   final Future<MealPlanFull> Function(List<MealSlotPreview> slots, List<DealItem> items) _handler;
 
+  /// Every otherMeals list passed to generateMealPlan, in call order - lets
+  /// tests assert the other slots' current state (and, once generated,
+  /// their own recipes) actually reached the generation call.
+  final List<List<OtherWeekMeal>> otherMealsCalls = [];
+
   @override
   Future<MealPlanFull> generateMealPlan({
     required String apiKey,
@@ -220,7 +225,9 @@ class _FakeGenerationService extends MealPlanGenerationService {
     String dietaryNotes = '',
     String? model,
     List<String>? groundingModels,
+    List<OtherWeekMeal> otherMeals = const [],
   }) {
+    otherMealsCalls.add(otherMeals);
     return _handler(slots, items);
   }
 }
@@ -241,6 +248,7 @@ class _FakeModelAwareGenerationService extends MealPlanGenerationService {
     String dietaryNotes = '',
     String? model,
     List<String>? groundingModels,
+    List<OtherWeekMeal> otherMeals = const [],
   }) {
     return _byModel(model!);
   }
@@ -2583,6 +2591,16 @@ void main() {
     expect(lunchCalls.length, 1);
     expect(supperCalls, isEmpty);
 
+    // Generating lunch is told about supper - it's not generated yet, so
+    // only its protein/anchors are known.
+    expect(generationService.otherMealsCalls.length, 1);
+    final lunchOtherMeals = generationService.otherMealsCalls[0];
+    expect(lunchOtherMeals.length, 1);
+    expect(lunchOtherMeals.single.mealType, MealType.supper);
+    expect(lunchOtherMeals.single.protein, 'tofu');
+    expect(lunchOtherMeals.single.anchorItems.single.name, 'Tofu');
+    expect(lunchOtherMeals.single.recipeNames, isEmpty);
+
     // Move on to the supper meal (via its picker tile) and generate its
     // recipe too.
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
@@ -2593,6 +2611,14 @@ void main() {
 
     expect(find.text('Original supper recipe'), findsNWidgets(2));
     expect(supperCalls.length, 1);
+
+    // Now that lunch has a recipe, generating supper is told its actual
+    // component names - not just its protein/anchors.
+    expect(generationService.otherMealsCalls.length, 2);
+    final supperOtherMeals = generationService.otherMealsCalls[1];
+    expect(supperOtherMeals.length, 1);
+    expect(supperOtherMeals.single.mealType, MealType.lunch);
+    expect(supperOtherMeals.single.recipeNames, ['Original lunch recipe', 'Rice', 'Broccoli']);
 
     // Step back to the lunch meal (via its tile) and regenerate just its
     // recipe - the supper meal (not on screen) is untouched. Both tiles
@@ -2610,6 +2636,10 @@ void main() {
     expect(find.text('Regenerated lunch recipe'), findsNWidgets(2));
     expect(find.text('Original lunch recipe'), findsNothing);
     expect(supperCalls.length, 1);
+
+    // Regenerating lunch now sees supper's finished recipe too.
+    expect(generationService.otherMealsCalls.length, 3);
+    expect(generationService.otherMealsCalls[2].single.recipeNames, ['Original supper recipe', 'Quinoa', 'Green beans']);
 
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();

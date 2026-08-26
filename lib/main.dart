@@ -20,7 +20,9 @@ class LaPlanifApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'LaPlanif',
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal)),
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF7A2E4D)),
+      ),
       home: const HomeShell(),
     );
   }

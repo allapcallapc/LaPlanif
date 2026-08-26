@@ -138,7 +138,6 @@ class MealPlanGenerationService {
         research: research,
         sources: sources,
         model: effectiveModel,
-        otherMeals: otherMeals,
       );
     } finally {
       AiCallActivity.finish(activityId);
@@ -294,10 +293,14 @@ class MealPlanGenerationService {
     required String research,
     required List<_GroundingSource> sources,
     required String model,
-    required List<OtherWeekMeal> otherMeals,
   }) async {
+    // otherMeals is deliberately left out here (unlike the research call) -
+    // extraction is purely mechanical formatting of what the research step
+    // already decided, and _extractionSystemPrompt never explains how to
+    // use that context, so including it would point this call at guidance
+    // that doesn't exist for it.
     final userText =
-        '${_slotsUserText(slots, items, '', otherMeals)}\n\n'
+        '${_slotsUserText(slots, items, '', const [])}\n\n'
         'Research notes from the search step, for context on which recipe fits which slot:\n$research\n\n'
         'Verified search sources, numbered - the ONLY sources you may ever cite for type "link". These are '
         'the actual links Google Search returned, not the research notes\' prose. To use one, match it to '

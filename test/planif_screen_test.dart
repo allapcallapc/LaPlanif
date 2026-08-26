@@ -254,6 +254,30 @@ class _FakeModelAwareGenerationService extends MealPlanGenerationService {
   }
 }
 
+/// Generation-service fake whose calls never resolve on their own - each
+/// call gets its own Completer, exposed in call order, so a test can hold a
+/// specific call pending (e.g. to inspect the review card's own loading
+/// spinner, shown while a first-time generation hasn't produced a recipe
+/// yet) before completing it explicitly.
+class _FakeDeferredGenerationService extends MealPlanGenerationService {
+  final List<Completer<MealPlanFull>> completers = [];
+
+  @override
+  Future<MealPlanFull> generateMealPlan({
+    required String apiKey,
+    required List<MealSlotPreview> slots,
+    required List<DealItem> items,
+    String dietaryNotes = '',
+    String? model,
+    List<String>? groundingModels,
+    List<OtherWeekMeal> otherMeals = const [],
+  }) {
+    final completer = Completer<MealPlanFull>();
+    completers.add(completer);
+    return completer.future;
+  }
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -3636,6 +3660,120 @@ void main() {
 
     expect(find.text('Regenerated note.'), findsOneWidget);
     expect(find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh)), findsOneWidget);
+  });
+
+  testWidgets('shows a spinner on the card while the first recipe generation is pending', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Big-batch chicken thigh stir-fry.',
+          ),
+        ],
+      ),
+    );
+    final generationService = _FakeDeferredGenerationService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          generationService: generationService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.pumpAndSettle();
+
+    // Before generating, the card just hints at the next step.
+    expect(find.text('Anchors look good? Generate this meal\'s recipe below.'), findsOneWidget);
+
+    await tester.tap(find.text('Generate recipe'));
+    await tester.pump();
+    await tester.pump();
+
+    // While pending: the hint is replaced by a spinner in the card body
+    // (there's no recipe yet to show), and the pinned bar's own button
+    // shows a second, independent spinner.
+    expect(find.text('Anchors look good? Generate this meal\'s recipe below.'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNWidgets(2));
+    expect(find.text('Generating…'), findsOneWidget);
+
+    generationService.completers.single.complete(
+      MealPlanFull(
+        slots: [
+          MealSlotFull(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 5,
+            portionsPerMeal: 3,
+            proteinComponent: const MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Chicken stir-fry',
+              usesWeeklyDeal: false,
+            ),
+            carbComponent: const MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+            vegetableComponent: const MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Broccoli',
+              usesWeeklyDeal: false,
+            ),
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Once in the picker tile's ingredient summary, once in the card.
+    expect(find.text('Chicken stir-fry'), findsNWidgets(2));
+    expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
   testWidgets('shows an error snackbar when a slot regenerate call fails', (tester) async {

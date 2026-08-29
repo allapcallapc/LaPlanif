@@ -47,10 +47,36 @@ class MealSlotPreview {
     anchorItems: anchorItems ?? this.anchorItems,
     note: note,
   );
+
+  Map<String, dynamic> toJson() => {
+    'mealType': mealType.name,
+    'protein': protein,
+    'count': count,
+    'portionsPerMeal': portionsPerMeal,
+    'anchorItems': anchorItems.map((a) => a.toJson()).toList(),
+    'note': note,
+  };
+
+  factory MealSlotPreview.fromJson(Map<String, dynamic> json) => MealSlotPreview(
+    mealType: MealType.fromName(json['mealType'] as String),
+    protein: json['protein'] as String,
+    count: json['count'] as int,
+    portionsPerMeal: json['portionsPerMeal'] as int,
+    anchorItems: (json['anchorItems'] as List<dynamic>)
+        .map((a) => AnchorItem.fromJson(a as Map<String, dynamic>))
+        .toList(),
+    note: json['note'] as String,
+  );
 }
 
 class MealPlanPreview {
   const MealPlanPreview({required this.slots});
 
   final List<MealSlotPreview> slots;
+
+  Map<String, dynamic> toJson() => {'slots': slots.map((s) => s.toJson()).toList()};
+
+  factory MealPlanPreview.fromJson(Map<String, dynamic> json) => MealPlanPreview(
+    slots: (json['slots'] as List<dynamic>).map((s) => MealSlotPreview.fromJson(s as Map<String, dynamic>)).toList(),
+  );
 }

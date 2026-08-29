@@ -21,6 +21,7 @@ import '../services/redirect_resolver.dart';
 import '../services/store_config_repository.dart';
 import '../utils/error_formatting.dart';
 import '../utils/iso_week.dart';
+import '../widgets/confirm_delete_dialog.dart';
 import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
 import '../widgets/rate_limit_dialog.dart';
@@ -401,7 +402,13 @@ class _PlanifScreenState extends State<PlanifScreen> {
     setState(() => _structureDraft = _structureDraft!.copyWith(mealSlots: slots));
   }
 
-  void _removeStructureSlot(int index) {
+  Future<void> _removeStructureSlot(int index) async {
+    final confirmed = await confirmDelete(
+      context,
+      title: 'Remove this meal slot?',
+      content: 'This removes the meal slot from this plan.',
+    );
+    if (!confirmed || !mounted) return;
     final slots = [..._structureDraft!.mealSlots]..removeAt(index);
     setState(() => _structureDraft = _structureDraft!.copyWith(mealSlots: slots));
   }
@@ -1382,7 +1389,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
         icon: _isPreviewLoading
             ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
             : const Icon(Icons.arrow_forward),
-        label: Text(_isPreviewLoading ? 'Generating…' : 'Looks good, generate preview →'),
+        label: Text(_isPreviewLoading ? 'Generating…' : 'Looks good, generate preview'),
         style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       ),
     );

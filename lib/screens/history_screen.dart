@@ -47,7 +47,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
       body: entries == null
           ? const Center(child: CircularProgressIndicator())
           : entries.isEmpty
-          ? const Center(child: Text('No saved weeks yet. Save a plan from the Planif tab to see it here.'))
+          ? Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: const Text(
+                    'No saved weeks yet. Save a plan from the Planif tab to see it here.',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            )
           : ListView.builder(
               itemCount: entries.length,
               itemBuilder: (context, i) => _buildEntryTile(entries[i]),

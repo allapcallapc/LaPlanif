@@ -1784,7 +1784,7 @@ void main() {
 
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     expect(find.text('Lunch · meat'), findsOneWidget);
@@ -1936,7 +1936,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
@@ -2052,7 +2052,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
@@ -2140,7 +2140,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Generate recipe'));
@@ -2257,7 +2257,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
@@ -2363,7 +2363,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
@@ -2466,7 +2466,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
@@ -2618,7 +2618,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     // Lunch is the first meal on the review step.
@@ -2782,7 +2782,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
@@ -2906,7 +2906,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Preview meal plan'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Looks good, generate preview →'));
+      await tester.tap(find.text('Looks good, generate preview'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Generate recipe'));
       await tester.pumpAndSettle();
@@ -2982,7 +2982,7 @@ void main() {
 
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate preview: boom'), findsOneWidget);
@@ -2990,7 +2990,7 @@ void main() {
     // view) so the user doesn't have to reopen and re-confirm it - the
     // button falls back to its initial label instead of getting stuck
     // showing "Generating…".
-    expect(find.text('Looks good, generate preview →'), findsOneWidget);
+    expect(find.text('Looks good, generate preview'), findsOneWidget);
   });
 
   testWidgets('cancelling the anchor swap dialog leaves the anchor item unchanged', (tester) async {
@@ -3066,7 +3066,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Chicken thighs · IGA'));
@@ -3144,7 +3144,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     // Generating a preview switches straight into it.
@@ -3240,7 +3240,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     expect(promptCalls, 1);
@@ -3356,7 +3356,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     // Only the current meal (lunch, first on the review step) is on screen
@@ -3466,7 +3466,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Ground pork'), findsNothing);
@@ -3552,7 +3552,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     // Exact chip text - the picker tile above shows the same anchor's bare
@@ -3624,7 +3624,7 @@ void main() {
     // with its own, independently-controlled call.
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pump();
     await tester.pump();
     await tester.pump();
@@ -3745,7 +3745,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     // Before generating, the card just hints at the next step.
@@ -3872,7 +3872,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Regenerate suggested items'));
@@ -3964,7 +3964,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Add item'));
@@ -4063,7 +4063,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     expect(promptCalls, 1, reason: 'the initial generate call rate-limited once');
@@ -4170,7 +4170,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     // Step to the supper slot and swap its Tofu anchor: Chicken thighs is
@@ -4306,7 +4306,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Preview meal plan'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     // The lunch slot is anchored on IGA's Brocoli - Metro's Brocoli is the
@@ -4393,7 +4393,7 @@ void main() {
     expect(find.text('No shellfish.'), findsOneWidget);
     expect(find.byKey(const ValueKey('structure-protein-lunch-meat')), findsOneWidget);
     expect(find.text('5 meals / week'), findsOneWidget);
-    expect(find.text('Looks good, generate preview →'), findsOneWidget);
+    expect(find.text('Looks good, generate preview'), findsOneWidget);
     expect(find.text('Lunch · meat'), findsNothing);
   });
 
@@ -4483,7 +4483,7 @@ void main() {
     // Edits aren't sent to the AI yet - still on the structure step.
     expect(previewService.calls, isEmpty);
 
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     expect(previewService.calls.single.single.protein, 'chicken');
@@ -4584,7 +4584,7 @@ void main() {
     expect(find.widgetWithText(TextFormField, 'Protein'), findsNWidgets(2));
     expect(find.text('6 meals / week'), findsOneWidget);
 
-    await tester.tap(find.text('Looks good, generate preview →'));
+    await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
     expect(previewService.calls.single.length, 2);
@@ -4672,6 +4672,8 @@ void main() {
 
       await tester.tap(find.byTooltip('Remove meal slot').first);
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
 
       expect(find.widgetWithText(TextFormField, 'Protein'), findsOneWidget);
       expect(find.text('4 meals / week'), findsOneWidget);
@@ -4682,7 +4684,7 @@ void main() {
       );
       expect(removeButton.onPressed, isNull);
 
-      await tester.tap(find.text('Looks good, generate preview →'));
+      await tester.tap(find.text('Looks good, generate preview'));
       await tester.pumpAndSettle();
 
       expect(previewService.calls.single.single.protein, 'tofu');
@@ -4763,7 +4765,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Preview meal plan'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Looks good, generate preview →'));
+      await tester.tap(find.text('Looks good, generate preview'));
       await tester.pumpAndSettle();
 
       expect(find.text('Lunch · meat'), findsOneWidget);
@@ -4785,7 +4787,7 @@ void main() {
 
       await tester.enterText(find.byKey(const ValueKey('structure-protein-lunch-meat')), 'turkey');
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Looks good, generate preview →'));
+      await tester.tap(find.text('Looks good, generate preview'));
       await tester.pumpAndSettle();
 
       expect(previewService.calls.length, 2);

@@ -181,9 +181,24 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.delete_outline).first);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
 
     final saved = await repo.load();
     expect(saved.length, 2);
+  });
+
+  testWidgets('cancelling the delete confirmation keeps the store', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo);
+
+    await tester.tap(find.byIcon(Icons.delete_outline).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    final saved = await repo.load();
+    expect(saved.length, 3);
   });
 
   testWidgets('shows empty state once every store is removed', (tester) async {
@@ -192,6 +207,8 @@ void main() {
 
     for (var i = 0; i < 3; i++) {
       await tester.tap(find.byIcon(Icons.delete_outline).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
     }
 
@@ -407,6 +424,8 @@ void main() {
 
     await tester.tap(find.byTooltip('Remove grounding model').first);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
 
     expect(await aiConfigRepo.loadGroundingModels(), ['gemini-b']);
   });
@@ -479,6 +498,8 @@ void main() {
 
     await tester.tap(find.byTooltip('Remove model').first);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
 
     expect(find.text('gemini-a'), findsNothing);
     expect(await aiConfigRepo.loadModels(), ['gemini-b']);
@@ -517,6 +538,8 @@ void main() {
     await pumpScreen(tester, storeRepo, mealPlanConfigRepository: mealPlanRepo);
 
     await tester.tap(find.byTooltip('Remove meal slot').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
     // The persistence write is debounced; advance past the debounce window.
     await tester.pump(const Duration(milliseconds: 600));
@@ -647,6 +670,8 @@ void main() {
     // by list position, Flutter would reuse the removed row's Element/State
     // and the Count field would keep showing '5' instead of '2'.
     await tester.tap(find.byTooltip('Remove meal slot').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 600));
 

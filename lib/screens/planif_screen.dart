@@ -21,6 +21,7 @@ import '../services/redirect_resolver.dart';
 import '../services/store_config_repository.dart';
 import '../utils/error_formatting.dart';
 import '../utils/iso_week.dart';
+import '../widgets/confirm_delete_dialog.dart';
 import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
 import '../widgets/rate_limit_dialog.dart';
@@ -402,18 +403,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Future<void> _removeStructureSlot(int index) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remove this meal slot?'),
-        content: const Text('This removes the meal slot from this plan.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Delete')),
-        ],
-      ),
+    final confirmed = await confirmDelete(
+      context,
+      title: 'Remove this meal slot?',
+      content: 'This removes the meal slot from this plan.',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     final slots = [..._structureDraft!.mealSlots]..removeAt(index);
     setState(() => _structureDraft = _structureDraft!.copyWith(mealSlots: slots));
   }

@@ -187,6 +187,17 @@ class _PlanifScreenState extends State<PlanifScreen> {
     // A real fetch that started while this load was still in flight always
     // wins, same reasoning as _loadCachedItems.
     if (_isRunning) return;
+    // Restoring straight into the review step re-enables actions (regenerate,
+    // per-slot recipe generation) that need an API key - _loadCachedItems
+    // only sets _apiKey as a side effect of a non-empty deal cache, so load
+    // it directly here too. Otherwise a draft restored with an empty deal
+    // cache would leave those actions silently doing nothing instead of
+    // prompting to set a key, unlike every other entry point that reaches them.
+    final apiKey = _apiKey ?? await widget.aiConfigRepository.loadApiKey();
+    final models = apiKey.isEmpty ? _models : await widget.aiConfigRepository.loadModels();
+    final groundingModels = apiKey.isEmpty ? _groundingModels : await widget.aiConfigRepository.loadGroundingModels();
+    if (!mounted) return;
+    if (_isRunning) return;
     setState(() {
       _mealPlanConfig = draft.config;
       _preview = draft.preview;
@@ -194,6 +205,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _viewMode = _ViewMode.review;
       _phase = _Phase.browse;
       _reviewIndex = 0;
+      if (apiKey.isNotEmpty) {
+        _apiKey = apiKey;
+        _models = models;
+        _groundingModels = groundingModels;
+      }
     });
   }
 
@@ -681,8 +697,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
     await widget.mealHistoryRepository.saveWeek(entry);
     // The plan is committed to history now, so the draft has served its
     // purpose - clearing it means reopening the app won't resurface a plan
-    // that's already saved.
-    await widget.mealPlanDraftRepository.clear();
+    // that's already saved. Best-effort like _saveDraft: the week is already
+    // safely in history at this point, so a failure here shouldn't block
+    // finishing the save or leave _isSavingWeek stuck true.
+    try {
+      await widget.mealPlanDraftRepository.clear();
+    } catch (_) {
+      // Non-fatal - see comment above.
+    }
     if (!mounted) return;
     setState(() => _isSavingWeek = false);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved this week\'s plan to history.')));

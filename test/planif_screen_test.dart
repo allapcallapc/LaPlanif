@@ -264,6 +264,12 @@ class _FakeModelAwareGenerationService extends MealPlanGenerationService {
 class _FakeDeferredGenerationService extends MealPlanGenerationService {
   final List<Completer<MealPlanFull>> completers = [];
 
+  /// Each call's onPhase callback, in call order, so a test can move a
+  /// pending call from 'research' to 'extraction' at will (see
+  /// generateMealPlan below, which always reports 'research' up front, same
+  /// as the real service).
+  final List<void Function(String phase)?> onPhaseCallbacks = [];
+
   @override
   Future<MealPlanFull> generateMealPlan({
     required String apiKey,
@@ -281,6 +287,7 @@ class _FakeDeferredGenerationService extends MealPlanGenerationService {
     // than a bare "Generating…" that would collide with the review bar's
     // own button label.
     onPhase?.call('research');
+    onPhaseCallbacks.add(onPhase);
     final completer = Completer<MealPlanFull>();
     completers.add(completer);
     return completer.future;
@@ -3756,6 +3763,14 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNWidgets(2));
     expect(find.text('Generating…'), findsOneWidget);
     expect(find.text('Searching for real recipe links…'), findsOneWidget);
+
+    // Moving to the second (extraction) phase swaps the card's label, same
+    // as the real service reporting onPhase('extraction') once research
+    // hands off its notes to the structured-output call.
+    generationService.onPhaseCallbacks.single?.call('extraction');
+    await tester.pump();
+    expect(find.text('Searching for real recipe links…'), findsNothing);
+    expect(find.text('Writing out the recipe…'), findsOneWidget);
 
     generationService.completers.single.complete(
       MealPlanFull(

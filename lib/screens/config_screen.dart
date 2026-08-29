@@ -157,9 +157,32 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _saveMealPlanConfig(_mealPlanConfig!.copyWith(mealSlots: slots));
   }
 
-  void _removeMealSlot(int index) {
+  Future<void> _removeMealSlot(int index) async {
+    final confirmed = await _confirmDelete(
+      title: 'Remove this meal slot?',
+      content: 'This removes the meal slot from your weekly plan.',
+    );
+    if (!confirmed || !mounted) return;
     final slots = [..._mealPlanConfig!.mealSlots]..removeAt(index);
     _saveMealPlanConfig(_mealPlanConfig!.copyWith(mealSlots: slots));
+  }
+
+  // Shared by every delete action on this screen (stores, models, grounding
+  // models, meal slots) so a single tap can no longer delete something
+  // irreversibly - see GitHub issue #33.
+  Future<bool> _confirmDelete({required String title, required String content}) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    return confirmed ?? false;
   }
 
   Future<void> _openModelEditor({String? existing, int? index}) async {
@@ -179,6 +202,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   Future<void> _removeModel(int index) async {
+    final confirmed = await _confirmDelete(
+      title: 'Delete this model?',
+      content: 'This removes ${_models![index]} from the list.',
+    );
+    if (!confirmed || !mounted) return;
     setState(() => _models!.removeAt(index));
     await widget.aiConfigRepository.saveModels(_models!);
   }
@@ -210,6 +238,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   Future<void> _removeGroundingModel(int index) async {
+    final confirmed = await _confirmDelete(
+      title: 'Delete this grounding model?',
+      content: 'This removes ${_groundingModels![index]} from the list.',
+    );
+    if (!confirmed || !mounted) return;
     setState(() => _groundingModels!.removeAt(index));
     await widget.aiConfigRepository.saveGroundingModels(_groundingModels!);
   }
@@ -250,6 +283,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   Future<void> _remove(StoreConfig store) async {
+    final confirmed = await _confirmDelete(
+      title: 'Delete this store?',
+      content: 'This removes ${store.name} and its flyer link.',
+    );
+    if (!confirmed || !mounted) return;
     setState(() => _stores!.removeWhere((s) => s.id == store.id));
     await widget.repository.save(_stores!);
   }

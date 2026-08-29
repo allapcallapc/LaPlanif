@@ -4672,6 +4672,8 @@ void main() {
 
       await tester.tap(find.byTooltip('Remove meal slot').first);
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
 
       expect(find.widgetWithText(TextFormField, 'Protein'), findsOneWidget);
       expect(find.text('4 meals / week'), findsOneWidget);

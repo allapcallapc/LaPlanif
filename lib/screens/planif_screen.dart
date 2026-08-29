@@ -401,7 +401,19 @@ class _PlanifScreenState extends State<PlanifScreen> {
     setState(() => _structureDraft = _structureDraft!.copyWith(mealSlots: slots));
   }
 
-  void _removeStructureSlot(int index) {
+  Future<void> _removeStructureSlot(int index) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove this meal slot?'),
+        content: const Text('This removes the meal slot from this plan.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     final slots = [..._structureDraft!.mealSlots]..removeAt(index);
     setState(() => _structureDraft = _structureDraft!.copyWith(mealSlots: slots));
   }

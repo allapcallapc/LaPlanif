@@ -222,13 +222,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final config = _mealPlanConfig;
     final preview = _preview;
     if (config == null || preview == null) return;
-    try {
-      await widget.mealPlanDraftRepository.save(
-        MealPlanDraft(config: config, preview: preview, slotRecipes: _slotRecipes),
-      );
-    } catch (_) {
-      // Non-fatal - see comment above.
-    }
+    await widget.mealPlanDraftRepository
+        .save(MealPlanDraft(config: config, preview: preview, slotRecipes: _slotRecipes))
+        .catchError((_) {
+          // Non-fatal - see comment above.
+        });
   }
 
   // Shows the last fetch's results immediately on open, so the user isn't

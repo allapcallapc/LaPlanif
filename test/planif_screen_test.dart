@@ -226,6 +226,7 @@ class _FakeGenerationService extends MealPlanGenerationService {
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
+    void Function(String phase)? onPhase,
   }) {
     otherMealsCalls.add(otherMeals);
     return _handler(slots, items);
@@ -249,6 +250,7 @@ class _FakeModelAwareGenerationService extends MealPlanGenerationService {
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
+    void Function(String phase)? onPhase,
   }) {
     return _byModel(model!);
   }
@@ -262,6 +264,12 @@ class _FakeModelAwareGenerationService extends MealPlanGenerationService {
 class _FakeDeferredGenerationService extends MealPlanGenerationService {
   final List<Completer<MealPlanFull>> completers = [];
 
+  /// Each call's onPhase callback, in call order, so a test can move a
+  /// pending call from 'research' to 'extraction' at will (see
+  /// generateMealPlan below, which always reports 'research' up front, same
+  /// as the real service).
+  final List<void Function(String phase)?> onPhaseCallbacks = [];
+
   @override
   Future<MealPlanFull> generateMealPlan({
     required String apiKey,
@@ -271,7 +279,15 @@ class _FakeDeferredGenerationService extends MealPlanGenerationService {
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
+    void Function(String phase)? onPhase,
   }) {
+    // Mirrors the real service, which reports the research phase before its
+    // (here, indefinitely pending) network call - so a test holding this
+    // call open still sees the card's phase-specific loading text rather
+    // than a bare "Generating…" that would collide with the review bar's
+    // own button label.
+    onPhase?.call('research');
+    onPhaseCallbacks.add(onPhase);
     final completer = Completer<MealPlanFull>();
     completers.add(completer);
     return completer.future;
@@ -3740,11 +3756,21 @@ void main() {
     await tester.pump();
 
     // While pending: the hint is replaced by a spinner in the card body
-    // (there's no recipe yet to show), and the pinned bar's own button
-    // shows a second, independent spinner.
+    // (there's no recipe yet to show), labeled with the in-flight phase
+    // reported via onPhase, and the pinned bar's own button shows a
+    // second, independent spinner labeled "Generating…".
     expect(find.text('Anchors look good? Generate this meal\'s recipe below.'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNWidgets(2));
     expect(find.text('Generating…'), findsOneWidget);
+    expect(find.text('Searching for real recipe links…'), findsOneWidget);
+
+    // Moving to the second (extraction) phase swaps the card's label, same
+    // as the real service reporting onPhase('extraction') once research
+    // hands off its notes to the structured-output call.
+    generationService.onPhaseCallbacks.single?.call('extraction');
+    await tester.pump();
+    expect(find.text('Searching for real recipe links…'), findsNothing);
+    expect(find.text('Writing out the recipe…'), findsOneWidget);
 
     generationService.completers.single.complete(
       MealPlanFull(

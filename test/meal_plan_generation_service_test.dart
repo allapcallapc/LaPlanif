@@ -247,6 +247,36 @@ void main() {
     expect(logs[1].inputTokens, 200);
   });
 
+  test('reports onPhase as research then extraction, once each, before the matching call is made', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      if (callCount == 1) {
+        return _researchResponse(
+          text: 'Slot 1 protein: verified link https://example.com/chicken-stir-fry.',
+          sources: const [
+            {'uri': 'https://example.com/chicken-stir-fry', 'title': 'Big-batch chicken thigh stir-fry'},
+          ],
+        );
+      }
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'link', name: 'Big-batch chicken thigh stir-fry', sourceIndex: 0),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice', note: 'Steamed.'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli', note: 'Steamed.'),
+          },
+        ],
+      );
+    });
+
+    final phases = <String>[];
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+    await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items, onPhase: phases.add);
+
+    expect(phases, ['research', 'extraction']);
+  });
+
   test(
     'downgrades a "link" component to ai_recipe when its sourceIndex does not point at a real search-grounding source',
     () async {

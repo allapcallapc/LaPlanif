@@ -150,6 +150,13 @@ class _PlanifScreenState extends State<PlanifScreen> {
   List<MealSlotFull?> _slotRecipes = [];
   int _reviewIndex = 0;
   final Set<int> _generatingRecipeSlots = {};
+  // Which of the two AI calls behind _generateSlotRecipe is currently in
+  // flight for a given slot ('research' or 'extraction', matching
+  // MealPlanGenerationService's onPhase callback) - the research step
+  // (searching for and verifying real recipe links) is the slower of the
+  // two, so surfacing which one is running keeps the wait from reading as
+  // a stuck spinner.
+  final Map<int, String> _recipeGenerationPhase = {};
   bool _isSavingWeek = false;
 
   bool get _allSlotsGenerated => _slotRecipes.isNotEmpty && _slotRecipes.every((s) => s != null);
@@ -576,6 +583,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
           model: model,
           groundingModels: _groundingModels,
           otherMeals: otherMeals,
+          onPhase: (phase) {
+            if (!mounted) return;
+            setState(() => _recipeGenerationPhase[index] = phase);
+          },
         ),
         onRateLimited: ({required currentModel, nextModel}) {
           if (!mounted) return Future.value(RateLimitChoice.retrySame);
@@ -586,10 +597,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
       setState(() {
         _slotRecipes[index] = result.slots.single;
         _generatingRecipeSlots.remove(index);
+        _recipeGenerationPhase.remove(index);
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _generatingRecipeSlots.remove(index));
+      setState(() {
+        _generatingRecipeSlots.remove(index);
+        _recipeGenerationPhase.remove(index);
+      });
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Could not generate this recipe: ${stripExceptionPrefix(e)}')));
@@ -1595,9 +1610,21 @@ class _PlanifScreenState extends State<PlanifScreen> {
               ),
               MealSlotFullCard(slot: recipe, onOpenRecipeLink: _openRecipeLink, showHeader: false),
             ] else if (isGeneratingRecipe)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: Center(child: CircularProgressIndicator()),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 8),
+                      Text(
+                        _recipeGenerationPhaseLabel(_recipeGenerationPhase[index]),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
               )
             else
               Text(
@@ -1622,6 +1649,16 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   String _capitalize(String s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
+
+  // Mirrors the 'research'/'extraction' phase names MealPlanGenerationService
+  // reports via onPhase (also used as-is for its own AI-call log entries) -
+  // null means the phase callback hasn't fired yet (request still in
+  // flight to the API).
+  String _recipeGenerationPhaseLabel(String? phase) => switch (phase) {
+    'research' => 'Searching for real recipe links…',
+    'extraction' => 'Writing out the recipe…',
+    _ => 'Generating…',
+  };
 
   // The review step's single pinned CTA. There's no forced Back/Next
   // walk any more - the picker strip above already lets any meal be

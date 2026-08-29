@@ -110,6 +110,11 @@ class MealPlanGenerationService {
   /// [AiConfigRepository.loadGroundingModels]).
   final List<String> groundingModels;
 
+  /// [onPhase] is called with `'research'` right before the grounded search
+  /// call and `'extraction'` right before the structured-output call, so a
+  /// caller (e.g. the review screen) can show which of the two long-running
+  /// steps is currently in flight. Optional - callers that don't care about
+  /// progress just omit it.
   Future<MealPlanFull> generateMealPlan({
     required String apiKey,
     required List<MealSlotPreview> slots,
@@ -118,11 +123,13 @@ class MealPlanGenerationService {
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
+    void Function(String phase)? onPhase,
   }) async {
     final effectiveModel = model ?? this.model;
     final effectiveGroundingModels = groundingModels ?? this.groundingModels;
     final activityId = AiCallActivity.start(storeName: _logStoreName, model: effectiveModel);
     try {
+      onPhase?.call('research');
       final (research, sources) = await _research(
         apiKey: apiKey,
         slots: slots,
@@ -131,6 +138,7 @@ class MealPlanGenerationService {
         groundingModels: effectiveGroundingModels,
         otherMeals: otherMeals,
       );
+      onPhase?.call('extraction');
       return await _extract(
         apiKey: apiKey,
         slots: slots,

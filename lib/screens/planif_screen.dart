@@ -1382,7 +1382,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
         icon: _isPreviewLoading
             ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
             : const Icon(Icons.arrow_forward),
-        label: Text(_isPreviewLoading ? 'Generating…' : 'Looks good, generate preview →'),
+        label: Text(_isPreviewLoading ? 'Generating…' : 'Looks good, generate preview'),
         style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       ),
     );

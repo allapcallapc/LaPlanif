@@ -4863,6 +4863,92 @@ void main() {
   });
 
   testWidgets(
+    'restoring a draft reloads the API key even when the deal cache is empty, so regenerate actually calls the AI',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      final draftRepository = MealPlanDraftRepository();
+      await draftRepository.save(
+        const MealPlanDraft(
+          config: MealPlanConfig(
+            portionsPerMeal: 3,
+            diversityWindowDays: 28,
+            mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+          ),
+          preview: MealPlanPreview(
+            slots: [
+              MealSlotPreview(
+                mealType: MealType.lunch,
+                protein: 'meat',
+                count: 5,
+                portionsPerMeal: 3,
+                anchorItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+                note: 'Big-batch chicken thigh stir-fry.',
+              ),
+            ],
+          ),
+          slotRecipes: [null],
+        ),
+      );
+
+      // No deals were ever fetched/cached - _loadCachedItems' side effect
+      // (the old-only way _apiKey got set) never runs, so restoring the
+      // draft is the only thing that can make the key available here.
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
+
+      // Regenerate reloads the config from here (not from the draft) - kept
+      // to the same single slot so the fake preview service below doesn't
+      // have to handle more than one.
+      final mealPlanConfigRepository = MealPlanConfigRepository();
+      await mealPlanConfigRepository.save(
+        const MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+      );
+
+      final previewService = _FakePreviewService(
+        (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: mealSlots.single.mealType,
+              protein: mealSlots.single.protein,
+              count: mealSlots.single.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Regenerated note.',
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            aiConfigRepository: aiConfigRepo,
+            mealPlanConfigRepository: mealPlanConfigRepository,
+            mealPlanDraftRepository: draftRepository,
+            previewService: previewService,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Regenerate all suggestions'));
+      await tester.pumpAndSettle();
+
+      // A missing API key would have shown a snackbar instead of calling the
+      // preview service - reaching the call proves _apiKey was actually
+      // reloaded from the restored draft, not left null.
+      expect(find.text('Set your Google AI API key in Config first.'), findsNothing);
+      expect(previewService.calls, hasLength(1));
+      expect(find.text('Regenerated note.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'autosaves the draft as the preview and recipe are generated, then clears it once the week is saved',
     (tester) async {
       final repository = StoreConfigRepository();

@@ -698,11 +698,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
     // that's already saved. Best-effort like _saveDraft: the week is already
     // safely in history at this point, so a failure here shouldn't block
     // finishing the save or leave _isSavingWeek stuck true.
-    try {
-      await widget.mealPlanDraftRepository.clear();
-    } catch (_) {
+    await widget.mealPlanDraftRepository.clear().catchError((_) {
       // Non-fatal - see comment above.
-    }
+    });
     if (!mounted) return;
     setState(() => _isSavingWeek = false);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved this week\'s plan to history.')));

@@ -592,7 +592,7 @@ void main() {
     },
   );
 
-  testWidgets('shows a freshness banner for deals just fetched live', (tester) async {
+  testWidgets('shows a freshness indicator in the app bar for deals just fetched live', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -630,10 +630,10 @@ void main() {
     await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Deals fetched just now'), findsOneWidget);
+    expect(find.text('Meal plan started just now'), findsOneWidget);
   });
 
-  testWidgets('warns when cached deals are older than a week', (tester) async {
+  testWidgets('warns in the app bar when cached deals are older than a week', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -663,7 +663,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Deals fetched 9d ago - may be outdated'), findsOneWidget);
+    expect(find.textContaining('Meal plan started 9d ago - may be outdated'), findsOneWidget);
   });
 
   testWidgets('shows resolved and failed rows in the full list while another store is still fetching', (

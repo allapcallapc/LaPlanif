@@ -853,6 +853,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
               )
             : null,
         actions: _phase == _Phase.browse ? _buildAppBarActions() : null,
+        bottom: _phase == _Phase.browse && _fetchedAt != null ? _buildFetchedAtBar() : null,
       ),
       body: _phase == _Phase.fetch ? _buildFetchStep() : _buildBrowseStep(),
       floatingActionButton: showPreviewFab ? _buildPreviewFab() : null,
@@ -1141,10 +1142,9 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
     // Store/category/priority filtering now lives in the filter sheet (see
     // _openFilterSheet) instead of always-on rows above the list, so this
-    // is just the list itself, plus a freshness banner up top.
+    // is just the list itself.
     return ListView(
       children: [
-        if (_fetchedAt != null) _buildFreshnessBanner(_fetchedAt!),
         for (final category in presentCategories) ...[
           _buildSectionHeader(category),
           ..._coverFirst(grouped[category]!).map(_buildItemTile),
@@ -1158,26 +1158,34 @@ class _PlanifScreenState extends State<PlanifScreen> {
   /// this, a plan can silently get built on an expired flyer.
   static const _staleAfter = Duration(days: 7);
 
-  Widget _buildFreshnessBanner(DateTime fetchedAt) {
-    final age = DateTime.now().difference(fetchedAt);
+  /// Shown as the app bar's [AppBar.bottom] for every browse-step view
+  /// (deals, structure, review) - not just the deals list - so how old the
+  /// plan's underlying deals are stays visible regardless of which step the
+  /// user is currently on.
+  PreferredSizeWidget _buildFetchedAtBar() {
+    final age = DateTime.now().difference(_fetchedAt!);
     final isStale = age >= _staleAfter;
     final theme = Theme.of(context);
     final color = isStale ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Row(
-        children: [
-          Icon(isStale ? Icons.warning_amber_rounded : Icons.schedule, size: 16, color: color),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              isStale
-                  ? 'Deals fetched ${_formatAge(age)} - may be outdated. Consider re-fetching.'
-                  : 'Deals fetched ${_formatAge(age)}',
-              style: theme.textTheme.bodySmall?.copyWith(color: color),
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(28),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+        child: Row(
+          children: [
+            Icon(isStale ? Icons.warning_amber_rounded : Icons.schedule, size: 14, color: color),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                isStale
+                    ? 'Meal plan started ${_formatAge(age)} - may be outdated. Consider re-fetching.'
+                    : 'Meal plan started ${_formatAge(age)}',
+                style: theme.textTheme.bodySmall?.copyWith(color: color),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

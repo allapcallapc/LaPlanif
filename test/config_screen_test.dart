@@ -416,6 +416,18 @@ void main() {
     expect(await aiConfigRepo.loadGroundingModels(), ['gemini-b', 'gemini-a']);
   });
 
+  testWidgets('reorders grounding models with the move-down arrow and persists the new order', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveGroundingModels(['gemini-a', 'gemini-b']);
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    await tester.tap(find.byTooltip('Move grounding model down').first);
+    await tester.pumpAndSettle();
+
+    expect(await aiConfigRepo.loadGroundingModels(), ['gemini-b', 'gemini-a']);
+  });
+
   testWidgets('removes a grounding model when more than one is configured', (tester) async {
     final storeRepo = StoreConfigRepository();
     final aiConfigRepo = AiConfigRepository();

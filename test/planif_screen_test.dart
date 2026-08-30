@@ -601,6 +601,89 @@ void main() {
     expect(find.text('Set your Google AI API key in Config first.'), findsOneWidget);
   });
 
+  testWidgets('shows a freshness note on the Home resume card for deals just fetched live', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Poulet',
+          price: '3.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    // Pop back to Home - that's where the freshness note lives, on the
+    // resume card that decides "Continue planning" vs "Start a new plan".
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Continue planning'), findsOneWidget);
+    expect(find.text('Started just now'), findsOneWidget);
+  });
+
+  testWidgets('warns on the Home resume card when cached deals are older than a week', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final cacheRepository = DealCacheRepository();
+    await cacheRepository.save(const [
+      DealItem(
+        name: 'Poulet',
+        price: '3.99\$',
+        unit: '',
+        category: DealCategory.protein,
+        storeName: 'IGA',
+        pageIndex: 1,
+      ),
+    ]);
+    // Backdate the fetched-at timestamp save() just recorded, to simulate a
+    // cache from an expired flyer week.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      'deal_cache_fetched_at',
+      DateTime.now().subtract(const Duration(days: 9)).millisecondsSinceEpoch,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(repository: repository, cacheRepository: cacheRepository),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Home shows the resume card straight away once the cache loads - no
+    // navigation needed to see the warning.
+    expect(find.text('Continue planning'), findsOneWidget);
+    expect(find.textContaining('Started 9d ago - may be outdated'), findsOneWidget);
+  });
+
   testWidgets('shows resolved and failed rows in the full list while another store is still fetching', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [

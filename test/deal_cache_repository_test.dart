@@ -72,4 +72,49 @@ void main() {
 
     expect(await repo.load(), isEmpty);
   });
+
+  test('loadFetchedAt returns null when nothing was ever cached', () async {
+    final repo = DealCacheRepository();
+
+    expect(await repo.loadFetchedAt(), isNull);
+  });
+
+  test('save records when the cache was written, and loadFetchedAt returns it', () async {
+    final repo = DealCacheRepository();
+    const item = DealItem(
+      name: 'Poulet',
+      price: '3.99\$',
+      unit: '',
+      category: DealCategory.protein,
+      storeName: 'IGA',
+      pageIndex: 1,
+    );
+
+    final before = DateTime.now();
+    await repo.save(const [item]);
+    final after = DateTime.now();
+
+    final fetchedAt = await repo.loadFetchedAt();
+    expect(fetchedAt, isNotNull);
+    expect(fetchedAt!.isBefore(before.subtract(const Duration(seconds: 1))), isFalse);
+    expect(fetchedAt.isAfter(after.add(const Duration(seconds: 1))), isFalse);
+  });
+
+  test('clear removes the fetched-at timestamp along with the items', () async {
+    final repo = DealCacheRepository();
+    await repo.save(const [
+      DealItem(
+        name: 'Poulet',
+        price: '3.99\$',
+        unit: '',
+        category: DealCategory.protein,
+        storeName: 'IGA',
+        pageIndex: 1,
+      ),
+    ]);
+
+    await repo.clear();
+
+    expect(await repo.loadFetchedAt(), isNull);
+  });
 }

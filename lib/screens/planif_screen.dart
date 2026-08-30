@@ -27,19 +27,21 @@ import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
 import '../widgets/rate_limit_dialog.dart';
 
-/// Which of Step 2's results the screen is currently showing. "structure" is
-/// the gate step reached from the deals view's "Preview meal plan" FAB: it
-/// lets the user validate/adjust what to plan (meal slots, portions,
-/// dietary notes) before the AI call that produces "review" actually runs.
-/// "review" walks the confirmed slots one meal at a time - anchor items and
-/// that meal's full recipe live on the same card, so there's no separate
-/// preview/full-plan screen pair to keep in sync by hand.
-enum _ViewMode { deals, structure, review }
-
-/// Which top-level step the screen is currently showing: the dedicated
-/// "fetch deals" step, or the browse step (deals/preview/full plan) reached
-/// once there's something to browse.
-enum _Phase { fetch, browse }
+/// Which step the screen is currently showing. "structure" is the gate step
+/// reached from the deals view's "Preview meal plan" FAB (or reopened from
+/// review): it lets the user validate/adjust what to plan (meal slots,
+/// portions, dietary notes) before the AI call that produces "review"
+/// actually runs. "review" walks the confirmed slots one meal at a time -
+/// anchor items and that meal's full recipe live on the same card, so
+/// there's no separate preview/full-plan screen pair to keep in sync by
+/// hand.
+///
+/// Every forward transition between these goes through [_PlanifScreenState._pushStep],
+/// which records the step being left on a back-history stack - the app
+/// bar's back arrow (and the platform back gesture) pop that stack one
+/// entry at a time, so "back" always means "one step back from wherever I
+/// am" rather than a hardcoded jump to a fixed step.
+enum _Step { fetch, deals, structure, review }
 
 /// Opens a recipe link. Injectable so tests can avoid driving a real
 /// platform URL launcher.
@@ -144,8 +146,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
   // confirming never touches what's already on screen.
   MealPlanConfig? _structureDraft;
   bool _isPreviewLoading = false;
-  _ViewMode _viewMode = _ViewMode.deals;
-  _Phase _phase = _Phase.fetch;
+  _Step _step = _Step.fetch;
+  // Back-history stack _pushStep records onto and _goBack pops from - see
+  // the _Step doc comment. Empty exactly when _step is _Step.fetch: that's
+  // the flow's true root, and every path back down to it necessarily
+  // drains the stack (each pop removes exactly one forward push).
+  final List<_Step> _history = [];
   final Set<int> _regeneratingSlots = {};
   // One entry per _preview slot, filled in as each meal's recipe is
   // generated on the review step - null means "not generated yet". Kept
@@ -167,6 +173,31 @@ class _PlanifScreenState extends State<PlanifScreen> {
   bool get _allSlotsGenerated => _slotRecipes.isNotEmpty && _slotRecipes.every((s) => s != null);
 
   List<MealSlotFull> get _generatedSlots => _slotRecipes.whereType<MealSlotFull>().toList();
+
+  // Moves forward to [step], recording the step being left so a later
+  // _goBack() (or the platform back gesture) returns to exactly that step -
+  // not a fixed one. A no-op on the step itself (e.g. "regenerate all
+  // suggestions" while already reviewing) leaves the history untouched,
+  // since nothing was actually left.
+  void _pushStep(_Step step) {
+    if (_step != step) _history.add(_step);
+    _step = step;
+  }
+
+  void _goBack() {
+    if (_history.isEmpty) return;
+    setState(() => _step = _history.removeLast());
+  }
+
+  // Names the step the back arrow/gesture is about to land on, so its
+  // tooltip (and screen-reader announcement) describes what "back" actually
+  // does at the current depth instead of a single fixed caption.
+  String _stepLabel(_Step step) => switch (step) {
+    _Step.fetch => 'fetch deals',
+    _Step.deals => 'deals',
+    _Step.structure => 'meal plan structure',
+    _Step.review => 'meal plan review',
+  };
 
   @override
   void initState() {
@@ -202,8 +233,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _mealPlanConfig = draft.config;
       _preview = draft.preview;
       _slotRecipes = draft.slotRecipes;
-      _viewMode = _ViewMode.review;
-      _phase = _Phase.browse;
+      _pushStep(_Step.review);
       _reviewIndex = 0;
       if (apiKey.isNotEmpty) {
         _apiKey = apiKey;
@@ -249,7 +279,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
     setState(() {
       _items = withPreferences;
       _hasRun = true;
-      _phase = _Phase.browse;
+      // Guarded rather than an unconditional _pushStep: _loadDraft runs
+      // concurrently in initState and can already have moved past fetch
+      // (straight to review) by the time this resolves - advancing to
+      // deals here must never clobber that.
+      if (_step == _Step.fetch) _pushStep(_Step.deals);
       if (apiKey.isNotEmpty) {
         _apiKey = apiKey;
         _models = models;
@@ -315,7 +349,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _items = withPreferences;
       _isRunning = false;
       _hasRun = true;
-      _phase = _Phase.browse;
+      // Always reached with _step still _Step.fetch - the "Fetch deals"
+      // button that triggers this only renders on that step - so this is a
+      // plain forward push, same as the cache-load path.
+      _pushStep(_Step.deals);
     });
   }
 
@@ -380,7 +417,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
         _preview = preview;
         _mealPlanConfig = resolvedConfig;
         _isPreviewLoading = false;
-        _viewMode = _ViewMode.review;
+        // A no-op push when this is "regenerate all suggestions" from
+        // review itself (already the current step); a real forward push
+        // when this follows confirming the structure step.
+        _pushStep(_Step.review);
         _reviewIndex = 0;
         // A freshly (re)generated preview can have entirely different
         // anchors, and possibly a different number of slots - any
@@ -417,7 +457,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
     if (!mounted) return;
     setState(() {
       _structureDraft = config;
-      _viewMode = _ViewMode.structure;
+      // Pushes whichever step this was actually opened from - deals (via
+      // the FAB) or review (via the "Edit meal plan structure" action) -
+      // so back lands on the right one either way.
+      _pushStep(_Step.structure);
     });
   }
 
@@ -819,38 +862,48 @@ class _PlanifScreenState extends State<PlanifScreen> {
     // The review step's Back/Generate/Next/Save CTA lives in a persistent
     // footer instead of at the bottom of the card - it stays reachable
     // without scrolling as the user steps through each meal.
-    final showReviewBar = _phase == _Phase.browse && _viewMode == _ViewMode.review && _preview != null;
+    final showReviewBar = _step == _Step.review && _preview != null;
     // Mirrors the review footer: pinned CTA for the structure step, shown
     // only while that step is what's on screen.
-    final showStructureBar = _phase == _Phase.browse && _viewMode == _ViewMode.structure && _structureDraft != null;
+    final showStructureBar = _step == _Step.structure && _structureDraft != null;
     // The preview FAB only exists to get a first preview started - once one
     // exists, getting back to it (or regenerating it) goes through the app
     // bar's view toggle and regenerate action instead.
-    final showPreviewFab =
-        _phase == _Phase.browse && _viewMode == _ViewMode.deals && _items.isNotEmpty && _preview == null;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Planif'),
-        // Only the browse step gets a back arrow: fetching is its own step,
-        // reached only through that step's own "Fetch deals" button, and
-        // left only by explicitly stepping back to it - not by a button that
-        // sits permanently in the header regardless of what's on screen.
-        leading: _phase == _Phase.browse
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                tooltip: 'Back to fetch deals',
-                onPressed: () => setState(() => _phase = _Phase.fetch),
-              )
+    final showPreviewFab = _step == _Step.deals && _items.isNotEmpty && _preview == null;
+    return PopScope(
+      // Lets the platform back gesture/button (browser back in a PWA
+      // context included) pop this flow's own step history one level at a
+      // time, same as the app bar's back arrow - only once that history is
+      // empty (already on the fetch step) does a back gesture fall through
+      // to actually leaving the screen.
+      canPop: _history.isEmpty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _goBack();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Planif'),
+          // The back arrow only exists once there's somewhere to pop back
+          // to - on the fetch step (the flow's root) _history is always
+          // empty, so there's nothing for it to do.
+          leading: _history.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Back to ${_stepLabel(_history.last)}',
+                  onPressed: _goBack,
+                )
+              : null,
+          actions: _step != _Step.fetch ? _buildAppBarActions() : null,
+        ),
+        body: _step == _Step.fetch ? _buildFetchStep() : _buildBrowseStep(),
+        floatingActionButton: showPreviewFab ? _buildPreviewFab() : null,
+        bottomNavigationBar: showStructureBar
+            ? _buildStructureBar()
+            : showReviewBar
+            ? _buildReviewBar()
             : null,
-        actions: _phase == _Phase.browse ? _buildAppBarActions() : null,
       ),
-      body: _phase == _Phase.fetch ? _buildFetchStep() : _buildBrowseStep(),
-      floatingActionButton: showPreviewFab ? _buildPreviewFab() : null,
-      bottomNavigationBar: showStructureBar
-          ? _buildStructureBar()
-          : showReviewBar
-          ? _buildReviewBar()
-          : null,
     );
   }
 
@@ -867,12 +920,12 @@ class _PlanifScreenState extends State<PlanifScreen> {
       // Hidden while the structure step is on screen: it isn't one of the
       // toggle's own segments (deals/review), so showing it here would
       // render with nothing selected.
-      if (_preview != null && _viewMode != _ViewMode.structure) _buildViewModeToggle(),
-      if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildPreferenceSummary(),
-      if (_viewMode == _ViewMode.deals && _items.isNotEmpty) _buildFilterButton(),
-      if (_viewMode == _ViewMode.review && _preview != null) _buildEditStructureButton(),
-      if (_viewMode == _ViewMode.review && _preview != null) _buildRegenerateButton(),
-      if (_viewMode == _ViewMode.review && _allSlotsGenerated) _buildIngredientListButton(),
+      if (_preview != null && _step != _Step.structure) _buildViewModeToggle(),
+      if (_step == _Step.deals && _items.isNotEmpty) _buildPreferenceSummary(),
+      if (_step == _Step.deals && _items.isNotEmpty) _buildFilterButton(),
+      if (_step == _Step.review && _preview != null) _buildEditStructureButton(),
+      if (_step == _Step.review && _preview != null) _buildRegenerateButton(),
+      if (_step == _Step.review && _allSlotsGenerated) _buildIngredientListButton(),
       const SizedBox(width: 4),
     ];
   }
@@ -913,14 +966,18 @@ class _PlanifScreenState extends State<PlanifScreen> {
   Widget _buildViewModeToggle() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: SegmentedButton<_ViewMode>(
+      child: SegmentedButton<_Step>(
         segments: const [
-          ButtonSegment(value: _ViewMode.deals, icon: Icon(Icons.shopping_bag_outlined), tooltip: 'Deal items'),
-          ButtonSegment(value: _ViewMode.review, icon: Icon(Icons.restaurant_menu), tooltip: 'Meal plan'),
+          ButtonSegment(value: _Step.deals, icon: Icon(Icons.shopping_bag_outlined), tooltip: 'Deal items'),
+          ButtonSegment(value: _Step.review, icon: Icon(Icons.restaurant_menu), tooltip: 'Meal plan'),
         ],
-        selected: {_viewMode},
+        selected: {_step},
         showSelectedIcon: false,
-        onSelectionChanged: (selected) => setState(() => _viewMode = selected.first),
+        // A lateral switch, not a step "forward" in the usual sense - but
+        // routing it through _pushStep still records where it came from, so
+        // the back arrow can undo a toggle tap the same way it undoes any
+        // other transition.
+        onSelectionChanged: (selected) => setState(() => _pushStep(selected.first)),
         style: SegmentedButton.styleFrom(visualDensity: VisualDensity.compact),
       ),
     );
@@ -986,7 +1043,25 @@ class _PlanifScreenState extends State<PlanifScreen> {
             children: [
               if (_states.isNotEmpty && _isRunning)
                 ..._states.map(_buildStatusRow)
-              else ...[
+              else if (_items.isNotEmpty) ...[
+                // Reached by stepping back from deals/structure/review, not
+                // a cold start - _items is still whatever was last fetched
+                // or loaded from cache, sitting untouched in memory. A full
+                // re-fetch re-runs the entire AI extraction pipeline, so
+                // this offers the lighter way back into it.
+                Icon(Icons.shopping_bag_outlined, size: 40, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(height: 12),
+                Text(
+                  '${_items.length} deal item${_items.length == 1 ? '' : 's'} already loaded.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => setState(() => _pushStep(_Step.deals)),
+                  icon: const Icon(Icons.arrow_forward),
+                  label: const Text('View loaded deals'),
+                ),
+              ] else ...[
                 Icon(Icons.storefront_outlined, size: 40, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(height: 12),
                 const Text('Press "Fetch deals" to load flyer items.', textAlign: TextAlign.center),
@@ -1021,8 +1096,8 @@ class _PlanifScreenState extends State<PlanifScreen> {
   }
 
   Widget _buildBody() {
-    if (_viewMode == _ViewMode.structure && _structureDraft != null) return _buildStructureStep();
-    if (_viewMode == _ViewMode.review && _preview != null) return _buildReviewStep();
+    if (_step == _Step.structure && _structureDraft != null) return _buildStructureStep();
+    if (_step == _Step.review && _preview != null) return _buildReviewStep();
     return _buildResults();
   }
 

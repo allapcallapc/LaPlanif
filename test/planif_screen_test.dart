@@ -4803,6 +4803,127 @@ void main() {
     },
   );
 
+  testWidgets(
+    'the back arrow pops one step at a time through structure and review instead of jumping straight to fetch',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
+
+      final mealPlanConfigRepository = MealPlanConfigRepository();
+      await mealPlanConfigRepository.save(
+        const MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 1)],
+        ),
+      );
+
+      final scraper = _FakePagesScraper({
+        'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      });
+      final extraction = _FakeExtractionService({
+        'IGA': () async => const [
+          DealItem(
+            name: 'Chicken thighs',
+            price: '3.99\$',
+            unit: 'lb',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 1,
+          ),
+        ],
+      });
+
+      final previewService = _FakePreviewService(
+        (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: mealSlots.single.mealType,
+              protein: mealSlots.single.protein,
+              count: mealSlots.single.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Note.',
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            scraperService: scraper,
+            extractionService: extraction,
+            aiConfigRepository: aiConfigRepo,
+            mealPlanConfigRepository: mealPlanConfigRepository,
+            previewService: previewService,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Fetch deals'));
+      await tester.pumpAndSettle();
+
+      // On deals, one pop away is the fetch step.
+      expect(find.byTooltip('Back to fetch deals'), findsOneWidget);
+
+      // Opening structure the first time - and backing out of it without
+      // confirming - should return to deals, not jump all the way to fetch,
+      // and the deals view should be exactly as it was left.
+      await tester.tap(find.text('Preview meal plan'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Back to deals'), findsOneWidget);
+      expect(find.byTooltip('Back to fetch deals'), findsNothing);
+
+      await tester.tap(find.byTooltip('Back to deals'));
+      await tester.pumpAndSettle();
+      expect(find.text('Chicken thighs'), findsOneWidget);
+      expect(find.text('Preview meal plan'), findsOneWidget);
+      expect(find.byTooltip('Back to fetch deals'), findsOneWidget);
+
+      // This time confirm through to review - three real steps deep now.
+      await tester.tap(find.text('Preview meal plan'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Looks good, generate preview'));
+      await tester.pumpAndSettle();
+      expect(find.text('Lunch · meat'), findsOneWidget);
+      expect(find.byTooltip('Back to meal plan structure'), findsOneWidget);
+
+      // From review, back lands on structure (not deals, and not fetch) -
+      // the step actually one level up from here.
+      await tester.tap(find.byTooltip('Back to meal plan structure'));
+      await tester.pumpAndSettle();
+      expect(find.text('What to plan'), findsOneWidget);
+      expect(find.byTooltip('Back to deals'), findsOneWidget);
+
+      // From structure, back lands on deals.
+      await tester.tap(find.byTooltip('Back to deals'));
+      await tester.pumpAndSettle();
+      expect(find.text('Chicken thighs'), findsOneWidget);
+      expect(find.byTooltip('Back to fetch deals'), findsOneWidget);
+
+      // From deals, back finally lands on fetch - and there's nothing left
+      // to pop, so the back arrow itself is gone.
+      await tester.tap(find.byTooltip('Back to fetch deals'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Back to fetch deals'), findsNothing);
+      expect(find.byIcon(Icons.arrow_back), findsNothing);
+
+      // The fetch step offers a lighter way back into what's already
+      // loaded, instead of only a full re-fetch.
+      expect(find.text('1 deal item already loaded.'), findsOneWidget);
+      await tester.tap(find.text('View loaded deals'));
+      await tester.pumpAndSettle();
+      expect(find.text('Chicken thighs'), findsOneWidget);
+      expect(find.byTooltip('Back to fetch deals'), findsOneWidget);
+    },
+  );
+
   testWidgets('restores a saved draft directly into the review step on open, without needing to fetch or regenerate', (
     tester,
   ) async {

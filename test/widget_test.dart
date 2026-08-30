@@ -35,6 +35,10 @@ void main() {
     await tester.tap(navDestination('Config'));
     await tester.pumpAndSettle();
 
+    // Stores is its own drill-down screen off the Config menu.
+    await tester.tap(find.text('Stores'));
+    await tester.pumpAndSettle();
+
     expect(find.text('IGA'), findsOneWidget);
     expect(find.text('Metro'), findsOneWidget);
     expect(find.text('Maxi'), findsOneWidget);

@@ -654,7 +654,12 @@ class _SectionCardState extends State<_SectionCard> {
             child: InkWell(
               onTap: _toggle,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                // Symmetric top/bottom padding so the header sits centered
+                // in the card when collapsed - it used to lean on the
+                // padding below it (meant for the space before the
+                // expanded content), which left it looking bottom-heavy
+                // once that content was hidden.
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                 child: Row(
                   children: [
                     Icon(widget.icon, color: Theme.of(context).colorScheme.primary),

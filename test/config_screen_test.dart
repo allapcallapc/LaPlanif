@@ -76,6 +76,42 @@ void main() {
     expect(find.text('Maxi'), findsOneWidget);
   });
 
+  testWidgets('collapsing a section hides its content and expanding restores it', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo);
+
+    expect(find.text('IGA'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Collapse Stores'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('IGA'), findsNothing);
+    expect(find.byTooltip('Expand Stores'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Expand Stores'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('IGA'), findsOneWidget);
+  });
+
+  testWidgets('a collapsed section stays collapsed across an unrelated rebuild', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
+
+    await tester.tap(find.byTooltip('Collapse Stores'));
+    await tester.pumpAndSettle();
+    expect(find.text('IGA'), findsNothing);
+
+    // Typing in the API key field triggers setState on the whole screen;
+    // the Stores section's collapsed state should survive that rebuild
+    // rather than resetting to expanded.
+    await tester.enterText(find.widgetWithText(TextField, 'Google AI API key'), 'x');
+    await tester.pump();
+
+    expect(find.text('IGA'), findsNothing);
+  });
+
   testWidgets('adding a store requires both fields and rejects a bad URL', (tester) async {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);

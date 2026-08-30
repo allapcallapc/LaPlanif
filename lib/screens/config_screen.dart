@@ -607,14 +607,30 @@ class _ConfigScreenState extends State<ConfigScreen> {
 /// (Stores / Meal plan / AI) from the next - see issue #31: the previous
 /// layout separated sections with a single-line header and a thin divider,
 /// which made a fully configured settings page read as one undifferentiated
-/// wall rather than a set of distinct groups.
-class _SectionCard extends StatelessWidget {
+/// wall rather than a set of distinct groups. Collapsible so a long section
+/// (e.g. Models with many entries) can be tucked away while working in
+/// another one.
+///
+/// Kept as its own State rather than lifting `_expanded` into
+/// _ConfigScreenState: the parent's build() runs on every keystroke/reload
+/// across the whole screen (API key typing, meal plan edits, model list
+/// loads), and this widget occupies the same position in that rebuilt list
+/// every time, so Flutter preserves this State - and therefore the
+/// collapsed/expanded choice - across those parent rebuilds for free.
+class _SectionCard extends StatefulWidget {
   const _SectionCard({required this.icon, required this.title, required this.child, this.trailing});
 
   final IconData icon;
   final String title;
   final Widget child;
   final Widget? trailing;
+
+  @override
+  State<_SectionCard> createState() => _SectionCardState();
+}
+
+class _SectionCardState extends State<_SectionCard> {
+  bool _expanded = true;
 
   @override
   Widget build(BuildContext context) {
@@ -628,15 +644,19 @@ class _SectionCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
             child: Row(
               children: [
-                Icon(icon, color: Theme.of(context).colorScheme.primary),
+                Icon(widget.icon, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 12),
-                Expanded(child: Text(title, style: Theme.of(context).textTheme.titleMedium)),
-                ?trailing,
+                Expanded(child: Text(widget.title, style: Theme.of(context).textTheme.titleMedium)),
+                ?widget.trailing,
+                IconButton(
+                  icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
+                  tooltip: _expanded ? 'Collapse ${widget.title}' : 'Expand ${widget.title}',
+                  onPressed: () => setState(() => _expanded = !_expanded),
+                ),
               ],
             ),
           ),
-          child,
-          const SizedBox(height: 8),
+          if (_expanded) ...[widget.child, const SizedBox(height: 8)],
         ],
       ),
     );

@@ -635,6 +635,8 @@ class _SectionCardState extends State<_SectionCard> {
   // which section to look at.
   bool _expanded = false;
 
+  void _toggle() => setState(() => _expanded = !_expanded);
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -643,31 +645,39 @@ class _SectionCardState extends State<_SectionCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Icon(widget.icon, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 12),
-                Expanded(child: Text(widget.title, style: Theme.of(context).textTheme.titleMedium)),
-                IconButton(
-                  icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
-                  tooltip: _expanded ? 'Collapse ${widget.title}' : 'Expand ${widget.title}',
-                  onPressed: () => setState(() => _expanded = !_expanded),
+          // The whole header toggles the section - not just the chevron -
+          // so it's wrapped in one InkWell rather than putting a tappable
+          // control (like the old trailing add button) inside it, which
+          // would fight the header's own tap target.
+          Tooltip(
+            message: _expanded ? 'Collapse ${widget.title}' : 'Expand ${widget.title}',
+            child: InkWell(
+              onTap: _toggle,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Row(
+                  children: [
+                    Icon(widget.icon, color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(widget.title, style: Theme.of(context).textTheme.titleMedium)),
+                    Icon(_expanded ? Icons.expand_less : Icons.expand_more),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-          // The add action lives outside the collapsible header so it stays
-          // reachable (and its enabled/disabled state stays visible) whether
-          // the section is open or closed - collapsing a section shouldn't
-          // block adding to it.
-          if (widget.trailing != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
-              child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [widget.trailing!]),
-            ),
-          if (_expanded) ...[widget.child, const SizedBox(height: 8)],
+          if (_expanded) ...[
+            // The add action is part of the expanded content rather than
+            // the header, so it only appears once there's a list underneath
+            // it to add to.
+            if (widget.trailing != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+                child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [widget.trailing!]),
+              ),
+            widget.child,
+            const SizedBox(height: 8),
+          ],
         ],
       ),
     );

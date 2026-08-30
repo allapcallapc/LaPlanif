@@ -116,17 +116,36 @@ void main() {
     expect(find.text('IGA'), findsNothing);
   });
 
-  // The Add button lives outside the collapsible part of the header (see
-  // _SectionCardState), so it stays usable even while the section is closed.
-  testWidgets('the add button stays visible and enabled while its section is collapsed', (tester) async {
+  // The add button is part of a section's expanded content (see
+  // _SectionCardState), so there's nothing to add to - or click - until the
+  // section is opened.
+  testWidgets('the add button is hidden until its section is expanded', (tester) async {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo, expandSections: false);
 
-    expect(find.text('IGA'), findsNothing);
+    expect(find.byTooltip('Add store'), findsNothing);
+
+    await tester.tap(find.byTooltip('Expand Stores'));
+    await tester.pumpAndSettle();
+
     final addStoreButton = tester.widget<IconButton>(
       find.ancestor(of: find.byTooltip('Add store'), matching: find.byType(IconButton)),
     );
     expect(addStoreButton.onPressed, isNotNull);
+  });
+
+  // Tapping anywhere in the header - not just the chevron icon - toggles
+  // the section, since the whole header row is one InkWell.
+  testWidgets('tapping anywhere on the header toggles the section', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo, expandSections: false);
+
+    expect(find.text('IGA'), findsNothing);
+
+    await tester.tap(find.text('Stores'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('IGA'), findsOneWidget);
   });
 
   testWidgets('an expanded section stays expanded across an unrelated rebuild', (tester) async {
@@ -361,9 +380,9 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: ConfigScreen(repository: repo, aiConfigRepository: aiConfigRepo)));
     await tester.pump();
 
-    // Add store lives outside AI's collapsible content (see
-    // _SectionCardState), but Add model is nested inside the AI section's
-    // "Models" sub-header, so that section needs expanding to reach it.
+    // Both add buttons are part of their section's expanded content (see
+    // _SectionCardState), so Stores and AI need expanding to reach them.
+    await tester.tap(find.byTooltip('Expand Stores'));
     await tester.tap(find.byTooltip('Expand AI'));
     await tester.pump();
 

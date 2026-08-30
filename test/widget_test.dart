@@ -35,8 +35,8 @@ void main() {
     await tester.tap(navDestination('Config'));
     await tester.pumpAndSettle();
 
-    // Sections start collapsed; expand Stores to see its contents.
-    await tester.tap(find.byTooltip('Expand Stores'));
+    // Stores is its own drill-down screen off the Config menu.
+    await tester.tap(find.text('Stores'));
     await tester.pumpAndSettle();
 
     expect(find.text('IGA'), findsOneWidget);

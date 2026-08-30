@@ -14,6 +14,7 @@ import '../services/deal_preference_repository.dart';
 import '../services/flyer_scraper_service.dart';
 import '../services/meal_history_repository.dart';
 import '../services/meal_plan_config_repository.dart';
+import '../services/meal_plan_draft_repository.dart';
 import '../services/meal_plan_generation_service.dart';
 import '../services/meal_plan_preview_service.dart';
 import '../services/model_fallback_controller.dart';
@@ -77,6 +78,7 @@ class PlanifScreen extends StatefulWidget {
     DealCacheRepository? cacheRepository,
     MealPlanConfigRepository? mealPlanConfigRepository,
     MealHistoryRepository? mealHistoryRepository,
+    MealPlanDraftRepository? mealPlanDraftRepository,
     MealPlanPreviewService? previewService,
     MealPlanGenerationService? generationService,
     Duration? rateLimitWait,
@@ -89,6 +91,7 @@ class PlanifScreen extends StatefulWidget {
        cacheRepository = cacheRepository ?? DealCacheRepository(),
        mealPlanConfigRepository = mealPlanConfigRepository ?? MealPlanConfigRepository(),
        mealHistoryRepository = mealHistoryRepository ?? MealHistoryRepository(),
+       mealPlanDraftRepository = mealPlanDraftRepository ?? MealPlanDraftRepository(),
        previewService = previewService ?? MealPlanPreviewService(),
        generationService = generationService ?? MealPlanGenerationService(resolveRecipeLink: resolveRedirectUrl),
        rateLimitWait = rateLimitWait ?? const Duration(minutes: 1),
@@ -103,6 +106,7 @@ class PlanifScreen extends StatefulWidget {
   final DealCacheRepository cacheRepository;
   final MealPlanConfigRepository mealPlanConfigRepository;
   final MealHistoryRepository mealHistoryRepository;
+  final MealPlanDraftRepository mealPlanDraftRepository;
   final MealPlanPreviewService previewService;
   final MealPlanGenerationService generationService;
 
@@ -168,6 +172,61 @@ class _PlanifScreenState extends State<PlanifScreen> {
   void initState() {
     super.initState();
     _loadCachedItems();
+    _loadDraft();
+  }
+
+  // Restores whatever generated preview/recipes survived from before a
+  // crash, refresh, or reclaimed tab (see issue #35) - saved incrementally
+  // by _saveDraft after each successful generation step. Runs independently
+  // of _loadCachedItems: the draft's own anchors/recipes stand on their own
+  // regardless of whether the underlying deal cache also loaded.
+  Future<void> _loadDraft() async {
+    final draft = await widget.mealPlanDraftRepository.load();
+    if (draft == null) return;
+    if (!mounted) return;
+    // A real fetch that started while this load was still in flight always
+    // wins, same reasoning as _loadCachedItems.
+    if (_isRunning) return;
+    // Restoring straight into the review step re-enables actions (regenerate,
+    // per-slot recipe generation) that need an API key - _loadCachedItems
+    // only sets _apiKey as a side effect of a non-empty deal cache, so load
+    // it directly here too. Otherwise a draft restored with an empty deal
+    // cache would leave those actions silently doing nothing instead of
+    // prompting to set a key, unlike every other entry point that reaches them.
+    final apiKey = _apiKey ?? await widget.aiConfigRepository.loadApiKey();
+    final models = apiKey.isEmpty ? _models : await widget.aiConfigRepository.loadModels();
+    final groundingModels = apiKey.isEmpty ? _groundingModels : await widget.aiConfigRepository.loadGroundingModels();
+    if (!mounted) return;
+    if (_isRunning) return;
+    setState(() {
+      _mealPlanConfig = draft.config;
+      _preview = draft.preview;
+      _slotRecipes = draft.slotRecipes;
+      _viewMode = _ViewMode.review;
+      _phase = _Phase.browse;
+      _reviewIndex = 0;
+      if (apiKey.isNotEmpty) {
+        _apiKey = apiKey;
+        _models = models;
+        _groundingModels = groundingModels;
+      }
+    });
+  }
+
+  // Persists the current preview + per-slot recipes after every successful
+  // generation step, so there's always a recoverable checkpoint no more than
+  // one step old. Best-effort: a failed save leaves the in-progress work
+  // fully usable for this session, just not recoverable if the tab is lost
+  // right after.
+  Future<void> _saveDraft() async {
+    final config = _mealPlanConfig;
+    final preview = _preview;
+    if (config == null || preview == null) return;
+    await widget.mealPlanDraftRepository
+        .save(MealPlanDraft(config: config, preview: preview, slotRecipes: _slotRecipes))
+        .catchError((_) {
+          // Non-fatal - see comment above.
+        });
   }
 
   // Shows the last fetch's results immediately on open, so the user isn't
@@ -330,6 +389,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
         // rather than trying to carry old recipes forward by index.
         _slotRecipes = List<MealSlotFull?>.filled(preview.slots.length, null);
       });
+      await _saveDraft();
     } catch (e) {
       if (!mounted) return;
       setState(() => _isPreviewLoading = false);
@@ -464,6 +524,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
         // good.
         _slotRecipes[index] = null;
       });
+      await _saveDraft();
     } catch (e) {
       if (!mounted) return;
       setState(() => _regeneratingSlots.remove(index));
@@ -505,6 +566,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
     });
+    await _saveDraft();
   }
 
   Future<void> _addAnchorItem(int slotIndex) async {
@@ -526,9 +588,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
     });
+    await _saveDraft();
   }
 
-  void _removeAnchorItem(int slotIndex, AnchorItem anchor) {
+  Future<void> _removeAnchorItem(int slotIndex, AnchorItem anchor) async {
     setState(() {
       final slots = [..._preview!.slots];
       final slot = slots[slotIndex];
@@ -537,6 +600,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
     });
+    await _saveDraft();
   }
 
   void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
@@ -606,6 +670,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
         _generatingRecipeSlots.remove(index);
         _recipeGenerationPhase.remove(index);
       });
+      await _saveDraft();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -628,6 +693,14 @@ class _PlanifScreenState extends State<PlanifScreen> {
     setState(() => _isSavingWeek = true);
     final entry = MealHistoryEntry(weekId: isoWeekId(DateTime.now()), savedAt: DateTime.now(), slots: _generatedSlots);
     await widget.mealHistoryRepository.saveWeek(entry);
+    // The plan is committed to history now, so the draft has served its
+    // purpose - clearing it means reopening the app won't resurface a plan
+    // that's already saved. Best-effort like _saveDraft: the week is already
+    // safely in history at this point, so a failure here shouldn't block
+    // finishing the save or leave _isSavingWeek stuck true.
+    await widget.mealPlanDraftRepository.clear().catchError((_) {
+      // Non-fatal - see comment above.
+    });
     if (!mounted) return;
     setState(() => _isSavingWeek = false);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved this week\'s plan to history.')));

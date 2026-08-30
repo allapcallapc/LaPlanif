@@ -19,6 +19,7 @@ import 'package:laplanif/services/deal_preference_repository.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
 import 'package:laplanif/services/meal_history_repository.dart';
 import 'package:laplanif/services/meal_plan_config_repository.dart';
+import 'package:laplanif/services/meal_plan_draft_repository.dart';
 import 'package:laplanif/services/meal_plan_generation_service.dart';
 import 'package:laplanif/services/meal_plan_preview_service.dart';
 import 'package:laplanif/services/model_fallback_controller.dart';
@@ -4799,6 +4800,281 @@ void main() {
 
       final saved = await mealPlanConfigRepository.load();
       expect(saved.mealSlots.single.protein, 'turkey');
+    },
+  );
+
+  testWidgets('restores a saved draft directly into the review step on open, without needing to fetch or regenerate', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    final draftRepository = MealPlanDraftRepository();
+    await draftRepository.save(
+      const MealPlanDraft(
+        config: MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+        preview: MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: MealType.lunch,
+              protein: 'meat',
+              count: 5,
+              portionsPerMeal: 3,
+              anchorItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Big-batch chicken thigh stir-fry.',
+            ),
+          ],
+        ),
+        slotRecipes: [
+          MealSlotFull(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 5,
+            portionsPerMeal: 3,
+            proteinComponent: MealComponent(
+              type: MealComponentType.link,
+              name: 'General Tao Chicken',
+              usesWeeklyDeal: true,
+              dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            ),
+            carbComponent: MealComponent(type: MealComponentType.simpleSide, name: 'Rice', usesWeeklyDeal: false),
+            vegetableComponent: MealComponent(
+              type: MealComponentType.simpleSide,
+              name: 'Broccoli',
+              usesWeeklyDeal: false,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: PlanifScreen(repository: repository, mealPlanDraftRepository: draftRepository)),
+    );
+    await tester.pumpAndSettle();
+
+    // Opens straight into the review step with the previously generated
+    // recipe already on screen - no fetch or regeneration needed.
+    expect(find.text('Fetch deals'), findsNothing);
+    expect(find.text('General Tao Chicken'), findsOneWidget);
+    expect(find.text("Save this week's plan"), findsOneWidget);
+  });
+
+  testWidgets(
+    'restoring a draft reloads the API key even when the deal cache is empty, so regenerate actually calls the AI',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      final draftRepository = MealPlanDraftRepository();
+      await draftRepository.save(
+        const MealPlanDraft(
+          config: MealPlanConfig(
+            portionsPerMeal: 3,
+            diversityWindowDays: 28,
+            mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+          ),
+          preview: MealPlanPreview(
+            slots: [
+              MealSlotPreview(
+                mealType: MealType.lunch,
+                protein: 'meat',
+                count: 5,
+                portionsPerMeal: 3,
+                anchorItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+                note: 'Big-batch chicken thigh stir-fry.',
+              ),
+            ],
+          ),
+          slotRecipes: [null],
+        ),
+      );
+
+      // No deals were ever fetched/cached - _loadCachedItems' side effect
+      // (the old-only way _apiKey got set) never runs, so restoring the
+      // draft is the only thing that can make the key available here.
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
+
+      // Regenerate reloads the config from here (not from the draft) - kept
+      // to the same single slot so the fake preview service below doesn't
+      // have to handle more than one.
+      final mealPlanConfigRepository = MealPlanConfigRepository();
+      await mealPlanConfigRepository.save(
+        const MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+      );
+
+      final previewService = _FakePreviewService(
+        (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: mealSlots.single.mealType,
+              protein: mealSlots.single.protein,
+              count: mealSlots.single.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Regenerated note.',
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            aiConfigRepository: aiConfigRepo,
+            mealPlanConfigRepository: mealPlanConfigRepository,
+            mealPlanDraftRepository: draftRepository,
+            previewService: previewService,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Regenerate all suggestions'));
+      await tester.pumpAndSettle();
+
+      // A missing API key would have shown a snackbar instead of calling the
+      // preview service - reaching the call proves _apiKey was actually
+      // reloaded from the restored draft, not left null.
+      expect(find.text('Set your Google AI API key in Config first.'), findsNothing);
+      expect(previewService.calls, hasLength(1));
+      expect(find.text('Regenerated note.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'autosaves the draft as the preview and recipe are generated, then clears it once the week is saved',
+    (tester) async {
+      final repository = StoreConfigRepository();
+      await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
+
+      final mealPlanConfigRepository = MealPlanConfigRepository();
+      await mealPlanConfigRepository.save(
+        const MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+      );
+
+      final scraper = _FakePagesScraper({
+        'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      });
+      final extraction = _FakeExtractionService({
+        'IGA': () async => const [
+          DealItem(
+            name: 'Chicken thighs',
+            price: '3.99\$',
+            unit: 'lb',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 1,
+          ),
+        ],
+      });
+
+      final previewService = _FakePreviewService(
+        (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: mealSlots.single.mealType,
+              protein: mealSlots.single.protein,
+              count: mealSlots.single.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Big-batch chicken thigh stir-fry.',
+            ),
+          ],
+        ),
+      );
+
+      final generationService = _FakeGenerationService(
+        (slots, items) async => MealPlanFull(
+          slots: [
+            MealSlotFull(
+              mealType: slots.single.mealType,
+              protein: slots.single.protein,
+              count: slots.single.count,
+              portionsPerMeal: slots.single.portionsPerMeal,
+              proteinComponent: const MealComponent(
+                type: MealComponentType.link,
+                name: 'General Tao Chicken',
+                usesWeeklyDeal: true,
+                dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              ),
+              carbComponent: const MealComponent(
+                type: MealComponentType.simpleSide,
+                name: 'Rice',
+                usesWeeklyDeal: false,
+              ),
+              vegetableComponent: const MealComponent(
+                type: MealComponentType.simpleSide,
+                name: 'Broccoli',
+                usesWeeklyDeal: false,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      final mealHistoryRepository = MealHistoryRepository();
+      final draftRepository = MealPlanDraftRepository();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            scraperService: scraper,
+            extractionService: extraction,
+            aiConfigRepository: aiConfigRepo,
+            mealPlanConfigRepository: mealPlanConfigRepository,
+            previewService: previewService,
+            generationService: generationService,
+            mealHistoryRepository: mealHistoryRepository,
+            mealPlanDraftRepository: draftRepository,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(await draftRepository.load(), isNull);
+
+      await tester.tap(find.text('Fetch deals'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preview meal plan'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Looks good, generate preview'));
+      await tester.pumpAndSettle();
+
+      // Generating the preview alone already checkpointed it, with no
+      // recipe yet for the one slot.
+      final afterPreview = await draftRepository.load();
+      expect(afterPreview, isNotNull);
+      expect(afterPreview!.preview.slots.single.note, 'Big-batch chicken thigh stir-fry.');
+      expect(afterPreview.slotRecipes, [null]);
+
+      await tester.tap(find.text('Generate recipe'));
+      await tester.pumpAndSettle();
+
+      // Generating the slot's recipe checkpoints it too.
+      final afterRecipe = await draftRepository.load();
+      expect(afterRecipe!.slotRecipes.single!.recipeName, 'General Tao Chicken');
+
+      await tester.tap(find.text("Save this week's plan"));
+      await tester.pumpAndSettle();
+
+      // The plan is committed to history now - the draft has served its
+      // purpose and is cleared so reopening won't resurface it.
+      expect(await draftRepository.load(), isNull);
     },
   );
 }

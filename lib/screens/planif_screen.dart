@@ -1321,8 +1321,8 @@ class _PlanifScreenState extends State<PlanifScreen> {
   // reopened via the preview app bar's "Edit meal plan structure" action):
   // lets the user validate/change what to plan - meal slots, portions,
   // dietary notes - before the AI call behind the actual preview runs.
-  // Mirrors the "Meal plan" section of ConfigScreen, but scoped to this
-  // flow's draft instead of editing the saved config directly.
+  // Mirrors ConfigMealPlanScreen, but scoped to this flow's draft instead
+  // of editing the saved config directly.
   Widget _buildStructureStep() {
     final draft = _structureDraft!;
     return ListView(

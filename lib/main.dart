@@ -72,10 +72,10 @@ class _HomeShellState extends State<HomeShell> {
       ConfigScreen(repository: _storeRepository, aiConfigRepository: _aiConfigRepository),
     ];
     return Scaffold(
-      // Keyed because DropdownButtonFormField (used in ConfigScreen's meal
-      // plan rows) renders its own internal IndexedStack per instance, so a
-      // bare find.byType(IndexedStack) in tests would match more than this
-      // one once there's more than one meal slot.
+      // Keyed because DropdownButtonFormField (used in ConfigMealPlanScreen's
+      // meal slot rows) renders its own internal IndexedStack per instance,
+      // so a bare find.byType(IndexedStack) in tests would match more than
+      // this one once there's more than one meal slot.
       body: IndexedStack(key: const Key('home_tab_stack'), index: _tabIndex, children: screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,

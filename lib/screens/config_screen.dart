@@ -630,7 +630,10 @@ class _SectionCard extends StatefulWidget {
 }
 
 class _SectionCardState extends State<_SectionCard> {
-  bool _expanded = true;
+  // Collapsed by default so opening Config doesn't immediately dump every
+  // store, meal slot, and model onto the screen at once - the user picks
+  // which section to look at.
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
@@ -641,13 +644,12 @@ class _SectionCardState extends State<_SectionCard> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Row(
               children: [
                 Icon(widget.icon, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 12),
                 Expanded(child: Text(widget.title, style: Theme.of(context).textTheme.titleMedium)),
-                ?widget.trailing,
                 IconButton(
                   icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
                   tooltip: _expanded ? 'Collapse ${widget.title}' : 'Expand ${widget.title}',
@@ -656,6 +658,15 @@ class _SectionCardState extends State<_SectionCard> {
               ],
             ),
           ),
+          // The add action lives outside the collapsible header so it stays
+          // reachable (and its enabled/disabled state stays visible) whether
+          // the section is open or closed - collapsing a section shouldn't
+          // block adding to it.
+          if (widget.trailing != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+              child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [widget.trailing!]),
+            ),
           if (_expanded) ...[widget.child, const SizedBox(height: 8)],
         ],
       ),

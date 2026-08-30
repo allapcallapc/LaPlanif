@@ -35,6 +35,10 @@ void main() {
     await tester.tap(navDestination('Config'));
     await tester.pumpAndSettle();
 
+    // Sections start collapsed; expand Stores to see its contents.
+    await tester.tap(find.byTooltip('Expand Stores'));
+    await tester.pumpAndSettle();
+
     expect(find.text('IGA'), findsOneWidget);
     expect(find.text('Metro'), findsOneWidget);
     expect(find.text('Maxi'), findsOneWidget);

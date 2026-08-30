@@ -42,11 +42,18 @@ void main() {
   // widgets that are actually built, and the default 800x600 test surface
   // is shorter than this screen's full content once a few models are
   // configured.
+  //
+  // Every section starts collapsed (see _SectionCardState._expanded), so
+  // this expands all three by default - most tests want to interact with a
+  // section's content and don't care about the collapse feature itself.
+  // Pass expandSections: false for tests that specifically exercise the
+  // collapsed/expanded state.
   Future<void> pumpScreen(
     WidgetTester tester,
     StoreConfigRepository repo, {
     AiConfigRepository? aiConfigRepository,
     MealPlanConfigRepository? mealPlanConfigRepository,
+    bool expandSections = true,
   }) async {
     tester.view.physicalSize = const Size(800, 2200);
     tester.view.devicePixelRatio = 1.0;
@@ -63,6 +70,21 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+
+    if (expandSections) {
+      // A test that pumps the screen a second time (e.g. to simulate
+      // reopening it) reuses the same Element/State tree since it's the
+      // same widget type in the same position, so a section expanded by an
+      // earlier pumpScreen call is already open - only tap the ones that
+      // still show "Expand".
+      for (final title in const ['Stores', 'Meal plan', 'AI']) {
+        final expandButton = find.byTooltip('Expand $title');
+        if (expandButton.evaluate().isNotEmpty) {
+          await tester.tap(expandButton);
+        }
+      }
+      await tester.pumpAndSettle();
+    }
   }
 
   testWidgets('lists the default stores', (tester) async {
@@ -76,14 +98,9 @@ void main() {
     expect(find.text('Maxi'), findsOneWidget);
   });
 
-  testWidgets('collapsing a section hides its content and expanding restores it', (tester) async {
+  testWidgets('sections start collapsed, and expanding one reveals its content', (tester) async {
     final repo = StoreConfigRepository();
-    await pumpScreen(tester, repo);
-
-    expect(find.text('IGA'), findsOneWidget);
-
-    await tester.tap(find.byTooltip('Collapse Stores'));
-    await tester.pumpAndSettle();
+    await pumpScreen(tester, repo, expandSections: false);
 
     expect(find.text('IGA'), findsNothing);
     expect(find.byTooltip('Expand Stores'), findsOneWidget);
@@ -92,24 +109,43 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('IGA'), findsOneWidget);
-  });
-
-  testWidgets('a collapsed section stays collapsed across an unrelated rebuild', (tester) async {
-    final storeRepo = StoreConfigRepository();
-    final aiConfigRepo = AiConfigRepository();
-    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo);
 
     await tester.tap(find.byTooltip('Collapse Stores'));
     await tester.pumpAndSettle();
+
     expect(find.text('IGA'), findsNothing);
+  });
+
+  // The Add button lives outside the collapsible part of the header (see
+  // _SectionCardState), so it stays usable even while the section is closed.
+  testWidgets('the add button stays visible and enabled while its section is collapsed', (tester) async {
+    final repo = StoreConfigRepository();
+    await pumpScreen(tester, repo, expandSections: false);
+
+    expect(find.text('IGA'), findsNothing);
+    final addStoreButton = tester.widget<IconButton>(
+      find.ancestor(of: find.byTooltip('Add store'), matching: find.byType(IconButton)),
+    );
+    expect(addStoreButton.onPressed, isNotNull);
+  });
+
+  testWidgets('an expanded section stays expanded across an unrelated rebuild', (tester) async {
+    final storeRepo = StoreConfigRepository();
+    final aiConfigRepo = AiConfigRepository();
+    await pumpScreen(tester, storeRepo, aiConfigRepository: aiConfigRepo, expandSections: false);
+
+    await tester.tap(find.byTooltip('Expand Stores'));
+    await tester.tap(find.byTooltip('Expand AI'));
+    await tester.pumpAndSettle();
+    expect(find.text('IGA'), findsOneWidget);
 
     // Typing in the API key field triggers setState on the whole screen;
-    // the Stores section's collapsed state should survive that rebuild
-    // rather than resetting to expanded.
+    // the Stores section's expanded state should survive that rebuild
+    // rather than resetting to collapsed.
     await tester.enterText(find.widgetWithText(TextField, 'Google AI API key'), 'x');
     await tester.pump();
 
-    expect(find.text('IGA'), findsNothing);
+    expect(find.text('IGA'), findsOneWidget);
   });
 
   testWidgets('adding a store requires both fields and rejects a bad URL', (tester) async {
@@ -323,6 +359,12 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(MaterialApp(home: ConfigScreen(repository: repo, aiConfigRepository: aiConfigRepo)));
+    await tester.pump();
+
+    // Add store lives outside AI's collapsible content (see
+    // _SectionCardState), but Add model is nested inside the AI section's
+    // "Models" sub-header, so that section needs expanding to reach it.
+    await tester.tap(find.byTooltip('Expand AI'));
     await tester.pump();
 
     IconButton addStoreButton() =>

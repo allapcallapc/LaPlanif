@@ -287,327 +287,356 @@ class _ConfigScreenState extends State<ConfigScreen> {
     final mealPlanConfig = _mealPlanConfig;
     return Scaffold(
       appBar: AppBar(title: const Text('Config')),
-      // The whole page scrolls as one region rather than giving the store
-      // list its own bounded Expanded pane: with a Models section of
-      // variable length below it, a fixed-height pane could squeeze the
-      // store list down to where later stores never get laid out.
-      body: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
-              child: Row(
-                children: [
-                  Expanded(child: Text('Stores', style: Theme.of(context).textTheme.titleMedium)),
-                  IconButton(
-                    icon: const Icon(Icons.add),
-                    tooltip: 'Add store',
-                    onPressed: stores == null ? null : () => _openEditor(),
+      // Each settings section gets its own Card so the page reads as a set
+      // of distinct, scannable groups instead of one continuous scroll with
+      // nothing but thin dividers between sections (issue #31).
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+        children: [
+          _SectionCard(
+            icon: Icons.storefront_outlined,
+            title: 'Stores',
+            trailing: IconButton(
+              icon: const Icon(Icons.add),
+              tooltip: 'Add store',
+              onPressed: stores == null ? null : () => _openEditor(),
+            ),
+            child: stores == null
+                ? const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+                : stores.isEmpty
+                ? const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No stores configured yet.')))
+                : Column(
+                    children: [
+                      for (final store in stores)
+                        ListTile(
+                          title: Text(store.name),
+                          subtitle: Text(store.flyerUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          onTap: () => _openEditor(existing: store),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _remove(store),
+                          ),
+                        ),
+                    ],
                   ),
-                ],
-              ),
-            ),
           ),
-          if (stores == null)
-            const SliverToBoxAdapter(
-              child: Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
-            )
-          else if (stores.isEmpty)
-            const SliverToBoxAdapter(
-              child: Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No stores configured yet.'))),
-            )
-          else
-            SliverList(
-              delegate: SliverChildBuilderDelegate((context, i) {
-                final store = stores[i];
-                return ListTile(
-                  title: Text(store.name),
-                  subtitle: Text(store.flyerUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  onTap: () => _openEditor(existing: store),
-                  trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => _remove(store)),
-                );
-              }, childCount: stores.length),
+          const SizedBox(height: 12),
+          _SectionCard(
+            icon: Icons.restaurant_menu_outlined,
+            title: 'Meal plan',
+            trailing: IconButton(
+              icon: const Icon(Icons.add),
+              tooltip: 'Add meal slot',
+              onPressed: mealPlanConfig == null ? null : _addMealSlot,
             ),
-          const SliverToBoxAdapter(child: Divider(height: 1)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
-              child: Row(
-                children: [
-                  Expanded(child: Text('Meal plan', style: Theme.of(context).textTheme.titleMedium)),
-                  IconButton(
-                    icon: const Icon(Icons.add),
-                    tooltip: 'Add meal slot',
-                    onPressed: mealPlanConfig == null ? null : _addMealSlot,
+            child: mealPlanConfig == null
+                ? const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+                : Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _portionsController,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(labelText: 'Portions per meal'),
+                                onChanged: _onPortionsChanged,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextField(
+                                controller: _diversityController,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(labelText: 'Diversity window (days)'),
+                                onChanged: _onDiversityChanged,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: TextField(
+                          controller: _dietaryNotesController,
+                          maxLines: null,
+                          minLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: 'Additional planning instructions',
+                            hintText: 'e.g. no more than 2 days of fish per week, no red meat',
+                          ),
+                          onChanged: _onDietaryNotesChanged,
+                        ),
+                      ),
+                      for (var i = 0; i < mealPlanConfig.mealSlots.length; i++) ...[
+                        Builder(
+                          builder: (context) {
+                            final slot = mealPlanConfig.mealSlots[i];
+                            return Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    flex: 2,
+                                    child: DropdownButtonFormField<MealType>(
+                                      key: ValueKey('meal-type-${slot.id}'),
+                                      initialValue: slot.mealType,
+                                      decoration: const InputDecoration(labelText: 'Meal'),
+                                      items: MealType.values
+                                          .map((t) => DropdownMenuItem(value: t, child: Text(t.name)))
+                                          .toList(),
+                                      onChanged: (value) {
+                                        if (value == null) return;
+                                        _updateMealSlot(i, slot.copyWith(mealType: value));
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    flex: 2,
+                                    child: TextFormField(
+                                      key: ValueKey('protein-${slot.id}'),
+                                      initialValue: slot.protein,
+                                      decoration: const InputDecoration(labelText: 'Protein'),
+                                      onChanged: (value) {
+                                        final trimmed = value.trim();
+                                        if (trimmed.isEmpty) return;
+                                        _updateMealSlot(i, slot.copyWith(protein: trimmed));
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextFormField(
+                                      key: ValueKey('count-${slot.id}'),
+                                      initialValue: '${slot.count}',
+                                      keyboardType: TextInputType.number,
+                                      decoration: const InputDecoration(labelText: 'Count'),
+                                      onChanged: (value) {
+                                        final parsed = int.tryParse(value);
+                                        if (parsed == null || parsed < 0) return;
+                                        _updateMealSlot(i, slot.copyWith(count: parsed));
+                                      },
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline),
+                                    tooltip: 'Remove meal slot',
+                                    onPressed: mealPlanConfig.mealSlots.length == 1
+                                        ? null
+                                        : () => _removeMealSlot(i),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '${mealPlanConfig.mealsPerWeek} meals / week',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
           ),
-          if (mealPlanConfig == null)
-            const SliverToBoxAdapter(
-              child: Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
-            )
-          else ...[
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _portionsController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Portions per meal'),
-                        onChanged: _onPortionsChanged,
+          const SizedBox(height: 12),
+          _SectionCard(
+            icon: Icons.smart_toy_outlined,
+            title: 'AI',
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextField(
+                    controller: _apiKeyController,
+                    obscureText: _obscureApiKey,
+                    decoration: InputDecoration(
+                      labelText: 'Google AI API key',
+                      helperText: 'Stored on this device only.',
+                      suffixIcon: IconButton(
+                        icon: Icon(_obscureApiKey ? Icons.visibility : Icons.visibility_off),
+                        tooltip: _obscureApiKey ? 'Show key' : 'Hide key',
+                        onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _diversityController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Diversity window (days)'),
-                        onChanged: _onDiversityChanged,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: TextField(
-                  controller: _dietaryNotesController,
-                  maxLines: null,
-                  minLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Additional planning instructions',
-                    hintText: 'e.g. no more than 2 days of fish per week, no red meat',
+                    onChanged: _onApiKeyChanged,
                   ),
-                  onChanged: _onDietaryNotesChanged,
                 ),
-              ),
-            ),
-            SliverList(
-              delegate: SliverChildBuilderDelegate((context, i) {
-                final slot = mealPlanConfig.mealSlots[i];
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+                const Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Divider(height: 24)),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
                   child: Row(
                     children: [
                       Expanded(
-                        flex: 2,
-                        child: DropdownButtonFormField<MealType>(
-                          key: ValueKey('meal-type-${slot.id}'),
-                          initialValue: slot.mealType,
-                          decoration: const InputDecoration(labelText: 'Meal'),
-                          items: MealType.values
-                              .map((t) => DropdownMenuItem(value: t, child: Text(t.name)))
-                              .toList(),
-                          onChanged: (value) {
-                            if (value == null) return;
-                            _updateMealSlot(i, slot.copyWith(mealType: value));
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: TextFormField(
-                          key: ValueKey('protein-${slot.id}'),
-                          initialValue: slot.protein,
-                          decoration: const InputDecoration(labelText: 'Protein'),
-                          onChanged: (value) {
-                            final trimmed = value.trim();
-                            if (trimmed.isEmpty) return;
-                            _updateMealSlot(i, slot.copyWith(protein: trimmed));
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          key: ValueKey('count-${slot.id}'),
-                          initialValue: '${slot.count}',
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(labelText: 'Count'),
-                          onChanged: (value) {
-                            final parsed = int.tryParse(value);
-                            if (parsed == null || parsed < 0) return;
-                            _updateMealSlot(i, slot.copyWith(count: parsed));
-                          },
-                        ),
+                        child: Text('Models (tried in order)', style: Theme.of(context).textTheme.titleSmall),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        tooltip: 'Remove meal slot',
-                        onPressed: mealPlanConfig.mealSlots.length == 1 ? null : () => _removeMealSlot(i),
+                        icon: const Icon(Icons.add),
+                        tooltip: 'Add model',
+                        onPressed: models == null ? null : () => _openModelEditor(),
                       ),
                     ],
-                  ),
-                );
-              }, childCount: mealPlanConfig.mealSlots.length),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                child: Text('${mealPlanConfig.mealsPerWeek} meals / week', style: Theme.of(context).textTheme.bodySmall),
-              ),
-            ),
-          ],
-          const SliverToBoxAdapter(child: Divider(height: 1)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text('AI', style: Theme.of(context).textTheme.titleMedium),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                controller: _apiKeyController,
-                obscureText: _obscureApiKey,
-                decoration: InputDecoration(
-                  labelText: 'Google AI API key',
-                  helperText: 'Stored on this device only.',
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscureApiKey ? Icons.visibility : Icons.visibility_off),
-                    tooltip: _obscureApiKey ? 'Show key' : 'Hide key',
-                    onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
                   ),
                 ),
-                onChanged: _onApiKeyChanged,
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text('Models (tried in order)', style: Theme.of(context).textTheme.titleSmall),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.add),
-                    tooltip: 'Add model',
-                    onPressed: models == null ? null : () => _openModelEditor(),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (models != null)
-            SliverList(
-              delegate: SliverChildBuilderDelegate((context, i) {
-                return ListTile(
-                  dense: true,
-                  title: Text(models[i]),
-                  onTap: () => _openModelEditor(existing: models[i], index: i),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
+                if (models != null)
+                  Column(
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_upward),
-                        tooltip: 'Move up',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: i == 0 ? null : () => _moveModel(i, -1),
+                      for (var i = 0; i < models.length; i++)
+                        ListTile(
+                          dense: true,
+                          title: Text(models[i]),
+                          onTap: () => _openModelEditor(existing: models[i], index: i),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.arrow_upward),
+                                tooltip: 'Move up',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: i == 0 ? null : () => _moveModel(i, -1),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.arrow_downward),
+                                tooltip: 'Move down',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: i == models.length - 1 ? null : () => _moveModel(i, 1),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                tooltip: 'Remove model',
+                                visualDensity: VisualDensity.compact,
+                                // At least one model must stay configured.
+                                onPressed: models.length == 1 ? null : () => _removeModel(i),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                const Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Divider(height: 24)),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Grounding search models (tried in order)',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.arrow_downward),
-                        tooltip: 'Move down',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: i == models.length - 1 ? null : () => _moveModel(i, 1),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        tooltip: 'Remove model',
-                        visualDensity: VisualDensity.compact,
-                        // At least one model must stay configured.
-                        onPressed: models.length == 1 ? null : () => _removeModel(i),
+                        icon: const Icon(Icons.add),
+                        tooltip: 'Add grounding model',
+                        onPressed: groundingModels == null ? null : () => _openGroundingModelEditor(),
                       ),
                     ],
                   ),
-                );
-              }, childCount: models.length),
-            ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Grounding search models (tried in order)',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    "Used for the full-plan step's recipe-link search - keep this to models that actually carry a "
+                    'Search grounding quota on your API key, which can be a narrower set than the models above.',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.add),
-                    tooltip: 'Add grounding model',
-                    onPressed: groundingModels == null ? null : () => _openGroundingModelEditor(),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                "Used for the full-plan step's recipe-link search - keep this to models that actually carry a "
-                'Search grounding quota on your API key, which can be a narrower set than the models above.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ),
-          if (groundingModels != null)
-            SliverList(
-              delegate: SliverChildBuilderDelegate((context, i) {
-                return ListTile(
-                  dense: true,
-                  title: Text(groundingModels[i]),
-                  onTap: () => _openGroundingModelEditor(existing: groundingModels[i], index: i),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
+                ),
+                if (groundingModels != null)
+                  Column(
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_upward),
-                        tooltip: 'Move grounding model up',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: i == 0 ? null : () => _moveGroundingModel(i, -1),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.arrow_downward),
-                        tooltip: 'Move grounding model down',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: i == groundingModels.length - 1 ? null : () => _moveGroundingModel(i, 1),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        tooltip: 'Remove grounding model',
-                        visualDensity: VisualDensity.compact,
-                        // At least one grounding model must stay configured.
-                        onPressed: groundingModels.length == 1 ? null : () => _removeGroundingModel(i),
-                      ),
+                      for (var i = 0; i < groundingModels.length; i++)
+                        ListTile(
+                          dense: true,
+                          title: Text(groundingModels[i]),
+                          onTap: () => _openGroundingModelEditor(existing: groundingModels[i], index: i),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.arrow_upward),
+                                tooltip: 'Move grounding model up',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: i == 0 ? null : () => _moveGroundingModel(i, -1),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.arrow_downward),
+                                tooltip: 'Move grounding model down',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: i == groundingModels.length - 1
+                                    ? null
+                                    : () => _moveGroundingModel(i, 1),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                tooltip: 'Remove grounding model',
+                                visualDensity: VisualDensity.compact,
+                                // At least one grounding model must stay configured.
+                                onPressed: groundingModels.length == 1 ? null : () => _removeGroundingModel(i),
+                              ),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
-                );
-              }, childCount: groundingModels.length),
-            ),
-          SliverToBoxAdapter(
-            child: ListTile(
-              leading: const Icon(Icons.receipt_long_outlined),
-              title: const Text('AI usage log'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.of(context).push(MaterialPageRoute(builder: (_) => AiUsageScreen()));
-              },
+                const Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Divider(height: 24)),
+                ListTile(
+                  leading: const Icon(Icons.receipt_long_outlined),
+                  title: const Text('AI usage log'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => AiUsageScreen()));
+                  },
+                ),
+              ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A titled, icon-led card used to visually separate one settings section
+/// (Stores / Meal plan / AI) from the next - see issue #31: the previous
+/// layout separated sections with a single-line header and a thin divider,
+/// which made a fully configured settings page read as one undifferentiated
+/// wall rather than a set of distinct groups.
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({required this.icon, required this.title, required this.child, this.trailing});
+
+  final IconData icon;
+  final String title;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+            child: Row(
+              children: [
+                Icon(icon, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 12),
+                Expanded(child: Text(title, style: Theme.of(context).textTheme.titleMedium)),
+                ?trailing,
+              ],
+            ),
+          ),
+          child,
+          const SizedBox(height: 8),
         ],
       ),
     );

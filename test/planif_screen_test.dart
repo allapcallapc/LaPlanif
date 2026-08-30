@@ -4924,6 +4924,56 @@ void main() {
     },
   );
 
+  testWidgets('the platform back gesture pops one step, same as the app bar back arrow', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Poulet',
+          price: '3.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    expect(find.text('Poulet'), findsOneWidget);
+
+    // Simulates the platform back gesture/button (a phone's back gesture,
+    // or a PWA's browser back) rather than tapping the app bar's own arrow -
+    // PopScope should pop this flow's step-history stack exactly the same
+    // way, landing back on the fetch step.
+    Navigator.of(tester.element(find.byType(PlanifScreen))).maybePop();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Poulet'), findsNothing);
+    expect(find.text('Fetch deals'), findsOneWidget);
+  });
+
   testWidgets('restores a saved draft directly into the review step on open, without needing to fetch or regenerate', (
     tester,
   ) async {

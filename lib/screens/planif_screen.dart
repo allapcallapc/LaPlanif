@@ -137,6 +137,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
   List<String> _models = [];
   List<String> _groundingModels = [];
   MealPlanPreview? _preview;
+  // When _items was fetched (from cache or a live run) - null until either
+  // has happened. Surfaced above the deals list so a plan doesn't get built
+  // on a flyer that's since expired (see issue #37) without the user even
+  // noticing how old it is.
+  DateTime? _fetchedAt;
   MealPlanConfig? _mealPlanConfig;
   // Draft edited on the structure step, separate from _mealPlanConfig (the
   // config the currently-shown preview, if any, was actually generated
@@ -235,6 +240,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final cached = await widget.cacheRepository.load();
     if (cached.isEmpty) return;
     final withPreferences = await _applyPreferences(cached);
+    final fetchedAt = await widget.cacheRepository.loadFetchedAt();
     // Loaded alongside the cache so _hasRun implies _apiKey is set, same as
     // the _fetchAll path - otherwise Step 2's "Preview" button would render
     // enabled but silently do nothing until an actual fetch runs.
@@ -248,6 +254,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     if (_isRunning || _hasRun) return;
     setState(() {
       _items = withPreferences;
+      _fetchedAt = fetchedAt;
       _hasRun = true;
       _phase = _Phase.browse;
       if (apiKey.isNotEmpty) {
@@ -293,9 +300,10 @@ class _PlanifScreenState extends State<PlanifScreen> {
     }
 
     // Every store failing leaves nothing to show for this reload - keep
-    // whatever was cached/selected before rather than wiping it out for an
-    // empty result.
+    // whatever was cached/selected (and its fetched-at time) before rather
+    // than wiping it out for an empty result.
     var withPreferences = items;
+    var fetchedAt = _fetchedAt;
     if (items.isNotEmpty) {
       // An explicit reload starts over: last fetch's priority/excluded
       // selections were made against items that are about to be replaced, so
@@ -303,6 +311,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
       // deals. Done only once there are actual new items to apply it to.
       await widget.preferenceRepository.clearAll();
       withPreferences = await _applyPreferences(items);
+      fetchedAt = DateTime.now();
       try {
         await widget.cacheRepository.save(withPreferences);
       } catch (_) {
@@ -313,6 +322,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     if (!mounted) return;
     setState(() {
       _items = withPreferences;
+      _fetchedAt = fetchedAt;
       _isRunning = false;
       _hasRun = true;
       _phase = _Phase.browse;
@@ -1131,15 +1141,54 @@ class _PlanifScreenState extends State<PlanifScreen> {
 
     // Store/category/priority filtering now lives in the filter sheet (see
     // _openFilterSheet) instead of always-on rows above the list, so this
-    // is just the list itself.
+    // is just the list itself, plus a freshness banner up top.
     return ListView(
       children: [
+        if (_fetchedAt != null) _buildFreshnessBanner(_fetchedAt!),
         for (final category in presentCategories) ...[
           _buildSectionHeader(category),
           ..._coverFirst(grouped[category]!).map(_buildItemTile),
         ],
       ],
     );
+  }
+
+  /// Flyers are typically valid for about a week - past that, deals shown
+  /// here are likely no longer honored in store. See issue #37: without
+  /// this, a plan can silently get built on an expired flyer.
+  static const _staleAfter = Duration(days: 7);
+
+  Widget _buildFreshnessBanner(DateTime fetchedAt) {
+    final age = DateTime.now().difference(fetchedAt);
+    final isStale = age >= _staleAfter;
+    final theme = Theme.of(context);
+    final color = isStale ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Row(
+        children: [
+          Icon(isStale ? Icons.warning_amber_rounded : Icons.schedule, size: 16, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              isStale
+                  ? 'Deals fetched ${_formatAge(age)} - may be outdated. Consider re-fetching.'
+                  : 'Deals fetched ${_formatAge(age)}',
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Each branch's own suffix (or lack of one) avoids a redundant "just now
+  // ago".
+  String _formatAge(Duration age) {
+    if (age.inMinutes < 1) return 'just now';
+    if (age.inMinutes < 60) return '${age.inMinutes}m ago';
+    if (age.inHours < 24) return '${age.inHours}h ago';
+    return '${age.inDays}d ago';
   }
 
   List<String> get _storeNames => _items.map((item) => item.storeName).toSet().toList()..sort();

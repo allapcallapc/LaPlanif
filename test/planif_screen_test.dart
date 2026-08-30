@@ -592,6 +592,80 @@ void main() {
     },
   );
 
+  testWidgets('shows a freshness banner for deals just fetched live', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Poulet',
+          price: '3.99\$',
+          unit: '',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Deals fetched just now'), findsOneWidget);
+  });
+
+  testWidgets('warns when cached deals are older than a week', (tester) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final cacheRepository = DealCacheRepository();
+    await cacheRepository.save(const [
+      DealItem(
+        name: 'Poulet',
+        price: '3.99\$',
+        unit: '',
+        category: DealCategory.protein,
+        storeName: 'IGA',
+        pageIndex: 1,
+      ),
+    ]);
+    // Backdate the fetched-at timestamp save() just recorded, to simulate a
+    // cache from an expired flyer week.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      'deal_cache_fetched_at',
+      DateTime.now().subtract(const Duration(days: 9)).millisecondsSinceEpoch,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(repository: repository, cacheRepository: cacheRepository),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Deals fetched 9d ago - may be outdated'), findsOneWidget);
+  });
+
   testWidgets('shows resolved and failed rows in the full list while another store is still fetching', (
     tester,
   ) async {

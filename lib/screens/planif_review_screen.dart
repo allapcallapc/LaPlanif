@@ -11,7 +11,6 @@ import '../services/model_fallback_controller.dart';
 import '../utils/error_formatting.dart';
 import '../utils/iso_week.dart';
 import '../widgets/ingredient_list_dialog.dart';
-import '../widgets/meal_plan_started_bar.dart';
 import '../widgets/meal_slot_full_card.dart';
 import 'planif_screen.dart';
 import 'planif_structure_screen.dart';
@@ -34,7 +33,6 @@ class PlanifReviewScreen extends StatefulWidget {
     required this.config,
     required this.initialPreview,
     required this.initialSlotRecipes,
-    required this.fetchedAt,
   });
 
   final PlanifServices services;
@@ -45,7 +43,6 @@ class PlanifReviewScreen extends StatefulWidget {
   final MealPlanConfig config;
   final MealPlanPreview initialPreview;
   final List<MealSlotFull?> initialSlotRecipes;
-  final DateTime? fetchedAt;
 
   @override
   State<PlanifReviewScreen> createState() => _PlanifReviewScreenState();
@@ -415,7 +412,6 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           models: widget.models,
           groundingModels: widget.groundingModels,
           initialConfig: widget.config,
-          fetchedAt: widget.fetchedAt,
         ),
       ),
     );
@@ -424,11 +420,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Review'),
-        actions: _buildAppBarActions(),
-        bottom: mealPlanStartedBar(context, widget.fetchedAt),
-      ),
+      appBar: AppBar(title: const Text('Review'), actions: _buildAppBarActions()),
       body: Column(
         children: [
           _buildReviewPicker(_preview.slots),

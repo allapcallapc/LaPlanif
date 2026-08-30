@@ -601,7 +601,7 @@ void main() {
     expect(find.text('Set your Google AI API key in Config first.'), findsOneWidget);
   });
 
-  testWidgets('shows a freshness indicator in the Deals app bar for deals just fetched live', (tester) async {
+  testWidgets('shows a freshness note on the Home resume card for deals just fetched live', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -639,10 +639,16 @@ void main() {
     await tester.tap(find.text('Fetch deals'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Meal plan started just now'), findsOneWidget);
+    // Pop back to Home - that's where the freshness note lives, on the
+    // resume card that decides "Continue planning" vs "Start a new plan".
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Continue planning'), findsOneWidget);
+    expect(find.text('Started just now'), findsOneWidget);
   });
 
-  testWidgets('warns in the Deals app bar when cached deals are older than a week', (tester) async {
+  testWidgets('warns on the Home resume card when cached deals are older than a week', (tester) async {
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -672,83 +678,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Continue planning'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Meal plan started 9d ago - may be outdated'), findsOneWidget);
-  });
-
-  testWidgets('carries the same freshness indicator through Deals, Structure, and Review', (tester) async {
-    final repository = StoreConfigRepository();
-    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
-
-    final aiConfigRepo = AiConfigRepository();
-    await aiConfigRepo.saveApiKey('sk-test');
-
-    final mealPlanConfigRepository = MealPlanConfigRepository();
-    await mealPlanConfigRepository.save(
-      const MealPlanConfig(
-        portionsPerMeal: 3,
-        diversityWindowDays: 28,
-        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
-      ),
-    );
-
-    final scraper = _FakePagesScraper({
-      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
-    });
-    final extraction = _FakeExtractionService({
-      'IGA': () async => const [
-        DealItem(
-          name: 'Chicken thighs',
-          price: '3.99\$',
-          unit: 'lb',
-          category: DealCategory.protein,
-          storeName: 'IGA',
-          pageIndex: 1,
-        ),
-      ],
-    });
-    final previewService = _FakePreviewService(
-      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
-        slots: [
-          MealSlotPreview(
-            mealType: mealSlots.single.mealType,
-            protein: mealSlots.single.protein,
-            count: mealSlots.single.count,
-            portionsPerMeal: portionsPerMeal,
-            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
-            note: 'Big-batch chicken thigh stir-fry.',
-          ),
-        ],
-      ),
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: PlanifScreen(
-          repository: repository,
-          scraperService: scraper,
-          extractionService: extraction,
-          aiConfigRepository: aiConfigRepo,
-          mealPlanConfigRepository: mealPlanConfigRepository,
-          previewService: previewService,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Fetch deals'));
-    await tester.pumpAndSettle();
-    expect(find.text('Meal plan started just now'), findsOneWidget);
-
-    await tester.tap(find.text('Preview meal plan'));
-    await tester.pumpAndSettle();
-    expect(find.text('Meal plan started just now'), findsOneWidget);
-
-    await tester.tap(find.text('Looks good, generate preview'));
-    await tester.pumpAndSettle();
-    expect(find.text('Meal plan started just now'), findsOneWidget);
+    // Home shows the resume card straight away once the cache loads - no
+    // navigation needed to see the warning.
+    expect(find.text('Continue planning'), findsOneWidget);
+    expect(find.textContaining('Started 9d ago - may be outdated'), findsOneWidget);
   });
 
   testWidgets('shows resolved and failed rows in the full list while another store is still fetching', (tester) async {

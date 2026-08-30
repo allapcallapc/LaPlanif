@@ -428,7 +428,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
           apiKey: _apiKey,
           models: _models,
           groundingModels: _groundingModels,
-          fetchedAt: _fetchedAt,
         ),
       ),
     );
@@ -464,7 +463,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
             config: draft.config,
             initialPreview: draft.preview,
             initialSlotRecipes: draft.slotRecipes,
-            fetchedAt: _fetchedAt,
           ),
         ),
       );
@@ -479,7 +477,6 @@ class _PlanifScreenState extends State<PlanifScreen> {
             apiKey: _apiKey,
             models: _models,
             groundingModels: _groundingModels,
-            fetchedAt: _fetchedAt,
           ),
         ),
       );
@@ -551,6 +548,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final subtitle = draft != null
         ? '$generated of $total meal${total == 1 ? '' : 's'} ready to review'
         : '${_items.length} deal item${_items.length == 1 ? '' : 's'} ready to plan';
+    final freshnessNote = _buildFreshnessNote();
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
@@ -582,6 +580,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+                      if (freshnessNote != null) ...[const SizedBox(height: 4), freshnessNote],
                       const SizedBox(height: 14),
                       FilledButton.icon(
                         onPressed: _continue,
@@ -624,6 +623,49 @@ class _PlanifScreenState extends State<PlanifScreen> {
         ),
       ),
     );
+  }
+
+  /// Flyers are typically valid for about a week - past that, the deals this
+  /// draft/cache is built on are likely no longer honored in store. See
+  /// issue #37: without this, a plan can silently get built on (or resumed
+  /// from) an expired flyer.
+  static const _staleAfter = Duration(days: 7);
+
+  // Shown on the resume card, right where the user actually decides between
+  // "Continue planning" and "Start a new plan" - the one place that choice
+  // matters, rather than nagging on every screen further down the flow.
+  Widget? _buildFreshnessNote() {
+    final fetchedAt = _fetchedAt;
+    if (fetchedAt == null) return null;
+    final age = DateTime.now().difference(fetchedAt);
+    final isStale = age >= _staleAfter;
+    final theme = Theme.of(context);
+    final color = isStale ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(isStale ? Icons.warning_amber_rounded : Icons.schedule, size: 14, color: color),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            isStale
+                ? 'Started ${_formatAge(age)} - may be outdated. Consider re-fetching.'
+                : 'Started ${_formatAge(age)}',
+            style: theme.textTheme.bodySmall?.copyWith(color: color),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Each branch's own suffix (or lack of one) avoids a redundant "just now
+  // ago".
+  String _formatAge(Duration age) {
+    if (age.inMinutes < 1) return 'just now';
+    if (age.inMinutes < 60) return '${age.inMinutes}m ago';
+    if (age.inHours < 24) return '${age.inHours}h ago';
+    return '${age.inDays}d ago';
   }
 
   // Stores are fetched one at a time, so a store further down the queue can

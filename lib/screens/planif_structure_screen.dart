@@ -6,7 +6,6 @@ import '../models/meal_plan_full.dart';
 import '../services/model_fallback_controller.dart';
 import '../utils/error_formatting.dart';
 import '../widgets/confirm_delete_dialog.dart';
-import '../widgets/meal_plan_started_bar.dart';
 import 'planif_review_screen.dart';
 import 'planif_screen.dart';
 
@@ -27,7 +26,6 @@ class PlanifStructureScreen extends StatefulWidget {
     required this.models,
     required this.groundingModels,
     required this.initialConfig,
-    required this.fetchedAt,
   });
 
   final PlanifServices services;
@@ -36,7 +34,6 @@ class PlanifStructureScreen extends StatefulWidget {
   final List<String> models;
   final List<String> groundingModels;
   final MealPlanConfig initialConfig;
-  final DateTime? fetchedAt;
 
   @override
   State<PlanifStructureScreen> createState() => _PlanifStructureScreenState();
@@ -135,7 +132,6 @@ class _PlanifStructureScreenState extends State<PlanifStructureScreen> {
             config: _draft,
             initialPreview: preview,
             initialSlotRecipes: List<MealSlotFull?>.filled(preview.slots.length, null),
-            fetchedAt: widget.fetchedAt,
           ),
         ),
       );
@@ -150,7 +146,7 @@ class _PlanifStructureScreenState extends State<PlanifStructureScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('What to plan'), bottom: mealPlanStartedBar(context, widget.fetchedAt)),
+      appBar: AppBar(title: const Text('What to plan')),
       body: _buildForm(),
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.all(12),

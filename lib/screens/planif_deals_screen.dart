@@ -4,7 +4,6 @@ import '../models/deal_item.dart';
 import '../services/ai_deal_extraction_service.dart';
 import '../services/model_fallback_controller.dart';
 import '../utils/error_formatting.dart';
-import '../widgets/meal_plan_started_bar.dart';
 import 'planif_screen.dart';
 import 'planif_structure_screen.dart';
 
@@ -24,7 +23,6 @@ class PlanifDealsScreen extends StatefulWidget {
     required this.apiKey,
     required this.models,
     required this.groundingModels,
-    required this.fetchedAt,
   });
 
   final PlanifServices services;
@@ -33,7 +31,6 @@ class PlanifDealsScreen extends StatefulWidget {
   final String? apiKey;
   final List<String> models;
   final List<String> groundingModels;
-  final DateTime? fetchedAt;
 
   @override
   State<PlanifDealsScreen> createState() => _PlanifDealsScreenState();
@@ -186,7 +183,6 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
           models: widget.models,
           groundingModels: widget.groundingModels,
           initialConfig: config,
-          fetchedAt: widget.fetchedAt,
         ),
       ),
     );
@@ -203,7 +199,6 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
           if (_items.isNotEmpty) _buildFilterButton(),
           const SizedBox(width: 4),
         ],
-        bottom: mealPlanStartedBar(context, widget.fetchedAt),
       ),
       body: Column(
         children: [

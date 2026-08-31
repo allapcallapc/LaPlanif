@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/allapcallapc/LaPlanif/compare/v0.3.0...v0.3.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* remove github-pages environment gate blocking release deploys ([#44](https://github.com/allapcallapc/LaPlanif/issues/44)) ([2048d6a](https://github.com/allapcallapc/LaPlanif/commit/2048d6adc6b51e8d19dafd8db1bb492cce54fb8b))
+
 ## [0.3.0](https://github.com/allapcallapc/LaPlanif/compare/v0.2.0...v0.3.0) (2026-08-30)
 
 

@@ -25,9 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    environment:
-      name: github-pages
-      url: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+    # No `environment:` block here (unlike deploy-main.yml's `staging`): the
+    # auto-created "github-pages" environment's deployment branch policy
+    # rejects tag refs, and this job runs off a release tag, not a branch -
+    # every release deploy was failing with "Tag not allowed to deploy".
+    # peaceiris/actions-gh-pages pushes via plain git, not the Deployments
+    # API, so the environment gate isn't needed for the deploy to work.
 
     steps:
       - name: Checkout repository

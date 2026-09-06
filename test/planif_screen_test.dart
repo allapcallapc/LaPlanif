@@ -295,6 +295,21 @@ class _FakeDeferredGenerationService extends MealPlanGenerationService {
   }
 }
 
+/// Lets the initial seed save (done directly by the test, before the widget
+/// tree exists) succeed normally, but fails every save after that - so a
+/// test can exercise a "Save as default" tap's own repository call failing
+/// without also breaking the setup that seeds the starting config.
+class _FailingSaveMealPlanConfigRepository extends MealPlanConfigRepository {
+  int _saveCount = 0;
+
+  @override
+  Future<void> save(MealPlanConfig config) async {
+    _saveCount++;
+    if (_saveCount > 1) throw Exception('boom');
+    return super.save(config);
+  }
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -5212,6 +5227,180 @@ void main() {
     expect(saved.mealSlots.single.protein, 'chicken');
     expect(saved.portionsPerMeal, 4);
     expect(saved.dietaryNotes, 'No fish.');
+  });
+
+  testWidgets(
+    'saving two different sections as default in quick succession does not drop either update',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repository = StoreConfigRepository();
+      await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+      final aiConfigRepo = AiConfigRepository();
+      await aiConfigRepo.saveApiKey('sk-test');
+
+      final mealPlanConfigRepository = MealPlanConfigRepository();
+      await mealPlanConfigRepository.save(
+        const MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+      );
+
+      final scraper = _FakePagesScraper({
+        'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+      });
+      final extraction = _FakeExtractionService({
+        'IGA': () async => const [
+          DealItem(
+            name: 'Chicken thighs',
+            price: '3.99\$',
+            unit: 'lb',
+            category: DealCategory.protein,
+            storeName: 'IGA',
+            pageIndex: 1,
+          ),
+        ],
+      });
+
+      final previewService = _FakePreviewService(
+        (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: mealSlots.single.mealType,
+              protein: mealSlots.single.protein,
+              count: mealSlots.single.count,
+              portionsPerMeal: portionsPerMeal,
+              anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+              note: 'Note.',
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanifScreen(
+            repository: repository,
+            scraperService: scraper,
+            extractionService: extraction,
+            aiConfigRepository: aiConfigRepo,
+            mealPlanConfigRepository: mealPlanConfigRepository,
+            previewService: previewService,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Fetch deals'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preview meal plan'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.widgetWithText(TextFormField, 'Portions per meal'), '4');
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextFormField, 'Additional planning instructions'), 'No fish.');
+      await tester.pumpAndSettle();
+
+      // Tap both sections' "Save as default" buttons back-to-back, before
+      // either's read-modify-write against the repository has a chance to
+      // finish. Without serializing these calls, both would load() the same
+      // pre-update saved config and each would write back only their own
+      // section - whichever save() finished last would silently overwrite
+      // the other's change.
+      await tester.tap(find.widgetWithText(TextButton, 'Save as default').first);
+      await tester.tap(find.widgetWithText(TextButton, 'Save as default').last);
+      await tester.pumpAndSettle();
+
+      final saved = await mealPlanConfigRepository.load();
+      expect(saved.portionsPerMeal, 4);
+      expect(saved.dietaryNotes, 'No fish.');
+      expect(saved.mealSlots.single.protein, 'meat');
+    },
+  );
+
+  testWidgets('shows an error snackbar when saving a section as default fails', (tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = _FailingSaveMealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Note.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Portions per meal'), '4');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Save as default').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Could not save as default: boom'), findsOneWidget);
   });
 
   testWidgets(

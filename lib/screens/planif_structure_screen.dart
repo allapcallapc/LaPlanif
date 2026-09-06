@@ -14,10 +14,14 @@ import 'planif_screen.dart';
 /// validate/change what to plan - meal slots, portions, dietary notes -
 /// before the AI call behind the actual preview runs. Uses the same
 /// MealPlanConfigEditor as ConfigMealPlanScreen (see issue #32), but scoped
-/// to this flow's own draft instead of editing the saved config directly.
-/// Backing out (the platform back button/gesture, same as anywhere else in
-/// this flow) discards any edits here without touching what's already
-/// confirmed.
+/// to this flow's own draft instead of editing the saved config directly:
+/// edits here (and the rest of this week's planning flow) are never written
+/// to the saved default config on their own, so tweaking the structure for
+/// one week never changes what future weeks start from. Each section offers
+/// its own "Save as default" action for the user to promote just that piece
+/// on demand. Backing out (the platform back button/gesture, same as
+/// anywhere else in this flow) discards any edits here without touching
+/// what's already confirmed.
 class PlanifStructureScreen extends StatefulWidget {
   const PlanifStructureScreen({
     super.key,
@@ -52,13 +56,44 @@ class _PlanifStructureScreenState extends State<PlanifStructureScreen> {
 
   void _onEditorChanged(MealPlanConfig updated) => setState(() => _draft = updated);
 
-  // Persists the edits so Config screen and any future regenerate call see
-  // them too, then runs the preview call and hands the result straight to a
-  // freshly pushed review screen.
+  // Loads the saved default, applies just this section's current draft
+  // value on top of it, and writes that back - so promoting one section
+  // (e.g. dietary notes) as the new default never drags along whatever this
+  // week's draft also happens to hold for the other sections.
+  Future<void> _saveSectionAsDefault({
+    required MealPlanConfig Function(MealPlanConfig savedDefault) apply,
+    required String confirmationMessage,
+  }) async {
+    final savedDefault = await widget.services.mealPlanConfigRepository.load();
+    await widget.services.mealPlanConfigRepository.save(apply(savedDefault));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(confirmationMessage)));
+  }
+
+  Future<void> _savePortionsAsDefault() => _saveSectionAsDefault(
+    apply: (savedDefault) => savedDefault.copyWith(
+      portionsPerMeal: _draft.portionsPerMeal,
+      diversityWindowDays: _draft.diversityWindowDays,
+    ),
+    confirmationMessage: 'Saved portions & diversity window as the default for future weeks.',
+  );
+
+  Future<void> _saveDietaryNotesAsDefault() => _saveSectionAsDefault(
+    apply: (savedDefault) => savedDefault.copyWith(dietaryNotes: _draft.dietaryNotes),
+    confirmationMessage: 'Saved planning instructions as the default for future weeks.',
+  );
+
+  Future<void> _saveMealSlotsAsDefault() => _saveSectionAsDefault(
+    apply: (savedDefault) => savedDefault.copyWith(mealSlots: _draft.mealSlots),
+    confirmationMessage: 'Saved meal slots as the default for future weeks.',
+  );
+
+  // This week's edits are only ever kept in _draft - runs the preview call
+  // straight from it and hands the result to a freshly pushed review
+  // screen, without touching the saved default config.
   Future<void> _confirmAndGeneratePreview() async {
     if (_isGenerating) return;
     setState(() => _isGenerating = true);
-    await widget.services.mealPlanConfigRepository.save(_draft);
     final recentlyUsed = await widget.services.mealHistoryRepository.recentlyUsed(
       diversityWindowDays: _draft.diversityWindowDays,
     );
@@ -124,6 +159,9 @@ class _PlanifStructureScreenState extends State<PlanifStructureScreen> {
               onChanged: _onEditorChanged,
               removeSlotDialogContent: 'This removes the meal slot from this plan.',
               slotKeyPrefix: 'structure-',
+              onSavePortionsAsDefault: _savePortionsAsDefault,
+              onSaveDietaryNotesAsDefault: _saveDietaryNotesAsDefault,
+              onSaveMealSlotsAsDefault: _saveMealSlotsAsDefault,
             ),
           ),
         ],

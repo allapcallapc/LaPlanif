@@ -4687,7 +4687,9 @@ void main() {
     expect(find.text('Lunch · meat'), findsNothing);
   });
 
-  testWidgets('editing the structure step before confirming changes what is generated and persisted', (tester) async {
+  testWidgets('editing the structure step before confirming changes what is generated, without touching the saved default', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(800, 3000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -4781,18 +4783,19 @@ void main() {
     expect(previewService.dietaryNotesCalls.single, 'No fish.');
     expect(find.text('Supper · chicken'), findsOneWidget);
 
-    // The edit was also persisted, so Config screen and a future regenerate
-    // see it too - not just this one generation call.
+    // Confirming only applies to this week's flow - the saved default (what
+    // Config screen and future weeks start from) is untouched unless the
+    // user explicitly taps one of the "Save as default" buttons.
     final saved = await mealPlanConfigRepository.load();
-    expect(saved.portionsPerMeal, 4);
-    expect(saved.diversityWindowDays, 10);
-    expect(saved.dietaryNotes, 'No fish.');
-    expect(saved.mealSlots.single.protein, 'chicken');
-    expect(saved.mealSlots.single.count, 6);
-    expect(saved.mealSlots.single.mealType, MealType.supper);
+    expect(saved.portionsPerMeal, 3);
+    expect(saved.diversityWindowDays, 28);
+    expect(saved.dietaryNotes, isEmpty);
+    expect(saved.mealSlots.single.protein, 'meat');
+    expect(saved.mealSlots.single.count, 5);
+    expect(saved.mealSlots.single.mealType, MealType.lunch);
   });
 
-  testWidgets('adding a meal slot on the structure step includes it in what is generated and persisted', (
+  testWidgets('adding a meal slot on the structure step includes it in what is generated, without touching the saved default', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 3000);
@@ -4879,11 +4882,11 @@ void main() {
 
     expect(previewService.calls.single.length, 2);
     final saved = await mealPlanConfigRepository.load();
-    expect(saved.mealSlots.length, 2);
+    expect(saved.mealSlots.length, 1);
   });
 
   testWidgets(
-    'removing a meal slot on the structure step drops it, disables the last remaining slot delete, and persists',
+    'removing a meal slot on the structure step drops it, disables the last remaining slot delete, without touching the saved default',
     (tester) async {
       tester.view.physicalSize = const Size(800, 3000);
       tester.view.devicePixelRatio = 1.0;
@@ -4979,7 +4982,7 @@ void main() {
 
       expect(previewService.calls.single.single.protein, 'tofu');
       final saved = await mealPlanConfigRepository.load();
-      expect(saved.mealSlots.single.protein, 'tofu');
+      expect(saved.mealSlots.length, 2);
     },
   );
 
@@ -5087,10 +5090,120 @@ void main() {
       expect(find.text('Lunch · meat'), findsNothing);
       expect(find.text('Note for meat.'), findsNothing);
 
+      // Neither confirmation touched the saved default - it still starts
+      // future weeks from what it always did.
       final saved = await mealPlanConfigRepository.load();
-      expect(saved.mealSlots.single.protein, 'turkey');
+      expect(saved.mealSlots.single.protein, 'meat');
     },
   );
+
+  testWidgets('each "Save as default" button on the structure step persists only its own section', (tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      ),
+    );
+
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+      ],
+    });
+
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: mealSlots.single.mealType,
+            protein: mealSlots.single.protein,
+            count: mealSlots.single.count,
+            portionsPerMeal: portionsPerMeal,
+            anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Note.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+
+    // Bumping portions and saving just that section as default shouldn't
+    // touch dietary notes or meal slots in the saved default.
+    await tester.enterText(find.widgetWithText(TextFormField, 'Portions per meal'), '4');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Save as default').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Saved portions & diversity window as the default for future weeks.'), findsOneWidget);
+    var saved = await mealPlanConfigRepository.load();
+    expect(saved.portionsPerMeal, 4);
+    expect(saved.dietaryNotes, isEmpty);
+    expect(saved.mealSlots.single.protein, 'meat');
+
+    // Same for dietary notes.
+    await tester.enterText(find.widgetWithText(TextFormField, 'Additional planning instructions'), 'No fish.');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Save as default').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Saved planning instructions as the default for future weeks.'), findsOneWidget);
+    saved = await mealPlanConfigRepository.load();
+    expect(saved.dietaryNotes, 'No fish.');
+    expect(saved.mealSlots.single.protein, 'meat');
+
+    // Same for meal slots.
+    await tester.enterText(find.byKey(const ValueKey('structure-protein-lunch-meat')), 'chicken');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Save meal slots as default'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Saved meal slots as the default for future weeks.'), findsOneWidget);
+    saved = await mealPlanConfigRepository.load();
+    expect(saved.mealSlots.single.protein, 'chicken');
+    expect(saved.portionsPerMeal, 4);
+    expect(saved.dietaryNotes, 'No fish.');
+  });
 
   testWidgets(
     'each of deals, structure and review is a real pushed screen - popping walks back one at a time to Home',

@@ -48,6 +48,16 @@ class _PlanifStructureScreenState extends State<PlanifStructureScreen> {
   late MealPlanConfig _draft;
   bool _isGenerating = false;
 
+  // Chains every "save as default" call onto whatever the previous one was
+  // doing, so tapping two sections' buttons in quick succession (e.g.
+  // portions, then dietary notes, before the first write lands) can't race:
+  // without this, both calls would load() the same pre-update saved config
+  // and each would write back only their own section, silently dropping
+  // whichever save finished first. Chaining onto this Future means the
+  // second call's load() only starts once the first call's save() has
+  // actually completed.
+  Future<void> _sectionSaveQueue = Future.value();
+
   @override
   void initState() {
     super.initState();
@@ -63,11 +73,25 @@ class _PlanifStructureScreenState extends State<PlanifStructureScreen> {
   Future<void> _saveSectionAsDefault({
     required MealPlanConfig Function(MealPlanConfig savedDefault) apply,
     required String confirmationMessage,
-  }) async {
-    final savedDefault = await widget.services.mealPlanConfigRepository.load();
-    await widget.services.mealPlanConfigRepository.save(apply(savedDefault));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(confirmationMessage)));
+  }) {
+    final queued = _sectionSaveQueue.then((_) async {
+      try {
+        final savedDefault = await widget.services.mealPlanConfigRepository.load();
+        await widget.services.mealPlanConfigRepository.save(apply(savedDefault));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(confirmationMessage)));
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not save as default: ${stripExceptionPrefix(e)}')));
+      }
+    });
+    // Errors are already handled above, so this future always completes
+    // successfully - the next call in the queue is never blocked by one
+    // section's save failing.
+    _sectionSaveQueue = queued;
+    return queued;
   }
 
   Future<void> _savePortionsAsDefault() => _saveSectionAsDefault(

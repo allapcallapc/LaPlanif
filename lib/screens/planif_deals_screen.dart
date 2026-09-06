@@ -7,7 +7,13 @@ import '../utils/error_formatting.dart';
 import 'planif_screen.dart';
 import 'planif_structure_screen.dart';
 
-const _sectionOrder = [DealCategory.protein, DealCategory.vegetables, DealCategory.carbs, DealCategory.uncategorized];
+const _sectionOrder = [
+  DealCategory.protein,
+  DealCategory.vegetables,
+  DealCategory.fruit,
+  DealCategory.carbs,
+  DealCategory.uncategorized,
+];
 
 /// Browses what a fetch (or the cache) produced: filterable by store and
 /// category, with a priority/excluded preference on every item and a retry

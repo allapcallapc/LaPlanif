@@ -1,9 +1,10 @@
-enum DealCategory { protein, vegetables, carbs, uncategorized }
+enum DealCategory { protein, vegetables, fruit, carbs, uncategorized }
 
 extension DealCategoryLabel on DealCategory {
   String get label => switch (this) {
     DealCategory.protein => 'Protein',
     DealCategory.vegetables => 'Vegetables',
+    DealCategory.fruit => 'Fruit',
     DealCategory.carbs => 'Carbs',
     DealCategory.uncategorized => 'Uncategorized',
   };
@@ -11,6 +12,7 @@ extension DealCategoryLabel on DealCategory {
   static DealCategory fromLabel(String label) => switch (label.trim().toLowerCase()) {
     'protein' => DealCategory.protein,
     'vegetables' => DealCategory.vegetables,
+    'fruit' => DealCategory.fruit,
     'carbs' => DealCategory.carbs,
     _ => DealCategory.uncategorized,
   };

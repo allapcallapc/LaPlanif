@@ -5181,6 +5181,12 @@ void main() {
     expect(saved.dietaryNotes, isEmpty);
     expect(saved.mealSlots.single.protein, 'meat');
 
+    // A SnackBar's display timer isn't animation-driven, so pumpAndSettle
+    // won't wait it out on its own - let it fully expire before triggering
+    // another one, or the next showSnackBar call just queues behind it.
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+
     // Same for dietary notes.
     await tester.enterText(find.widgetWithText(TextFormField, 'Additional planning instructions'), 'No fish.');
     await tester.pumpAndSettle();
@@ -5191,6 +5197,9 @@ void main() {
     saved = await mealPlanConfigRepository.load();
     expect(saved.dietaryNotes, 'No fish.');
     expect(saved.mealSlots.single.protein, 'meat');
+
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
 
     // Same for meal slots.
     await tester.enterText(find.byKey(const ValueKey('structure-protein-lunch-meat')), 'chicken');

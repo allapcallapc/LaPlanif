@@ -1,3 +1,4 @@
+import '../utils/grocery_category.dart';
 import 'meal_plan_config.dart';
 import 'meal_plan_preview.dart';
 
@@ -219,13 +220,17 @@ class MealPlanFull {
   /// The consolidated shopping list for this week's plan - see
   /// [MealSlotFullListShoppingList.shoppingList].
   List<ShoppingListItem> get shoppingList => slots.shoppingList;
+
+  /// This week's deal items, deduped across every slot - see
+  /// [MealSlotFullListDealItemsUsed.dealItemsUsed].
+  List<AnchorItem> get dealItemsUsed => slots.dealItemsUsed;
 }
 
 /// One consolidated shopping-list line: an ingredient name plus every amount
 /// it's needed in across the week, combined when the same ingredient is
 /// used by more than one recipe.
 class ShoppingListItem {
-  const ShoppingListItem({required this.name, required this.amounts});
+  const ShoppingListItem({required this.name, required this.amounts, required this.category, required this.isDealItem});
 
   final String name;
 
@@ -233,13 +238,44 @@ class ShoppingListItem {
   /// deduplicated but not summed (amounts are free-form strings like
   /// "2 cups", not always safe to add together).
   final List<String> amounts;
+
+  /// The aisle grouping this line is sorted under - see
+  /// [categorizeIngredient].
+  final GroceryCategory category;
+
+  /// Whether this line's name loosely matches one of this week's deal items
+  /// (see [MealSlotFullListDealItemsUsed.dealItemsUsed]) - a heuristic name
+  /// match, not a guarantee, since the AI-authored ingredient text and the
+  /// flyer's own item name are two independently-worded strings.
+  final bool isDealItem;
+}
+
+/// Every deal item this week's slots draw on, deduped by name+store - the
+/// shopping list's "this week's deals" section is built from this directly,
+/// rather than from whatever wording the AI happened to give the matching
+/// ingredient, so a deal item chosen for a slot is guaranteed to show up
+/// here even when the recipe's own ingredient text doesn't name it the same
+/// way (or at all).
+extension MealSlotFullListDealItemsUsed on List<MealSlotFull> {
+  List<AnchorItem> get dealItemsUsed {
+    final seen = <String>{};
+    final result = <AnchorItem>[];
+    for (final slot in this) {
+      for (final item in slot.dealItemsUsed) {
+        final key = '${item.name.trim().toLowerCase()}::${item.store.trim().toLowerCase()}';
+        if (seen.add(key)) result.add(item);
+      }
+    }
+    return result;
+  }
 }
 
 /// Extracts a shopping list from a week's worth of [MealSlotFull]s: the real
 /// ingredients of every link/AI recipe, plus one line per simple-side
 /// component (which has no recipe of its own - the component's name, e.g.
 /// "Broccoli", is itself the item to buy), deduplicated by name across the
-/// whole week.
+/// whole week, grouped by aisle and sorted case-insensitively within each
+/// group.
 extension MealSlotFullListShoppingList on List<MealSlotFull> {
   List<ShoppingListItem> get shoppingList {
     final amountsByKey = <String, List<String>>{};
@@ -277,7 +313,38 @@ extension MealSlotFullListShoppingList on List<MealSlotFull> {
       }
     }
 
-    final keys = amountsByKey.keys.toList()..sort((a, b) => displayNameByKey[a]!.compareTo(displayNameByKey[b]!));
-    return [for (final key in keys) ShoppingListItem(name: displayNameByKey[key]!, amounts: amountsByKey[key]!)];
+    // Anchor names of length < 3 are excluded from matching below - short
+    // strings (e.g. an anchor mistakenly named "1") would loosely "match"
+    // almost anything via substring containment. Reuses dealItemsUsed's own
+    // dedup rather than re-walking the slots here, so the two can't drift
+    // apart if that dedup rule ever changes.
+    final dealNames = <String>{
+      for (final anchor in dealItemsUsed)
+        if (anchor.name.trim().length >= 3) anchor.name.trim().toLowerCase(),
+    };
+    bool isDealItem(String displayName) {
+      final lower = displayName.trim().toLowerCase();
+      return dealNames.any((anchor) => lower.contains(anchor) || anchor.contains(lower));
+    }
+
+    // Computed once per key up front rather than inside the sort comparator
+    // (called O(n log n) times) and again per key when building the result
+    // list below.
+    final categoryByKey = {for (final key in amountsByKey.keys) key: categorizeIngredient(displayNameByKey[key]!)};
+
+    final keys = amountsByKey.keys.toList()..sort((a, b) {
+      final categoryOrder = categoryByKey[a]!.index.compareTo(categoryByKey[b]!.index);
+      if (categoryOrder != 0) return categoryOrder;
+      return displayNameByKey[a]!.toLowerCase().compareTo(displayNameByKey[b]!.toLowerCase());
+    });
+    return [
+      for (final key in keys)
+        ShoppingListItem(
+          name: displayNameByKey[key]!,
+          amounts: amountsByKey[key]!,
+          category: categoryByKey[key]!,
+          isDealItem: isDealItem(displayNameByKey[key]!),
+        ),
+    ];
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:laplanif/models/meal_plan_config.dart';
 import 'package:laplanif/models/meal_plan_full.dart';
 import 'package:laplanif/models/meal_plan_preview.dart';
+import 'package:laplanif/utils/grocery_category.dart';
 
 void main() {
   test('MealComponentType round-trips through its wire value', () {
@@ -201,9 +202,68 @@ void main() {
 
     final list = MealPlanFull(slots: [slot]).shoppingList;
 
+    // Grouped by aisle (produce, then meat & seafood, then pantry) rather
+    // than a flat alphabetical dump.
     expect(list.map((i) => i.name), ['Broccoli', 'Chicken thighs', 'Soy sauce']);
+    expect(list.map((i) => i.category), [GroceryCategory.produce, GroceryCategory.meatAndSeafood, GroceryCategory.pantry]);
     expect(list.firstWhere((i) => i.name == 'Chicken thighs').amounts, ['1.5 kg']);
     expect(list.firstWhere((i) => i.name == 'Broccoli').amounts, isEmpty);
+  });
+
+  test('shoppingList sorts case-insensitively within a category', () {
+    const protein = MealComponent(
+      type: MealComponentType.aiRecipe,
+      name: 'Salad',
+      ingredients: [Ingredient(name: 'Zucchini', amount: ''), Ingredient(name: 'apple', amount: '')],
+      usesWeeklyDeal: false,
+    );
+    const carb = MealComponent(type: MealComponentType.coveredByProtein, name: 'Rice', usesWeeklyDeal: false);
+    const vegetable = MealComponent(type: MealComponentType.coveredByProtein, name: 'Veg', usesWeeklyDeal: false);
+    const slot = MealSlotFull(
+      mealType: MealType.lunch,
+      protein: 'meat',
+      count: 1,
+      portionsPerMeal: 1,
+      proteinComponent: protein,
+      carbComponent: carb,
+      vegetableComponent: vegetable,
+    );
+
+    final list = MealPlanFull(slots: [slot]).shoppingList;
+
+    // Without case-insensitive comparison, uppercase "Zucchini" would sort
+    // before lowercase "apple" even though both are produce.
+    expect(list.map((i) => i.name), ['apple', 'Zucchini']);
+  });
+
+  test('shoppingList flags lines that loosely match one of this week\'s deal items', () {
+    const protein = MealComponent(
+      type: MealComponentType.aiRecipe,
+      name: 'Chicken stir-fry',
+      ingredients: [Ingredient(name: 'Boneless skinless chicken breasts', amount: '1 kg')],
+      usesWeeklyDeal: true,
+      dealItems: [AnchorItem(name: 'Chicken breast', store: 'IGA')],
+    );
+    const carb = MealComponent(type: MealComponentType.coveredByProtein, name: 'Rice', usesWeeklyDeal: false);
+    const vegetable = MealComponent(type: MealComponentType.simpleSide, name: 'Broccoli', usesWeeklyDeal: false);
+    const slot = MealSlotFull(
+      mealType: MealType.lunch,
+      protein: 'meat',
+      count: 1,
+      portionsPerMeal: 1,
+      proteinComponent: protein,
+      carbComponent: carb,
+      vegetableComponent: vegetable,
+    );
+
+    final list = MealPlanFull(slots: [slot]).shoppingList;
+
+    // The AI's ingredient wording ("Boneless skinless chicken breasts")
+    // never exactly matches the flyer's anchor name ("Chicken breast") -
+    // this should still flag it rather than silently dropping the deal.
+    expect(list.firstWhere((i) => i.name == 'Boneless skinless chicken breasts').isDealItem, isTrue);
+    expect(list.firstWhere((i) => i.name == 'Broccoli').isDealItem, isFalse);
+    expect(MealPlanFull(slots: [slot]).dealItemsUsed.single.name, 'Chicken breast');
   });
 
   test('shoppingList merges the same ingredient across slots, combining distinct amounts', () {

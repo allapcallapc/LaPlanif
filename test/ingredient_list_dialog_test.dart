@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:laplanif/models/meal_plan_config.dart';
 import 'package:laplanif/models/meal_plan_full.dart';
+import 'package:laplanif/models/meal_plan_preview.dart';
 import 'package:laplanif/widgets/ingredient_list_dialog.dart';
 
 void main() {
@@ -89,7 +90,74 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Copy'));
     await tester.pumpAndSettle();
 
-    expect(copied.single, '- Broccoli\n- Chicken thighs — 1.5 kg');
+    expect(copied.single, 'PRODUCE\n- Broccoli\n\nMEAT & SEAFOOD\n- Chicken thighs — 1.5 kg');
     expect(find.text('Ingredient list copied to clipboard.'), findsOneWidget);
+  });
+
+  testWidgets('groups ingredients under aisle headers', (tester) async {
+    await pumpAndOpen(tester, [slot]);
+
+    expect(find.text('Produce'), findsOneWidget);
+    expect(find.text('Meat & Seafood'), findsOneWidget);
+  });
+
+  testWidgets('shows this week\'s deal items in a callout above the grouped list', (tester) async {
+    final dealSlot = slot.copyWith(
+      proteinComponent: const MealComponent(
+        type: MealComponentType.aiRecipe,
+        name: 'Chicken stir-fry',
+        ingredients: [Ingredient(name: 'Chicken thighs', amount: '1.5 kg')],
+        usesWeeklyDeal: true,
+        dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+      ),
+    );
+
+    await pumpAndOpen(tester, [dealSlot]);
+
+    expect(find.text('On sale this week'), findsOneWidget);
+    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+  });
+
+  testWidgets('does not show a deals callout when nothing uses a weekly deal', (tester) async {
+    await pumpAndOpen(tester, [slot]);
+
+    expect(find.text('On sale this week'), findsNothing);
+  });
+
+  testWidgets('copies deal items in their own section, ahead of the grouped list', (tester) async {
+    final dealSlot = slot.copyWith(
+      proteinComponent: const MealComponent(
+        type: MealComponentType.aiRecipe,
+        name: 'Chicken stir-fry',
+        ingredients: [Ingredient(name: 'Chicken thighs', amount: '1.5 kg')],
+        usesWeeklyDeal: true,
+        dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+      ),
+    );
+    final copied = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await pumpAndOpen(tester, [dealSlot]);
+    await tester.tap(find.widgetWithText(TextButton, 'Copy'));
+    await tester.pumpAndSettle();
+
+    expect(
+      copied.single,
+      'ON SALE THIS WEEK\n- Chicken thighs (IGA)\n\nPRODUCE\n- Broccoli\n\nMEAT & SEAFOOD\n- Chicken thighs — 1.5 kg',
+    );
   });
 }

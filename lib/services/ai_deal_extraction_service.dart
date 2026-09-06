@@ -308,7 +308,7 @@ For every real product deal you find, record:
 - name: the cleaned product name. Remove narrative filler and price-connector language (e.g. "pour", "à", "ce qui revient à", "on trouve aussi"), but keep package size, brand, and format intact.
 - price: the flat price if that's how it's listed, or the per-unit price if it's listed per unit (e.g. per lb/kg/100g).
 - unit: the unit the price applies to (e.g. "lb", "kg", "100g", "each"), or an empty string if it's a flat price.
-- category: exactly one of "Protein", "Vegetables", "Carbs", or "Uncategorized" - use "Uncategorized" rather than forcing a bad fit.
+- category: exactly one of "Protein", "Vegetables", "Fruit", "Carbs", or "Uncategorized" - use "Uncategorized" rather than forcing a bad fit. Fruit (e.g. watermelon, apples, berries) is its own category, separate from Vegetables, even when sold in the produce section.
 - page: the page number exactly as labeled in the input ("Page N:").
 
 Skip:
@@ -336,7 +336,7 @@ const _recordItemsTool = {
                 'unit': {'type': 'STRING'},
                 'category': {
                   'type': 'STRING',
-                  'enum': ['Protein', 'Vegetables', 'Carbs', 'Uncategorized'],
+                  'enum': ['Protein', 'Vegetables', 'Fruit', 'Carbs', 'Uncategorized'],
                 },
                 'page': {'type': 'INTEGER'},
               },

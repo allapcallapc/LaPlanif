@@ -6,11 +6,13 @@ import 'confirm_delete_dialog.dart';
 /// Shared meal-plan editing form: portions/diversity/dietary-notes fields
 /// plus the meal-slot rows. Used by both ConfigMealPlanScreen (edits the
 /// saved config directly, autosaved by the caller) and
-/// PlanifStructureScreen (edits an in-flight draft that's only persisted
-/// when the caller explicitly confirms) - see issue #32, where those two
+/// PlanifStructureScreen (edits this week's in-flight draft only - never
+/// written to the saved default on its own) - see issue #32, where those two
 /// screens each had their own copy of this UI and could silently drift
 /// apart. Persistence stays with the caller via [onChanged]; this widget
-/// only owns the editing state.
+/// only owns the editing state. The optional `onSave*AsDefault` callbacks
+/// let PlanifStructureScreen offer a per-section, on-demand way to promote
+/// one of this week's tweaks into the saved default instead.
 class MealPlanConfigEditor extends StatefulWidget {
   const MealPlanConfigEditor({
     super.key,
@@ -19,6 +21,9 @@ class MealPlanConfigEditor extends StatefulWidget {
     required this.removeSlotDialogContent,
     this.slotKeyPrefix = '',
     this.showAddSlotHeader = true,
+    this.onSavePortionsAsDefault,
+    this.onSaveDietaryNotesAsDefault,
+    this.onSaveMealSlotsAsDefault,
   });
 
   final MealPlanConfig initialConfig;
@@ -38,6 +43,14 @@ class MealPlanConfigEditor extends StatefulWidget {
   /// through a GlobalKey) to keep its content within the same height it had
   /// before this widget was extracted.
   final bool showAddSlotHeader;
+
+  /// Per-section "save as default" actions. Only PlanifStructureScreen
+  /// supplies these (its edits only apply to this week's draft otherwise) -
+  /// ConfigMealPlanScreen leaves them null since it's already editing the
+  /// saved default directly, so no extra buttons show up there.
+  final VoidCallback? onSavePortionsAsDefault;
+  final VoidCallback? onSaveDietaryNotesAsDefault;
+  final VoidCallback? onSaveMealSlotsAsDefault;
 
   @override
   State<MealPlanConfigEditor> createState() => MealPlanConfigEditorState();
@@ -118,6 +131,7 @@ class MealPlanConfigEditorState extends State<MealPlanConfigEditor> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       children: [
+        if (widget.onSavePortionsAsDefault != null) _buildSaveAsDefaultRow(widget.onSavePortionsAsDefault!),
         Row(
           children: [
             Expanded(
@@ -140,6 +154,7 @@ class MealPlanConfigEditorState extends State<MealPlanConfigEditor> {
           ],
         ),
         const SizedBox(height: 12),
+        if (widget.onSaveDietaryNotesAsDefault != null) _buildSaveAsDefaultRow(widget.onSaveDietaryNotesAsDefault!),
         TextFormField(
           controller: _dietaryNotesController,
           maxLines: null,
@@ -160,6 +175,12 @@ class MealPlanConfigEditorState extends State<MealPlanConfigEditor> {
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
                 ),
               ),
+              if (widget.onSaveMealSlotsAsDefault != null)
+                IconButton(
+                  icon: const Icon(Icons.bookmark_add_outlined),
+                  tooltip: 'Save meal slots as default',
+                  onPressed: widget.onSaveMealSlotsAsDefault,
+                ),
               IconButton(icon: const Icon(Icons.add), tooltip: 'Add meal slot', onPressed: addSlot),
             ],
           ),
@@ -168,6 +189,21 @@ class MealPlanConfigEditorState extends State<MealPlanConfigEditor> {
         const SizedBox(height: 8),
         Text('${config.mealsPerWeek} meals / week', style: Theme.of(context).textTheme.bodySmall),
       ],
+    );
+  }
+
+  // A small right-aligned "save as default" action placed above a section,
+  // shown only when the caller (PlanifStructureScreen) wants this section's
+  // current value to persist beyond this week's draft.
+  Widget _buildSaveAsDefaultRow(VoidCallback onPressed) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: TextButton.icon(
+        onPressed: onPressed,
+        icon: const Icon(Icons.bookmark_add_outlined, size: 16),
+        label: const Text('Save as default'),
+        style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: EdgeInsets.zero),
+      ),
     );
   }
 

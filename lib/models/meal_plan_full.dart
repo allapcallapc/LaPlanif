@@ -315,21 +315,25 @@ extension MealSlotFullListShoppingList on List<MealSlotFull> {
 
     // Anchor names of length < 3 are excluded from matching below - short
     // strings (e.g. an anchor mistakenly named "1") would loosely "match"
-    // almost anything via substring containment.
+    // almost anything via substring containment. Reuses dealItemsUsed's own
+    // dedup rather than re-walking the slots here, so the two can't drift
+    // apart if that dedup rule ever changes.
     final dealNames = <String>{
-      for (final slot in this)
-        for (final anchor in slot.dealItemsUsed)
-          if (anchor.name.trim().length >= 3) anchor.name.trim().toLowerCase(),
+      for (final anchor in dealItemsUsed)
+        if (anchor.name.trim().length >= 3) anchor.name.trim().toLowerCase(),
     };
     bool isDealItem(String displayName) {
       final lower = displayName.trim().toLowerCase();
       return dealNames.any((anchor) => lower.contains(anchor) || anchor.contains(lower));
     }
 
+    // Computed once per key up front rather than inside the sort comparator
+    // (called O(n log n) times) and again per key when building the result
+    // list below.
+    final categoryByKey = {for (final key in amountsByKey.keys) key: categorizeIngredient(displayNameByKey[key]!)};
+
     final keys = amountsByKey.keys.toList()..sort((a, b) {
-      final categoryOrder = categorizeIngredient(
-        displayNameByKey[a]!,
-      ).index.compareTo(categorizeIngredient(displayNameByKey[b]!).index);
+      final categoryOrder = categoryByKey[a]!.index.compareTo(categoryByKey[b]!.index);
       if (categoryOrder != 0) return categoryOrder;
       return displayNameByKey[a]!.toLowerCase().compareTo(displayNameByKey[b]!.toLowerCase());
     });
@@ -338,7 +342,7 @@ extension MealSlotFullListShoppingList on List<MealSlotFull> {
         ShoppingListItem(
           name: displayNameByKey[key]!,
           amounts: amountsByKey[key]!,
-          category: categorizeIngredient(displayNameByKey[key]!),
+          category: categoryByKey[key]!,
           isDealItem: isDealItem(displayNameByKey[key]!),
         ),
     ];

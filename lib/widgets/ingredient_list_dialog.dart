@@ -22,7 +22,14 @@ class _IngredientListDialog extends StatelessWidget {
   final List<ShoppingListItem> items;
   final List<AnchorItem> deals;
 
-  List<ShoppingListItem> _itemsIn(GroceryCategory category) => items.where((i) => i.category == category).toList();
+  /// Non-empty (category, items) groups, in [GroceryCategory.values] order -
+  /// computed once so both the dialog body and the clipboard copy can walk
+  /// the same grouping instead of each re-filtering [items] per category.
+  List<(GroceryCategory, List<ShoppingListItem>)> get _sections => [
+    for (final category in GroceryCategory.values)
+      if (items.where((i) => i.category == category).toList() case final categoryItems when categoryItems.isNotEmpty)
+        (category, categoryItems),
+  ];
 
   void _copyToClipboard(BuildContext context) {
     final lines = <String>[];
@@ -30,9 +37,7 @@ class _IngredientListDialog extends StatelessWidget {
       lines.add('ON SALE THIS WEEK');
       lines.addAll(deals.map((d) => '- ${d.name} (${d.store})'));
     }
-    for (final category in GroceryCategory.values) {
-      final categoryItems = _itemsIn(category);
-      if (categoryItems.isEmpty) continue;
+    for (final (category, categoryItems) in _sections) {
       if (lines.isNotEmpty) lines.add('');
       lines.add(category.label.toUpperCase());
       lines.addAll(categoryItems.map((item) => '- ${_itemLine(item)}'));
@@ -71,23 +76,22 @@ class _IngredientListDialog extends StatelessWidget {
                     ),
                     const Divider(height: 20),
                   ],
-                  for (final category in GroceryCategory.values)
-                    if (_itemsIn(category).isNotEmpty) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4, bottom: 2),
-                        child: Text(category.label, style: sectionTitleStyle),
-                      ),
-                      for (final item in _itemsIn(category))
-                        ListTile(
-                          dense: true,
-                          leading: Icon(
-                            item.isDealItem ? Icons.local_offer : Icons.circle,
-                            size: item.isDealItem ? 14 : 6,
-                            color: item.isDealItem ? theme.colorScheme.primary : null,
-                          ),
-                          title: Text(_itemLine(item)),
+                  for (final (category, categoryItems) in _sections) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4, bottom: 2),
+                      child: Text(category.label, style: sectionTitleStyle),
+                    ),
+                    for (final item in categoryItems)
+                      ListTile(
+                        dense: true,
+                        leading: Icon(
+                          item.isDealItem ? Icons.local_offer : Icons.circle,
+                          size: item.isDealItem ? 14 : 6,
+                          color: item.isDealItem ? theme.colorScheme.primary : null,
                         ),
-                    ],
+                        title: Text(_itemLine(item)),
+                      ),
+                  ],
                 ],
               ),
       ),

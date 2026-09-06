@@ -43,6 +43,22 @@ void main() {
     expect(categorizeIngredient('CHICKEN THIGHS'), GroceryCategory.meatAndSeafood);
   });
 
+  test('categorizeIngredient matches whole words only, not a keyword nested inside a longer word', () {
+    // "egg" is a dairyAndEggs keyword, but must not match inside "eggplant".
+    expect(categorizeIngredient('Eggplant'), GroceryCategory.produce);
+    // "ham" is a meatAndSeafood keyword, but must not match inside
+    // "hamburger" - "bun" should win via the actual word "buns".
+    expect(categorizeIngredient('Hamburger buns'), GroceryCategory.bakery);
+    // "cream" is a dairyAndEggs keyword, but the more specific two-word
+    // "ice cream" (frozen) should win regardless of category order.
+    expect(categorizeIngredient('Ice cream'), GroceryCategory.frozen);
+  });
+
+  test('categorizeIngredient matches plurals of single- and multi-word keywords', () {
+    expect(categorizeIngredient('Large eggplants'), GroceryCategory.produce);
+    expect(categorizeIngredient('Black peppercorns'), GroceryCategory.pantry);
+  });
+
   test('label has a display string for every category', () {
     expect(GroceryCategory.produce.label, 'Produce');
     expect(GroceryCategory.meatAndSeafood.label, 'Meat & Seafood');

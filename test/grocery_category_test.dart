@@ -42,4 +42,14 @@ void main() {
   test('categorizeIngredient is case-insensitive', () {
     expect(categorizeIngredient('CHICKEN THIGHS'), GroceryCategory.meatAndSeafood);
   });
+
+  test('label has a display string for every category', () {
+    expect(GroceryCategory.produce.label, 'Produce');
+    expect(GroceryCategory.meatAndSeafood.label, 'Meat & Seafood');
+    expect(GroceryCategory.dairyAndEggs.label, 'Dairy & Eggs');
+    expect(GroceryCategory.bakery.label, 'Bakery');
+    expect(GroceryCategory.pantry.label, 'Pantry');
+    expect(GroceryCategory.frozen.label, 'Frozen');
+    expect(GroceryCategory.other.label, 'Other');
+  });
 }

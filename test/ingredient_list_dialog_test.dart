@@ -123,4 +123,41 @@ void main() {
 
     expect(find.text('On sale this week'), findsNothing);
   });
+
+  testWidgets('copies deal items in their own section, ahead of the grouped list', (tester) async {
+    final dealSlot = slot.copyWith(
+      proteinComponent: const MealComponent(
+        type: MealComponentType.aiRecipe,
+        name: 'Chicken stir-fry',
+        ingredients: [Ingredient(name: 'Chicken thighs', amount: '1.5 kg')],
+        usesWeeklyDeal: true,
+        dealItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+      ),
+    );
+    final copied = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await pumpAndOpen(tester, [dealSlot]);
+    await tester.tap(find.widgetWithText(TextButton, 'Copy'));
+    await tester.pumpAndSettle();
+
+    expect(
+      copied.single,
+      'ON SALE THIS WEEK\n- Chicken thighs (IGA)\n\nPRODUCE\n- Broccoli\n\nMEAT & SEAFOOD\n- Chicken thighs — 1.5 kg',
+    );
+  });
 }

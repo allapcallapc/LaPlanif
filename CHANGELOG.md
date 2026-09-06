@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/allapcallapc/LaPlanif/compare/v0.3.0...v0.4.0) (2026-09-06)
+
+
+### Features
+
+* group the shopping list by aisle and surface this week's deal items ([#49](https://github.com/allapcallapc/LaPlanif/issues/49)) ([23e4527](https://github.com/allapcallapc/LaPlanif/commit/23e4527cb1d53bdb8a10f07544e97d05776928f3))
+
+
+### Bug Fixes
+
+* add a Fruit deal category so fruit isn't miscategorized as a vegetable ([#48](https://github.com/allapcallapc/LaPlanif/issues/48)) ([1da04b3](https://github.com/allapcallapc/LaPlanif/commit/1da04b37fce0c4874f7072ceeb40ee2990ee007b))
+* prevent the save-as-default race and surface repository failures ([#47](https://github.com/allapcallapc/LaPlanif/issues/47)) ([1b3a920](https://github.com/allapcallapc/LaPlanif/commit/1b3a9200326a95f03df06f9848cdc5efe36f24b0))
+* remove github-pages environment gate blocking release deploys ([#44](https://github.com/allapcallapc/LaPlanif/issues/44)) ([2048d6a](https://github.com/allapcallapc/LaPlanif/commit/2048d6adc6b51e8d19dafd8db1bb492cce54fb8b))
+* stop weekly planning edits from overwriting the saved meal plan default ([#46](https://github.com/allapcallapc/LaPlanif/issues/46)) ([ae0a90b](https://github.com/allapcallapc/LaPlanif/commit/ae0a90b7e9f85a66440deb7f8e487ba5b3ca6a68))
+
 ## [0.3.0](https://github.com/allapcallapc/LaPlanif/compare/v0.2.0...v0.3.0) (2026-08-30)
 
 

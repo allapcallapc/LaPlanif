@@ -4,16 +4,9 @@ import '../models/deal_item.dart';
 import '../services/ai_deal_extraction_service.dart';
 import '../services/model_fallback_controller.dart';
 import '../utils/error_formatting.dart';
+import '../widgets/deal_grouping.dart';
 import 'planif_screen.dart';
 import 'planif_structure_screen.dart';
-
-const _sectionOrder = [
-  DealCategory.protein,
-  DealCategory.vegetables,
-  DealCategory.fruit,
-  DealCategory.carbs,
-  DealCategory.uncategorized,
-];
 
 /// Browses what a fetch (or the cache) produced: filterable by store and
 /// category, with a priority/excluded preference on every item and a retry
@@ -316,17 +309,13 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
       return const Center(child: Text('No items match the current filters.'));
     }
 
-    final grouped = <DealCategory, List<DealItem>>{};
-    for (final item in filtered) {
-      grouped.putIfAbsent(item.category, () => []).add(item);
-    }
-    final presentCategories = _presentCategories(filtered);
+    final grouped = groupDealsByCategory(filtered);
 
     return ListView(
       children: [
-        for (final category in presentCategories) ...[
-          _buildSectionHeader(category),
-          ..._coverFirst(grouped[category]!).map(_buildItemTile),
+        for (final MapEntry(key: category, value: items) in grouped.entries) ...[
+          DealSectionHeader(category),
+          ...coverFirst(items).map(_buildItemTile),
         ],
       ],
     );
@@ -344,17 +333,6 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
         : storeFiltered.where((item) => item.category == _categoryFilter).toList();
   }
 
-  List<DealCategory> _presentCategories(List<DealItem> filtered) {
-    final grouped = <DealCategory, List<DealItem>>{};
-    for (final item in filtered) {
-      grouped.putIfAbsent(item.category, () => []).add(item);
-    }
-    return [
-      for (final category in _sectionOrder)
-        if ((grouped[category] ?? const []).isNotEmpty) category,
-    ];
-  }
-
   void _openFilterSheet() {
     showModalBottomSheet(
       context: context,
@@ -368,7 +346,7 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
     final priorityCount = _items.where((item) => item.preference == DealPreference.priority).length;
     final excludedCount = _items.where((item) => item.preference == DealPreference.excluded).length;
     final storeNames = _storeNames;
-    final availableCategories = _presentCategories(_storeFiltered);
+    final availableCategories = groupDealsByCategory(_storeFiltered).keys.toList();
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
@@ -444,22 +422,6 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
     );
   }
 
-  List<DealItem> _coverFirst(List<DealItem> items) {
-    final cover = items.where((item) => item.isCoverPage).toList();
-    final rest = items.where((item) => !item.isCoverPage).toList();
-    return [...cover, ...rest];
-  }
-
-  Widget _buildSectionHeader(DealCategory category) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Text(
-        category.label,
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-
   Widget _buildItemTile(DealItem item) {
     final priceText = item.priceText;
     final isPriority = item.preference == DealPreference.priority;
@@ -474,7 +436,7 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
         title: Row(
           children: [
             Flexible(child: Text(item.name, style: nameStyle)),
-            if (item.isCoverPage) ...[const SizedBox(width: 8), _buildCoverBadge()],
+            if (item.isCoverPage) ...[const SizedBox(width: 8), const DealCoverBadge()],
           ],
         ),
         subtitle: Text('${item.storeName} · page ${item.pageIndex}'),
@@ -482,21 +444,6 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
           priceText,
           style: TextStyle(fontWeight: FontWeight.bold, decoration: nameStyle?.decoration),
         ),
-      ),
-    );
-  }
-
-  Widget _buildCoverBadge() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: Colors.amber.shade100,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: Colors.amber.shade700),
-      ),
-      child: Text(
-        'COVER',
-        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.amber.shade900),
       ),
     );
   }

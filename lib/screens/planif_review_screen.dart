@@ -10,6 +10,7 @@ import '../services/meal_plan_generation_service.dart';
 import '../services/model_fallback_controller.dart';
 import '../utils/error_formatting.dart';
 import '../utils/iso_week.dart';
+import '../widgets/anchor_picker_dialog.dart';
 import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
 import 'planif_screen.dart';
@@ -236,10 +237,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         .where((item) => item.preference != DealPreference.excluded)
         .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
         .toList();
-    final selected = await showDialog<DealItem>(
-      context: context,
-      builder: (_) => _AnchorPickerDialog(items: available),
-    );
+    final selected = await showAnchorPickerDialog(context, items: available, title: 'Swap anchor item');
     if (selected == null) return;
 
     setState(() {
@@ -261,10 +259,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         .where((item) => item.preference != DealPreference.excluded)
         .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
         .toList();
-    final selected = await showDialog<DealItem>(
-      context: context,
-      builder: (_) => _AnchorPickerDialog(items: available, title: 'Add anchor item'),
-    );
+    final selected = await showAnchorPickerDialog(context, items: available, title: 'Add anchor item');
     if (selected == null) return;
 
     setState(() {
@@ -874,38 +869,6 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         label: Text(_isSavingWeek ? 'Saving…' : 'Save this week\'s plan'),
         style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       ),
-    );
-  }
-}
-
-class _AnchorPickerDialog extends StatelessWidget {
-  const _AnchorPickerDialog({required this.items, this.title = 'Swap anchor item'});
-
-  final List<DealItem> items;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(title),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: items.isEmpty
-            ? const Padding(padding: EdgeInsets.all(8), child: Text('No available deal items.'))
-            : ListView.builder(
-                shrinkWrap: true,
-                itemCount: items.length,
-                itemBuilder: (context, i) {
-                  final item = items[i];
-                  return ListTile(
-                    title: Text(item.name),
-                    subtitle: Text('${item.storeName} · ${item.priceText}'),
-                    onTap: () => Navigator.of(context).pop(item),
-                  );
-                },
-              ),
-      ),
-      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel'))],
     );
   }
 }

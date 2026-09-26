@@ -310,6 +310,8 @@ class _FailingSaveMealPlanConfigRepository extends MealPlanConfigRepository {
   }
 }
 
+const _discardWarning = 'Changing these items will discard the current recipe. You\'ll generate a new one.';
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -2035,10 +2037,26 @@ void main() {
     expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
     expect(find.text('https://example.com/pulled-pork'), findsOneWidget);
     expect(find.text("This week's deal"), findsOneWidget);
-    // Once for the anchor chip up top, once for the recipe's own deal-item
-    // badge below - the picker tile shows the bare name without the store,
-    // so it doesn't add a third.
+    // Once the recipe exists, the "Pick the deal items" step collapses to a
+    // bare-name summary, so the store-qualified label only shows on the
+    // recipe's own deal-item badge - the picker tile shows the bare name
+    // without the store too.
+    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    expect(find.text('Edit'), findsOneWidget);
+    expect(find.text(_discardWarning), findsNothing);
+
+    // Edit reopens the step - chips back, with a warning that changing them
+    // discards the recipe - and Done collapses it again, recipe untouched.
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    expect(find.text(_discardWarning), findsOneWidget);
     expect(find.text('Ground pork · IGA'), findsNWidgets(2));
+    expect(find.text('Will be replaced if you change the items above.'), findsOneWidget);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(find.text(_discardWarning), findsNothing);
+    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
     expect(find.text('This recipe already includes the carb — see above.'), findsOneWidget);
     // The vegetable side has no deal item of its own, so the tile falls
     // back to the same name the card shows - hence twice here.
@@ -2905,7 +2923,7 @@ void main() {
     expect(find.text('Lunch · meat'), findsOneWidget);
     expect(find.text('Original lunch recipe'), findsNWidgets(2));
 
-    await tester.tap(find.byTooltip('Regenerate this recipe'));
+    await tester.tap(find.text('Regenerate recipe'));
     await tester.pumpAndSettle();
 
     expect(lunchCalls.length, 2);
@@ -3036,7 +3054,7 @@ void main() {
 
     expect(find.text('Original recipe'), findsNWidgets(2));
 
-    await tester.tap(find.byTooltip('Regenerate this recipe'));
+    await tester.tap(find.text('Regenerate recipe'));
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate this recipe: AI API HTTP 500'), findsOneWidget);
@@ -3046,8 +3064,8 @@ void main() {
     expect(find.text('Original recipe'), findsNWidgets(2));
     expect(
       tester
-          .widget<IconButton>(
-            find.ancestor(of: find.byTooltip('Regenerate this recipe'), matching: find.byType(IconButton)),
+          .widget<TextButton>(
+            find.ancestor(of: find.text('Regenerate recipe'), matching: find.bySubtype<TextButton>()),
           )
           .onPressed,
       isNotNull,
@@ -3166,7 +3184,7 @@ void main() {
       expect(promptCalls, 1);
       expect(find.text('Roast chicken thighs'), findsNWidgets(2));
 
-      await tester.tap(find.byTooltip('Regenerate this recipe'));
+      await tester.tap(find.text('Regenerate recipe'));
       await tester.pumpAndSettle();
 
       // Regenerating this slot falls back through model-a -> model-b again,
@@ -3534,7 +3552,7 @@ void main() {
     expect(find.text('Original supper note.'), findsNothing);
     expect(previewService.calls.length, 1);
 
-    await tester.tap(find.byTooltip('Regenerate suggested items'));
+    await tester.tap(find.text('Suggest others'));
     await tester.pumpAndSettle();
 
     expect(previewService.calls.length, 2);
@@ -3916,18 +3934,18 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    // Before generating, the card just hints at the next step.
-    expect(find.text('Anchors look good? Generate this meal\'s recipe below.'), findsOneWidget);
+    // Before generating, the recipe step just says where the recipe will appear.
+    expect(find.text('Appears here once generated.'), findsOneWidget);
 
     await tester.tap(find.text('Generate recipe'));
     await tester.pump();
     await tester.pump();
 
-    // While pending: the hint is replaced by a spinner in the card body
+    // While pending: the recipe step's hint is replaced by a spinner
     // (there's no recipe yet to show), labeled with the in-flight phase
-    // reported via onPhase, and the pinned bar's own button shows a
-    // second, independent spinner labeled "Generating…".
-    expect(find.text('Anchors look good? Generate this meal\'s recipe below.'), findsNothing);
+    // reported via onPhase, and step 1's Generate button shows a second,
+    // independent spinner labeled "Generating…".
+    expect(find.text('Appears here once generated.'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNWidgets(2));
     expect(find.text('Generating…'), findsOneWidget);
     expect(find.text('Searching for real recipe links…'), findsOneWidget);
@@ -4043,7 +4061,7 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Regenerate suggested items'));
+    await tester.tap(find.text('Suggest others'));
     await tester.pumpAndSettle();
 
     expect(find.text('Could not regenerate these suggestions: boom'), findsOneWidget);
@@ -4051,8 +4069,8 @@ void main() {
     expect(find.text('Big-batch chicken thigh stir-fry.'), findsOneWidget);
     expect(
       tester
-          .widget<IconButton>(
-            find.ancestor(of: find.byTooltip('Regenerate suggested items'), matching: find.byType(IconButton)),
+          .widget<TextButton>(
+            find.ancestor(of: find.text('Suggest others'), matching: find.bySubtype<TextButton>()),
           )
           .onPressed,
       isNotNull,

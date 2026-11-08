@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:laplanif/models/flyer_page.dart';
 import 'package:laplanif/models/store_config.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
 
@@ -42,7 +43,8 @@ void main() {
   // instead of counting position.
   test('ignores the noise images that precede the real flyer carousel on circulaire-en-ligne.ca', () async {
     final client = MockClient((request) async {
-      return http.Response('''
+      return http.Response(
+        '''
         <html><body>
           <img src="/topbar-inscription.png" alt="Inscription">
           <img src="/topbar-fb.png" alt="facebook">
@@ -74,7 +76,10 @@ void main() {
             title="Circulaire Metro - Page 11"
             width="1280" height="2560" class="img-fluid" />
         </body></html>
-      ''', 200, headers: {'content-type': 'text/html; charset=utf-8'});
+      ''',
+        200,
+        headers: {'content-type': 'text/html; charset=utf-8'},
+      );
     });
 
     final pages = await FlyerScraperService(client: client).fetchPages(store);
@@ -109,6 +114,66 @@ void main() {
 
     expect(pages.single.altText, contains('Bœuf haché mi-maigre'));
     expect(pages.single.altText, contains('Crème glacée'));
+  });
+
+  // Maxi's flyer (Oct-Nov 2026) was scraped starting at "Page 2": the cover
+  // image didn't carry the "- Page 1" label every other page has, so it was
+  // skipped - losing its deals and every isCoverPage flag. The cases below
+  // cover the plausible ways a cover can be labeled differently.
+  group('Maxi cover page labeled differently from the other pages', () {
+    const maxi = StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi');
+    const page2 = 'Maxi - Page 2. Légumes surgelés sans nom (750 g) à 2,50 \$.';
+    const page3 = 'Maxi - Page 3. Beurre sans nom (454 g) à 5,50 \$.';
+
+    Future<List<FlyerPage>> scrape(String coverTag) {
+      final client = MockClient((request) async {
+        return http.Response(
+          '''
+          <html><body>
+            <img src="/logo-maxi.jpg" alt="Logo Maxi">
+            <img alt="Circulaire Maxi" title="Circulaire Maxi" src="/circulaire-maxi_01.jpg">
+            $coverTag
+            <img src="/circulaire-maxi_02.jpg" alt="$page2" class="img-fluid" />
+            <img src="/circulaire-maxi_03.jpg" alt="$page3" class="img-fluid" />
+          </body></html>
+        ''',
+          200,
+          headers: {'content-type': 'text/html; charset=utf-8'},
+        );
+      });
+      return FlyerScraperService(client: client).fetchPages(maxi);
+    }
+
+    void expectCoverThenPages(List<FlyerPage> pages) {
+      expect(pages.map((p) => p.pageNumber), [1, 2, 3]);
+      expect(pages[0].altText, contains('Poitrines de poulet'));
+      expect(pages[1].altText, page2);
+    }
+
+    test('en dash instead of a hyphen', () async {
+      expectCoverThenPages(await scrape('<img alt="Maxi – Page 1. Poitrines de poulet 3,99 \$/lb.">'));
+    });
+
+    test('lowercase "page" with no space before the number', () async {
+      expectCoverThenPages(await scrape('<img alt="Maxi - page1. Poitrines de poulet 3,99 \$/lb.">'));
+    });
+
+    test('page number only in the title attribute', () async {
+      expectCoverThenPages(
+        await scrape('<img alt="Maxi. Poitrines de poulet 3,99 \$/lb." title="Circulaire Maxi (Page 1)">'),
+      );
+    });
+
+    test('no page number at all, but a real description right before page 2', () async {
+      expectCoverThenPages(
+        await scrape('<img alt="Maxi - Couverture. Poitrines de poulet désossées 3,99 \$/lb et pommes Gala 1,99 \$.">'),
+      );
+    });
+
+    test('does not mistake a short logo/thumbnail label for the cover', () async {
+      final pages = await scrape('');
+      expect(pages.map((p) => p.pageNumber), [2, 3]);
+    });
   });
 
   test('throws when the request fails', () async {

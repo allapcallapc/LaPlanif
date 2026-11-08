@@ -94,8 +94,8 @@ class FlyerScraperService {
     return FlyerPage(pageNumber: int.parse(match.group(1)!), altText: text);
   }
 
-  /// Some flyers (Maxi, seen Oct-Nov 2026) label every page "`<Store> - Page
-  /// N`" except the cover, so page 1 was being dropped entirely - taking its
+  /// Some flyers (Maxi, seen Oct-Nov 2026) label every page `Maxi - Page N`
+  /// except the cover, so page 1 was being dropped entirely - taking its
   /// deals, and every [DealItem.isCoverPage] flag, with it. When no page 1
   /// was found, take the nearest image just before the first numbered page
   /// as the cover, provided it carries a real description (see

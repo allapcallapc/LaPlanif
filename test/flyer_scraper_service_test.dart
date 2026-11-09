@@ -43,8 +43,7 @@ void main() {
   // instead of counting position.
   test('ignores the noise images that precede the real flyer carousel on circulaire-en-ligne.ca', () async {
     final client = MockClient((request) async {
-      return http.Response(
-        '''
+      return http.Response('''
         <html><body>
           <img src="/topbar-inscription.png" alt="Inscription">
           <img src="/topbar-fb.png" alt="facebook">
@@ -76,10 +75,7 @@ void main() {
             title="Circulaire Metro - Page 11"
             width="1280" height="2560" class="img-fluid" />
         </body></html>
-      ''',
-        200,
-        headers: {'content-type': 'text/html; charset=utf-8'},
-      );
+      ''', 200, headers: {'content-type': 'text/html; charset=utf-8'});
     });
 
     final pages = await FlyerScraperService(client: client).fetchPages(store);
@@ -153,10 +149,38 @@ void main() {
       expect(pages[0].altText, contains('Poitrines de poulet'));
     });
 
-    test('does not take a short logo/thumbnail label as the cover', () async {
-      final pages = await scrape('<img alt="Circulaire Maxi" src="/circulaire-maxi_01.jpg">$page2$page3');
+    test('does not take a label or banner without any price as the cover', () async {
+      for (final alt in [
+        'Circulaire Maxi',
+        'Inscrivez-vous à notre infolettre pour recevoir vos circulaires chaque semaine',
+        'Circulaire Maxi valide du 6 au 12 novembre 2026',
+      ]) {
+        final pages = await scrape('<img alt="$alt">$page2$page3');
+        expect(pages.map((p) => p.pageNumber), [2, 3], reason: alt);
+      }
+    });
 
-      expect(pages.map((p) => p.pageNumber), [2, 3]);
+    test('does not count a labeled page right before page 2 a second time as the cover', () async {
+      // Carousel libraries clone slides around the real ones, so DOM order
+      // can differ from page order.
+      final pages = await scrape(
+        '<img alt="Maxi - Page 12. Mélange à gâteau Super Moist à 1,89 \$.">'
+        '$page2$page3',
+      );
+
+      expect(pages.map((p) => p.pageNumber), [12, 2, 3]);
+    });
+
+    test('checks beside every page-2 image, not only the first one', () async {
+      // A thumbnail strip repeats page 2 before the main carousel, next to a
+      // nav image; the real cover sits beside the main carousel's page 2.
+      final pages = await scrape(
+        '<img alt="Suivant">$page2'
+        '<img alt="Maxi - Couverture. $coverDeals">$page2$page3',
+      );
+
+      expect(pages.first.pageNumber, 1);
+      expect(pages.first.altText, contains('Poitrines de poulet'));
     });
 
     test('does not skip past an image without text to reach an earlier banner', () async {

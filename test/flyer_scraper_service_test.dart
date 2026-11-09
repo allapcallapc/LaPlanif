@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'package:laplanif/models/flyer_page.dart';
 import 'package:laplanif/models/store_config.dart';
 import 'package:laplanif/services/flyer_scraper_service.dart';
 
@@ -109,6 +110,128 @@ void main() {
 
     expect(pages.single.altText, contains('Bœuf haché mi-maigre'));
     expect(pages.single.altText, contains('Crème glacée'));
+  });
+
+  // Maxi's flyer (Oct-Nov 2026) was scraped starting at "Page 2": the cover
+  // image didn't carry the "- Page 1" label every other page has, so it was
+  // skipped - losing its deals and every isCoverPage flag.
+  group('Maxi cover page labeled differently from the other pages', () {
+    const maxi = StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi');
+    const coverDeals = 'Poitrines de poulet désossées 3,99 \$/lb et pommes Gala 1,99 \$.';
+    const page2 = '<img src="/circulaire-maxi_02.jpg" alt="Maxi - Page 2. Légumes surgelés (750 g) à 2,50 \$.">';
+    const page3 = '<img src="/circulaire-maxi_03.jpg" alt="Maxi - Page 3. Beurre (454 g) à 5,50 \$.">';
+
+    Future<List<FlyerPage>> scrape(String images) {
+      final client = MockClient((request) async {
+        return http.Response(
+          '<html><body><img src="/logo-maxi.jpg" alt="Logo Maxi">$images</body></html>',
+          200,
+          headers: {'content-type': 'text/html; charset=utf-8'},
+        );
+      });
+      return FlyerScraperService(client: client).fetchPages(maxi);
+    }
+
+    test('accepts an en or em dash as the separator', () async {
+      // A short spacer image sits between each cover and page 2, so the
+      // unlabeled-cover fallback can't be what finds them: only the regex.
+      for (final dash in ['–', '—']) {
+        final pages = await scrape('<img alt="Maxi $dash Page 1. Poulet"><img alt="Pub">$page2');
+        expect(pages.map((p) => p.pageNumber), [1, 2], reason: 'dash: $dash');
+        expect(pages[0].altText, 'Maxi $dash Page 1. Poulet');
+      }
+    });
+
+    test('takes the described image right before page 2 as the cover', () async {
+      final pages = await scrape('<img alt="Maxi - Couverture. $coverDeals">$page2$page3');
+
+      expect(pages.map((p) => p.pageNumber), [1, 2, 3]);
+      expect(pages[0].altText, contains('Poitrines de poulet'));
+    });
+
+    test('does not take a label or banner without any price as the cover', () async {
+      for (final alt in [
+        'Circulaire Maxi',
+        'Inscrivez-vous à notre infolettre pour recevoir vos circulaires chaque semaine',
+        'Circulaire Maxi valide du 6 au 12 novembre 2026',
+      ]) {
+        final pages = await scrape('<img alt="$alt">$page2$page3');
+        expect(pages.map((p) => p.pageNumber), [2, 3], reason: alt);
+      }
+    });
+
+    test('does not count a labeled page right before page 2 a second time as the cover', () async {
+      // Carousel libraries clone slides around the real ones, so DOM order
+      // can differ from page order.
+      final pages = await scrape(
+        '<img alt="Maxi - Page 12. Mélange à gâteau Super Moist à 1,89 \$.">'
+        '$page2$page3',
+      );
+
+      expect(pages.map((p) => p.pageNumber), [12, 2, 3]);
+    });
+
+    test('checks beside every page-2 image, not only the first one', () async {
+      // A thumbnail strip repeats page 2 before the main carousel, next to a
+      // nav image; the real cover sits beside the main carousel's page 2.
+      final pages = await scrape(
+        '<img alt="Suivant">$page2'
+        '<img alt="Maxi - Couverture. $coverDeals">$page2$page3',
+      );
+
+      // The cover is inserted just before the page 2 it was found beside,
+      // keeping the list in document order.
+      expect(pages.map((p) => p.pageNumber), [2, 1, 2, 3]);
+      expect(pages[1].altText, contains('Poitrines de poulet'));
+    });
+
+    test('does not take a banner with a points or savings amount as the cover', () async {
+      for (final alt in [
+        'Obtenez 10 \$ en points PC Optimum à l\'achat de 50 \$',
+        "Économisez jusqu'à 5 \$ cette semaine",
+      ]) {
+        final pages = await scrape('<img alt="$alt">$page2$page3');
+        expect(pages.map((p) => p.pageNumber), [2, 3], reason: alt);
+      }
+    });
+
+    test('only reads a page label at the start of the alt text', () async {
+      final pages = await scrape(
+        '$page2<img alt="Maxi - Page 3. Fromages fins — Page 4 de notre sélection, brie à 6,99 \$.">'
+        '<img alt="Maxi. Fromages fins — Page 5 de notre sélection">',
+      );
+
+      expect(pages.map((p) => p.pageNumber), [2, 3]);
+    });
+
+    test('does not skip past an image without text to reach an earlier banner', () async {
+      final pages = await scrape(
+        '<img alt="Inscrivez-vous à notre infolettre pour recevoir vos circulaires chaque semaine">'
+        '<img src="/cover-lazy.jpg" alt="">'
+        '$page2$page3',
+      );
+
+      expect(pages.map((p) => p.pageNumber), [2, 3]);
+    });
+
+    test('does not invent a cover when the lowest labeled page is not 2', () async {
+      final pages = await scrape('<img alt="Maxi - Couverture. $coverDeals">$page3');
+
+      expect(pages.map((p) => p.pageNumber), [3]);
+    });
+
+    test('ignores page numbers in titles and inside descriptions', () async {
+      final pages = await scrape(
+        '<img alt="Circulaire IGA" title="Circulaire IGA (Page 1)">'
+        '<img alt="Maxi. Fromage en promo (voir page 4) et lait 2 L à 4,99 \$.">'
+        '$page2',
+      );
+
+      // The second image is unlabeled and right before page 2, so it is the
+      // cover - numbered 1, not 4; the IGA thumbnail is not a page at all.
+      expect(pages.map((p) => p.pageNumber), [1, 2]);
+      expect(pages[0].altText, contains('Fromage en promo'));
+    });
   });
 
   test('throws when the request fails', () async {

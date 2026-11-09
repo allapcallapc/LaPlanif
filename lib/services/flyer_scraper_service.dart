@@ -25,16 +25,17 @@ class FlyerScraperService {
   // page 30+). Anchoring on this "- Page N" marker instead both filters out
   // that noise and recovers the flyer's true page number directly.
   //
-  // The match is deliberately tolerant of how the separator is typed (plain
-  // hyphen, en/em dash, colon, or an opening parenthesis as in the site's
-  // "(Page N)" titles) and of letter case: a single label variant on one
-  // page - most often the cover - would otherwise silently drop that whole
-  // page, and the cover is exactly where the featured deals live.
-  static final _pageNumberPattern = RegExp(r'[-\u2013\u2014:(]\s*Page\s*(\d+)\b', caseSensitive: false);
+  // The separator may be a plain hyphen or an en/em dash: those are
+  // typographic variants of the same label and can't be confused with
+  // anything else on the page. The match is otherwise kept as strict as the
+  // site's own label - looser rules (title attribute, "(Page N)", any case)
+  // also match "other circulars" thumbnails and "voir page N" mentions inside
+  // descriptions.
+  static final _pageNumberPattern = RegExp(r'[-\u2013\u2014]\s*Page\s+(\d+)\b');
 
-  /// Minimum length for an unnumbered image's text to be taken as the cover
-  /// page by [_findUnlabeledCover]. Logos and "other circulars" thumbnails
-  /// carry short labels ("Logo Maxi", "Circulaire Maxi"); a real flyer page
+  /// Minimum alt-text length for an unnumbered image to be taken as the
+  /// cover by [_unlabeledCover]. Logos and "other circulars" thumbnails carry
+  /// short labels ("Logo Maxi", "Circulaire Maxi"); a real flyer page
   /// carries a prose description of its deals.
   static const _minCoverTextLength = 40;
 
@@ -61,19 +62,18 @@ class FlyerScraperService {
     final images = document.querySelectorAll('img');
 
     final pages = <FlyerPage>[];
-    // Index into [images] of each page's <img>, parallel to [pages].
+    // Position in [images] of each page's <img>, parallel to [pages].
     final imageIndexes = <int>[];
     for (var i = 0; i < images.length; i++) {
-      final page = _labeledPage(images[i]);
-      if (page == null) continue;
-      pages.add(page);
+      final alt = _altText(images[i]);
+      final match = _pageNumberPattern.firstMatch(alt);
+      if (match == null) continue;
+      pages.add(FlyerPage(pageNumber: int.parse(match.group(1)!), altText: alt));
       imageIndexes.add(i);
     }
 
-    if (pages.isNotEmpty && !pages.any((p) => p.pageNumber == 1)) {
-      final cover = _findUnlabeledCover(images, imageIndexes[0]);
-      if (cover != null) pages.insert(0, cover);
-    }
+    final cover = _unlabeledCover(images, pages, imageIndexes);
+    if (cover != null) pages.insert(0, cover);
 
     if (pages.isEmpty) {
       throw Exception('No flyer pages found on page');
@@ -81,35 +81,27 @@ class FlyerScraperService {
     return pages;
   }
 
-  /// Reads the page number from the image's alt text, falling back to its
-  /// title attribute (the site also writes "... (Page N)" there) when the
-  /// alt text carries none. The returned page's text is the alt text when
-  /// there is one, since that's what holds the deal descriptions.
-  FlyerPage? _labeledPage(Element img) {
-    final alt = img.attributes['alt']?.trim() ?? '';
-    final title = img.attributes['title']?.trim() ?? '';
-    final match = _pageNumberPattern.firstMatch(alt) ?? _pageNumberPattern.firstMatch(title);
-    if (match == null) return null;
-    final text = alt.isNotEmpty ? alt : title;
-    return FlyerPage(pageNumber: int.parse(match.group(1)!), altText: text);
-  }
+  static String _altText(Element img) => img.attributes['alt']?.trim() ?? '';
 
-  /// Some flyers (Maxi, seen Oct-Nov 2026) label every page `Maxi - Page N`
-  /// except the cover, so page 1 was being dropped entirely - taking its
-  /// deals, and every [DealItem.isCoverPage] flag, with it. When no page 1
-  /// was found, take the nearest image just before the first numbered page
-  /// as the cover, provided it carries a real description (see
-  /// [_minCoverTextLength]) rather than a logo/thumbnail label.
-  FlyerPage? _findUnlabeledCover(List<Element> images, int firstPageImageIndex) {
-    for (var i = firstPageImageIndex - 1; i >= 0; i--) {
-      final img = images[i];
-      final alt = img.attributes['alt']?.trim() ?? '';
-      final title = img.attributes['title']?.trim() ?? '';
-      final text = alt.length >= title.length ? alt : title;
-      if (text.isEmpty) continue;
-      if (text.length < _minCoverTextLength) return null;
-      return FlyerPage(pageNumber: 1, altText: text);
-    }
-    return null;
+  /// Maxi's flyer (seen Oct-Nov 2026) labels every page `Maxi - Page N`
+  /// except the cover, so page 1 was dropped entirely - taking its deals,
+  /// and every `DealItem.isCoverPage` flag, with it.
+  ///
+  /// Recovers the cover only in that exact situation: the lowest labeled
+  /// page is 2, and the `<img>` immediately before page 2's (no skipping
+  /// past other images) has a real description of at least
+  /// [_minCoverTextLength] characters. Anything looser risks sending a
+  /// banner or another flyer's thumbnail to the AI as "page 1" and marking
+  /// its items as cover deals - worse than leaving the cover out.
+  static FlyerPage? _unlabeledCover(List<Element> images, List<FlyerPage> pages, List<int> imageIndexes) {
+    if (pages.isEmpty) return null;
+    final lowest = pages.map((p) => p.pageNumber).reduce((a, b) => a < b ? a : b);
+    if (lowest != 2) return null;
+
+    final page2ImageIndex = imageIndexes[pages.indexWhere((p) => p.pageNumber == 2)];
+    if (page2ImageIndex == 0) return null;
+    final text = _altText(images[page2ImageIndex - 1]);
+    if (text.length < _minCoverTextLength) return null;
+    return FlyerPage(pageNumber: 1, altText: text);
   }
 }

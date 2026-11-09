@@ -179,8 +179,29 @@ void main() {
         '<img alt="Maxi - Couverture. $coverDeals">$page2$page3',
       );
 
-      expect(pages.first.pageNumber, 1);
-      expect(pages.first.altText, contains('Poitrines de poulet'));
+      // The cover is inserted just before the page 2 it was found beside,
+      // keeping the list in document order.
+      expect(pages.map((p) => p.pageNumber), [2, 1, 2, 3]);
+      expect(pages[1].altText, contains('Poitrines de poulet'));
+    });
+
+    test('does not take a banner with a points or savings amount as the cover', () async {
+      for (final alt in [
+        'Obtenez 10 \$ en points PC Optimum à l\'achat de 50 \$',
+        "Économisez jusqu'à 5 \$ cette semaine",
+      ]) {
+        final pages = await scrape('<img alt="$alt">$page2$page3');
+        expect(pages.map((p) => p.pageNumber), [2, 3], reason: alt);
+      }
+    });
+
+    test('only reads a page label at the start of the alt text', () async {
+      final pages = await scrape(
+        '$page2<img alt="Maxi - Page 3. Fromages fins — Page 4 de notre sélection, brie à 6,99 \$.">'
+        '<img alt="Maxi. Fromages fins — Page 5 de notre sélection">',
+      );
+
+      expect(pages.map((p) => p.pageNumber), [2, 3]);
     });
 
     test('does not skip past an image without text to reach an earlier banner', () async {

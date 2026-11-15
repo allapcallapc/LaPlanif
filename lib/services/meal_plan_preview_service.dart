@@ -317,7 +317,12 @@ For each meal slot, propose the anchor item(s) that define this slot's big-batch
 
 No ingredient may anchor more than one slot in this plan, even a priority item that would otherwise fit several slots well - each slot's anchors must be entirely distinct from every other slot's. This means the same product, not just the same exact listing: don't anchor one slot on broccoli from one store and another slot on broccoli from a different store (or a differently-worded listing of the same thing) - that still counts as reusing the same ingredient. When multiple slots are given in the same call, check your own choices for cross-slot duplicates (by ingredient, not just by exact name/store) as you go. A list of deal items already used as anchors elsewhere in this plan may also be given below - never reuse any of those either, by the same ingredient-level rule, and pick a different item for any slot that would otherwise repeat one.
 
-Standing planning instructions may be given below the meal slots - these are hard constraints from the user that apply across every slot in this plan, and take priority over item preference (priority/cover-deal) when the two conflict. Follow them exactly as written.
+Standing planning instructions may be given below the meal slots - these are hard constraints from the user that apply across every slot in this plan, and take priority over item preference (priority/cover-deal) when the two conflict. Follow them exactly as written. Read them carefully:
+- They apply across languages and to every variety of what they name. Deal items are often listed in French while the instructions may be in English (or the reverse): "no squash" rules out "courge musquée", "courge spaghetti", "butternut", "courgette"-family squash and any other squash; "no fish" rules out "filet de truite", "saumon", "tilapia", "morue", shrimp-style seafood if the user says seafood, etc. Translate each deal item's name before checking it against an instruction, and when unsure whether an item falls under an instruction, leave it out.
+- A slot's count is the number of days that recipe is eaten - one batch-cooked recipe covers every meal instance in the slot. So a frequency limit such as "no more than 2 days of fish" means fish may only anchor slots whose counts add up to at most 2 across the whole plan: never anchor a count=5 (or count=3) slot on fish under that instruction, even when the slot's protein is a generic word like "meat" and fish is the best deal. Pick a different protein item for that slot instead.
+- They apply to every anchor item, not just the protein - a vegetable or carb anchor must follow them too.
+
+Before choosing any anchors, fill in instructionCheck: list each standing instruction and, for every slot, state how your picks respect it (including the slot's count for any frequency limit). Then make sure the anchors you record match what you wrote there.
 
 A list of recently used recipes and their deal items, drawn from saved plan history within the configured diversity window, may also be given below - this is a soft preference, not a rule: prefer a different recipe or anchor over repeating one of these, but a repeat is still fine when it's clearly the best fit for this week's deals (e.g. an exceptional price on the same protein). Never let this override a standing planning instruction or an excluded item.
 
@@ -334,6 +339,17 @@ const _recordSlotPreviewsTool = {
       'parameters': {
         'type': 'OBJECT',
         'properties': {
+          // Filled in first (see propertyOrdering) so the model works
+          // through each standing instruction against every slot before
+          // committing to anchors - free-form instructions were otherwise
+          // easy for it to skim past. Not parsed; it exists only to make
+          // the model reason before choosing.
+          'instructionCheck': {
+            'type': 'STRING',
+            'description':
+                'For each standing planning instruction, how every slot\'s picks respect it (including slot counts for '
+                'frequency limits and translated item names). "(no standing instructions)" if there are none.',
+          },
           'slots': {
             'type': 'ARRAY',
             'items': {
@@ -356,7 +372,8 @@ const _recordSlotPreviewsTool = {
             },
           },
         },
-        'required': ['slots'],
+        'required': ['instructionCheck', 'slots'],
+        'propertyOrdering': ['instructionCheck', 'slots'],
       },
     },
   ],

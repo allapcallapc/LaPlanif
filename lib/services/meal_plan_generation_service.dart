@@ -145,6 +145,7 @@ class MealPlanGenerationService {
         items: items,
         research: research,
         sources: sources,
+        dietaryNotes: dietaryNotes,
         model: effectiveModel,
       );
     } finally {
@@ -300,6 +301,7 @@ class MealPlanGenerationService {
     required List<DealItem> items,
     required String research,
     required List<_GroundingSource> sources,
+    required String dietaryNotes,
     required String model,
   }) async {
     // otherMeals is deliberately left out here (unlike the research call) -
@@ -308,7 +310,7 @@ class MealPlanGenerationService {
     // use that context, so including it would point this call at guidance
     // that doesn't exist for it.
     final userText =
-        '${_slotsUserText(slots, items, '', const [])}\n\n'
+        '${_slotsUserText(slots, items, dietaryNotes, const [])}\n\n'
         'Research notes from the search step, for context on which recipe fits which slot:\n$research\n\n'
         'Verified search sources, numbered - the ONLY sources you may ever cite for type "link". These are '
         'the actual links Google Search returned, not the research notes\' prose. To use one, match it to '
@@ -477,10 +479,22 @@ class MealPlanGenerationService {
     return otherMeals
         .map((meal) {
           final anchors = meal.anchorItems.map((a) => '${a.name} (${a.store})').join(', ');
-          final recipe = meal.recipeNames.isEmpty ? 'not generated yet' : meal.recipeNames.join(', ');
+          final recipe = meal.recipeNames.isEmpty ? 'not generated yet' : _labelledRecipeNames(meal.recipeNames);
           return '${meal.mealType.name} (${meal.protein}): anchors $anchors - recipe: $recipe';
         })
         .join('\n');
+  }
+
+  // recipeNames is protein, carb, vegetable in that order (see
+  // OtherWeekMeal) - labelled so the model can tell which of another
+  // meal's sides it must not repeat.
+  String _labelledRecipeNames(List<String> names) {
+    const roles = ['protein', 'carb', 'vegetable'];
+    return names
+        .asMap()
+        .entries
+        .map((e) => e.key < roles.length ? '${roles[e.key]} ${e.value}' : e.value)
+        .join('; ');
   }
 
   String _sourcesText(List<_GroundingSource> sources) {
@@ -631,6 +645,10 @@ When you do cite a link, quote its search-result title EXACTLY as it appeared in
 
 Excluded deal items must never be used in any component.
 
+STANDING PLANNING INSTRUCTIONS: the user message may list standing planning instructions. These are hard constraints from the user and override every preference in this prompt (deal items, priority items, cover deals, an otherwise-best recipe). They apply to every component - protein, carb AND vegetable - and to every ingredient of a recipe you pick, not just its headline item. They apply across languages and to every variety of what they name: deal items are often listed in French while instructions may be in English, so "no squash" also rules out "courge musquée", "courge spaghetti", butternut, etc.; translate each item before checking it. If the best recipe you found contains a forbidden ingredient (e.g. a sheet-pan roast with squash), pick another recipe. A slot's count is the number of days that recipe is eaten, so a frequency limit ("no more than 2 days of fish") is about slot counts. Before writing your findings, check each instruction against each component and say in your notes how it is respected.
+
+VARIETY ACROSS THE WEEK: the week's meals must not all share the same sides. If the user message lists other meals already planned for this week, do not reuse a carb or vegetable ingredient that another meal already uses (e.g. if another meal already has broccoli, pick a different vegetable; if another already has basmati rice, pick a different carb such as potatoes, pasta, couscous, quinoa or a different grain) - the same ingredient under a different preparation still counts as a repeat. This takes priority over preferring a deal or priority item for the carb/vegetable: a deal vegetable that another meal already uses is not a "good fit" here. The only exception is a carb/vegetable that the protein recipe itself already includes (covered by the protein) when no well-supported alternative recipe exists.
+
 A component "uses a deal item" only when that component's own ingredient is itself one of the named deal items below - never because it happens to be cooked on the same pan/tray or in the same recipe as a protein that is a deal item. E.g. a one-pan "roasted sausages and green beans" recipe where only the sausages are a deal item means the vegetable does NOT use a deal item, even though it shares the recipe with one that does. Report each component's deal-item status independently and explicitly say "no" when it doesn't match a named deal item, rather than leaving it implied.
 
 If the user message lists other meals already planned for this week (a separate call may be generating just one slot at a time, so those meals aren't part of what you're researching here): treat their recipe names, once known, as dishes to stay clearly different from - not just a different named dish, but a different shape of meal (e.g. don't propose another sheet-pan roast, another stir-fry, or another dish built on the same sauce/marinade, if one of those meals is already one of those). This applies even when the protein differs. For a listed meal that has no recipe yet (still "not generated yet"), you only know its protein and anchors - lean away from an obvious overlap with those where you reasonably can, but don't strain for it the way you should once an actual recipe name is given. Never let this override a hard requirement above (a real verified link, an excluded deal item) - if the closest well-supported recipe you can verify happens to be similar in shape to another meal, use it anyway rather than inventing a weaker option just to be different.
@@ -655,6 +673,8 @@ Matching is a hard search you must perform carefully, not a quick skim - falling
 Set usesWeeklyDeal and dealItems (name + store, from the deal items given) truthfully for each component, based on whether THAT COMPONENT'S OWN ingredient matches one of this week's named deal items - most protein components will. A carb/vegetable does NOT use a deal item merely because it shares a recipe or a pan with a protein that does (e.g. a "roasted sausages and green beans" sheet-pan recipe where only the sausages are a deal item: the vegetable's usesWeeklyDeal must be false and dealItems empty, even though the research notes discuss it in the same breath as the protein). Only set usesWeeklyDeal true for carb/vegetable when the research notes name that specific component's ingredient as a deal item in its own right.
 
 For type "link", still record its full ingredients list, scaled to totalPortionsNeeded - this is what the app's shopping-list feature is built from, so it must reflect real grocery items even though the step-by-step instructions live at the linked page. Draw on the research notes if they mention specific ingredients or quantities; otherwise give your best standard ingredient list for that specific dish. Leave instructions empty for type "link" (the linked page has them). Leave both ingredients and instructions empty for simple_side and covered_by_protein. Leave note empty except for simple_side, where it holds the short prep note.
+
+If standing planning instructions are given, they are hard constraints from the user: never put an ingredient they forbid into any component's ingredient list (they apply across languages - e.g. "no squash" also rules out "courge musquée"). If the research notes picked a component that breaks one, swap in a compliant alternative (as ai_recipe or simple_side) rather than recording it.
 
 Record exactly one entry per meal slot, in the same order the slots were given, by calling record_meal_components.
 ''';

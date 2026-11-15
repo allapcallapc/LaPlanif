@@ -211,6 +211,40 @@ void main() {
     );
   });
 
+  test('makes the AI check standing instructions against every slot before picking anchors', () async {
+    final client = MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final params =
+          ((body['tools'] as List).single['functionDeclarations'] as List).single['parameters'] as Map<String, dynamic>;
+      // instructionCheck must be required and come before slots, so the
+      // model reasons through e.g. "max 2 days of fish" vs a count=5 slot
+      // before it commits to anchors.
+      expect(params['required'], contains('instructionCheck'));
+      expect(params['propertyOrdering'], ['instructionCheck', 'slots']);
+
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'note',
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+      dietaryNotes: 'No more than 2 days of fish per week.',
+    );
+  });
+
   test('omits the standing-instructions section when dietaryNotes is empty', () async {
     final client = MockClient((request) async {
       // The system prompt always mentions "Standing planning instructions" in

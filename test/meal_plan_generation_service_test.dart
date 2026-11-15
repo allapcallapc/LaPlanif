@@ -902,7 +902,7 @@ void main() {
             'Other meals already planned for this week, not part of this call - see the system '
             'instructions for how to use these:\\n'
             'supper (tofu): anchors Tofu (IGA) - recipe: not generated yet\\n'
-            'lunch (pork): anchors Ground pork (IGA) - recipe: Slow-roasted pulled pork, Rice, Steamed green beans',
+            'lunch (pork): anchors Ground pork (IGA) - recipe: protein Slow-roasted pulled pork; carb Rice; vegetable Steamed green beans',
           ),
         );
         return _researchResponse(text: 'Slot 1 protein: no verified link found.');
@@ -934,6 +934,32 @@ void main() {
         ),
       ],
     );
+
+    expect(callCount, 2);
+  });
+
+  test('sends standing planning instructions to both the research and extraction calls', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      // Both calls choose ingredients (research picks the recipes,
+      // extraction writes the ingredient lists), so both must see e.g.
+      // "no squash" - otherwise a forbidden side can slip back in.
+      expect(request.body, contains('Standing planning instructions - follow these across every slot:\\n- No squash.'));
+      if (callCount == 1) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Chicken stir-fry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli'),
+          },
+        ],
+      );
+    });
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+    await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items, dietaryNotes: '- No squash.');
 
     expect(callCount, 2);
   });

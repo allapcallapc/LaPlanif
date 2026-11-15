@@ -189,6 +189,10 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           portionsPerMeal: widget.config.portionsPerMeal,
           items: widget.items,
           alreadyUsedAnchors: alreadyUsedAnchors,
+          otherSlots: [
+            for (var i = 0; i < _preview.slots.length; i++)
+              if (i != index) _preview.slots[i],
+          ],
           recentlyUsed: recentlyUsed,
           dietaryNotes: widget.config.dietaryNotes,
           model: model,
@@ -286,6 +290,13 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
 
   void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
 
+  // A side covered by the protein recipe is part of that dish rather than
+  // a standalone side, so flag it - otherwise the AI can't tell it apart
+  // from an independent side when checking for repeats across the week.
+  String _otherMealSideName(MealComponent component) => component.type == MealComponentType.coveredByProtein
+      ? '${component.name} (part of the protein recipe)'
+      : component.name;
+
   // The review step's one action for turning a meal's confirmed anchors
   // into (or back into, on a re-run after an anchor edit) a full recipe.
   // Doubles as both "generate" and "regenerate" for a slot - it's the same
@@ -313,10 +324,15 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           OtherWeekMeal(
             mealType: _preview.slots[i].mealType,
             protein: _preview.slots[i].protein,
+            count: _preview.slots[i].count,
             anchorItems: _preview.slots[i].anchorItems,
             recipeNames: switch (_slotRecipes[i]) {
               null => const [],
-              final recipe => [recipe.proteinComponent.name, recipe.carbComponent.name, recipe.vegetableComponent.name],
+              final recipe => [
+                recipe.proteinComponent.name,
+                _otherMealSideName(recipe.carbComponent),
+                _otherMealSideName(recipe.vegetableComponent),
+              ],
             },
           ),
     ];

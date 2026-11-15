@@ -884,30 +884,25 @@ void main() {
     expect(logs[0].errorMessage, contains('no functionCall in response'));
   });
 
-  test('includes other already-planned meals in the research prompt only, not extraction', () async {
+  test('includes other already-planned meals, with their day counts, in both calls', () async {
     var callCount = 0;
     final client = MockClient((request) async {
       callCount++;
-      // Present only in the research call - that's the one that actually
-      // decides on a dish, and _researchSystemPrompt is the only system
-      // prompt that explains how to use this context. Extraction is purely
-      // mechanical formatting of what research already decided, and
-      // _extractionSystemPrompt never mentions other meals at all, so
-      // including this block there would point it at guidance that
-      // doesn't exist for it.
-      if (callCount == 1) {
+      // Research uses this to pick a different dish/sides and to count
+      // other meals' days toward frequency limits; extraction uses it so a
+      // replacement for a non-compliant side doesn't repeat another meal's.
+      {
         expect(
           request.body,
           contains(
             'Other meals already planned for this week, not part of this call - see the system '
             'instructions for how to use these:\\n'
-            'supper (tofu): anchors Tofu (IGA) - recipe: not generated yet\\n'
-            'lunch (pork): anchors Ground pork (IGA) - recipe: Slow-roasted pulled pork, Rice, Steamed green beans',
+            'supper (tofu, 4 days): anchors Tofu (IGA) - recipe: not generated yet\\n'
+            'lunch (pork, 5 days): anchors Ground pork (IGA) - recipe: protein Slow-roasted pulled pork; carb Rice; vegetable Steamed green beans',
           ),
         );
-        return _researchResponse(text: 'Slot 1 protein: no verified link found.');
       }
-      expect(request.body, isNot(contains('Other meals already planned')));
+      if (callCount == 1) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
       return _extractionResponse(
         slots: [
           {
@@ -925,15 +920,72 @@ void main() {
       slots: slots,
       items: items,
       otherMeals: const [
-        OtherWeekMeal(mealType: MealType.supper, protein: 'tofu', anchorItems: [AnchorItem(name: 'Tofu', store: 'IGA')]),
+        OtherWeekMeal(
+          mealType: MealType.supper,
+          protein: 'tofu',
+          count: 4,
+          anchorItems: [AnchorItem(name: 'Tofu', store: 'IGA')],
+        ),
         OtherWeekMeal(
           mealType: MealType.lunch,
           protein: 'pork',
+          count: 5,
           anchorItems: [AnchorItem(name: 'Ground pork', store: 'IGA')],
           recipeNames: ['Slow-roasted pulled pork', 'Rice', 'Steamed green beans'],
         ),
       ],
     );
+
+    expect(callCount, 2);
+  });
+
+  for (final type in ['simple_side', 'covered_by_protein']) {
+    test('rejects a protein recorded as $type, which would leave the meal without a recipe', () async {
+      var callCount = 0;
+      final client = MockClient((request) async {
+        callCount++;
+        if (callCount == 1) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+        return _extractionResponse(
+          slots: [
+            {
+              'protein': _rawComponent(type: type, name: 'Chicken', note: 'Pan-fry.'),
+              'carb': _rawComponent(type: 'simple_side', name: 'Rice'),
+              'vegetable': _rawComponent(type: 'simple_side', name: 'Carrots'),
+            },
+          ],
+        );
+      });
+      final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+      await expectLater(
+        service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items),
+        throwsA(predicate((e) => e.toString().contains('protein component cannot be type $type'))),
+      );
+    });
+  }
+
+  test('sends standing planning instructions to both the research and extraction calls', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      // Both calls choose ingredients (research picks the recipes,
+      // extraction writes the ingredient lists), so both must see e.g.
+      // "no squash" - otherwise a forbidden side can slip back in.
+      expect(request.body, contains('Standing planning instructions - follow these across every slot:\\n- No squash.'));
+      if (callCount == 1) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Chicken stir-fry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli'),
+          },
+        ],
+      );
+    });
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+    await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items, dietaryNotes: '- No squash.');
 
     expect(callCount, 2);
   });

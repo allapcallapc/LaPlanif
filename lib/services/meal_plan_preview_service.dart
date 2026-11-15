@@ -46,6 +46,12 @@ class MealPlanPreviewService {
   /// one call, cross-slot uniqueness is instead enforced by the prompt
   /// alone, since the AI sees every slot at once.
   ///
+  /// [otherSlots] are the plan's OTHER slots (with their counts and
+  /// proteins) when only some slots are being (re)generated - unlike
+  /// [alreadyUsedAnchors], which only names their items, this lets the AI
+  /// enforce plan-wide frequency limits from the standing instructions
+  /// (e.g. "no more than 2 days of fish") across slots it isn't choosing.
+  ///
   /// [recentlyUsed] lists recipes/deal items from saved plan history within
   /// the configured diversity window - a soft "try to vary" hint, unlike
   /// [alreadyUsedAnchors] which is a hard same-plan exclusion.
@@ -55,6 +61,7 @@ class MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
     String? model,
@@ -68,6 +75,7 @@ class MealPlanPreviewService {
         portionsPerMeal: portionsPerMeal,
         items: items,
         alreadyUsedAnchors: alreadyUsedAnchors,
+        otherSlots: otherSlots,
         recentlyUsed: recentlyUsed,
         dietaryNotes: dietaryNotes,
         model: effectiveModel,
@@ -83,6 +91,7 @@ class MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     required List<AnchorItem> alreadyUsedAnchors,
+    required List<MealSlotPreview> otherSlots,
     required List<RecentHistoryItem> recentlyUsed,
     required String dietaryNotes,
     required String model,
@@ -90,7 +99,7 @@ class MealPlanPreviewService {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
     final body = jsonEncode(
-      _buildRequestBody(mealSlots, portionsPerMeal, items, alreadyUsedAnchors, recentlyUsed, dietaryNotes),
+      _buildRequestBody(mealSlots, portionsPerMeal, items, alreadyUsedAnchors, otherSlots, recentlyUsed, dietaryNotes),
     );
 
     final http.Response response;
@@ -125,7 +134,13 @@ class MealPlanPreviewService {
 
     try {
       final preview = _parsePreview(decoded, mealSlots, portionsPerMeal);
-      await _log(model: model, success: true, inputTokens: inputTokens, outputTokens: outputTokens);
+      await _log(
+        model: model,
+        success: true,
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+        details: _instructionCheck(decoded),
+      );
       return preview;
     } catch (e) {
       await _log(
@@ -145,6 +160,7 @@ class MealPlanPreviewService {
     int inputTokens = 0,
     int outputTokens = 0,
     String? errorMessage,
+    String? details,
   }) {
     return _logRepository.add(
       AiCallLog(
@@ -155,8 +171,25 @@ class MealPlanPreviewService {
         inputTokens: inputTokens,
         outputTokens: outputTokens,
         errorMessage: errorMessage,
+        details: details,
       ),
     );
+  }
+
+  /// The model's own instructionCheck reasoning, kept in the AI call log so
+  /// a plan that breaks a standing instruction can be traced back to how
+  /// the model (mis)read it. Null when absent - it's diagnostic only.
+  String? _instructionCheck(Map<String, dynamic> decoded) {
+    final parts = ((decoded['candidates'] as List<dynamic>?)?.firstOrNull as Map<String, dynamic>?)?['content']?['parts'];
+    if (parts is! List) return null;
+    for (final part in parts) {
+      final args = (part as Map<String, dynamic>)['functionCall']?['args'];
+      if (args is Map<String, dynamic>) {
+        final check = (args['instructionCheck'] as String?)?.trim();
+        return check == null || check.isEmpty ? null : 'Instruction check: $check';
+      }
+    }
+    return null;
   }
 
   Map<String, dynamic> _buildRequestBody(
@@ -164,6 +197,7 @@ class MealPlanPreviewService {
     int portionsPerMeal,
     List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors,
+    List<MealSlotPreview> otherSlots,
     List<RecentHistoryItem> recentlyUsed,
     String dietaryNotes,
   ) {
@@ -184,6 +218,8 @@ class MealPlanPreviewService {
 
     final userText =
         'Meal slots to propose anchors for, in order:\n$slotsText\n\n'
+        '${otherSlots.isEmpty ? '' : 'Other slots already in this plan, not part of this call - their anchors are fixed, '
+              'but count their days toward any frequency limit in the standing instructions:\n${_otherSlotsText(otherSlots)}\n\n'}'
         '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - follow these across every slot:\n${dietaryNotes.trim()}\n\n'}'
         'Priority deal items (prefer these first):\n${_itemsText(priority)}\n\n'
         'Excluded deal items (never propose these):\n${_itemsText(excluded)}\n\n'
@@ -216,7 +252,9 @@ class MealPlanPreviewService {
           'allowedFunctionNames': ['record_slot_previews'],
         },
       },
-      'generationConfig': {'maxOutputTokens': 8192},
+      // Room for the instructionCheck reasoning written before the slots, so
+      // a long check can't crowd the slots themselves out of the response.
+      'generationConfig': {'maxOutputTokens': 16384},
     };
   }
 
@@ -227,6 +265,16 @@ class MealPlanPreviewService {
           (i) =>
               '- ${i.name} (${i.storeName}, ${i.category.label}, ${i.price}${i.unit.isEmpty ? '' : '/${i.unit}'})'
               '${i.isCoverPage ? ' [COVER DEAL]' : ''}',
+        )
+        .join('\n');
+  }
+
+  String _otherSlotsText(List<MealSlotPreview> list) {
+    return list
+        .map(
+          (s) =>
+              '- ${s.mealType.name}, protein=${s.protein}, count=${s.count} days, anchors: '
+              '${s.anchorItems.isEmpty ? '(none)' : _anchorItemsInlineText(s.anchorItems)}',
         )
         .join('\n');
   }
@@ -318,11 +366,11 @@ For each meal slot, propose the anchor item(s) that define this slot's big-batch
 No ingredient may anchor more than one slot in this plan, even a priority item that would otherwise fit several slots well - each slot's anchors must be entirely distinct from every other slot's. This means the same product, not just the same exact listing: don't anchor one slot on broccoli from one store and another slot on broccoli from a different store (or a differently-worded listing of the same thing) - that still counts as reusing the same ingredient. When multiple slots are given in the same call, check your own choices for cross-slot duplicates (by ingredient, not just by exact name/store) as you go. A list of deal items already used as anchors elsewhere in this plan may also be given below - never reuse any of those either, by the same ingredient-level rule, and pick a different item for any slot that would otherwise repeat one.
 
 Standing planning instructions may be given below the meal slots - these are hard constraints from the user that apply across every slot in this plan, and take priority over item preference (priority/cover-deal) when the two conflict. Follow them exactly as written. Read them carefully:
-- They apply across languages and to every variety of what they name. Deal items are often listed in French while the instructions may be in English (or the reverse): "no squash" rules out "courge musquée", "courge spaghetti", "butternut", "courgette"-family squash and any other squash; "no fish" rules out "filet de truite", "saumon", "tilapia", "morue", shrimp-style seafood if the user says seafood, etc. Translate each deal item's name before checking it against an instruction, and when unsure whether an item falls under an instruction, leave it out.
-- A slot's count is the number of days that recipe is eaten - one batch-cooked recipe covers every meal instance in the slot. So a frequency limit such as "no more than 2 days of fish" means fish may only anchor slots whose counts add up to at most 2 across the whole plan: never anchor a count=5 (or count=3) slot on fish under that instruction, even when the slot's protein is a generic word like "meat" and fish is the best deal. Pick a different protein item for that slot instead.
+- They apply across languages and to every variety of what they name. Deal items are often listed in French while the instructions may be in English (or the reverse): "no squash" rules out "courge musquée", "courge spaghetti", "courge butternut" and other winter squash; "no fish" rules out "filet de truite", "saumon", "tilapia", "morue", etc. Translate each deal item's name before checking it against an instruction. Apply an instruction to what it clearly names in everyday cooking terms - don't stretch it to loosely related items the user didn't mean (e.g. "no squash" alone doesn't rule out zucchini/courgette).
+- A slot's count is the number of days that recipe is eaten - one batch-cooked recipe covers every meal instance in the slot. So a frequency limit such as "no more than 2 days of fish" means fish may only anchor slots whose counts add up to at most 2 across the whole plan - including any "other slots already in this plan" listed below, which already use up part of the limit: never anchor a count=5 (or count=3) slot on fish under that instruction, even when the slot's protein is a generic word like "meat" and fish is the best deal. Pick a different protein item for that slot instead.
 - They apply to every anchor item, not just the protein - a vegetable or carb anchor must follow them too.
 
-Before choosing any anchors, fill in instructionCheck: list each standing instruction and, for every slot, state how your picks respect it (including the slot's count for any frequency limit). Then make sure the anchors you record match what you wrote there.
+Before choosing any anchors, fill in instructionCheck: one short line per standing instruction saying how your picks respect it (for a frequency limit, add up the counts of the slots it applies to, other slots included). Keep it brief - a few lines, not an essay. Then make sure the anchors you record match what you wrote there.
 
 A list of recently used recipes and their deal items, drawn from saved plan history within the configured diversity window, may also be given below - this is a soft preference, not a rule: prefer a different recipe or anchor over repeating one of these, but a repeat is still fine when it's clearly the best fit for this week's deals (e.g. an exceptional price on the same protein). Never let this override a standing planning instruction or an excluded item.
 

@@ -59,14 +59,26 @@ import 'model_fallback_controller.dart';
 /// two independently-generated meals from landing on the same dish or
 /// prep style - this is what lets the model tell them apart.
 class OtherWeekMeal {
-  const OtherWeekMeal({required this.mealType, required this.protein, required this.anchorItems, this.recipeNames = const []});
+  const OtherWeekMeal({
+    required this.mealType,
+    required this.protein,
+    required this.count,
+    required this.anchorItems,
+    this.recipeNames = const [],
+  });
 
   final MealType mealType;
   final String protein;
+
+  /// How many days this meal is eaten - needed so plan-wide frequency
+  /// limits in the standing instructions ("no more than 2 days of fish")
+  /// can be checked across meals generated one at a time.
+  final int count;
   final List<AnchorItem> anchorItems;
 
   /// This meal's own protein/carb/vegetable component names, in that
-  /// order, once it has been generated - empty if it hasn't yet, in which
+  /// order (a side covered by the protein recipe is marked as such by the
+  /// caller), once it has been generated - empty if it hasn't yet, in which
   /// case [protein] and [anchorItems] are the only hint of what it might
   /// become.
   final List<String> recipeNames;
@@ -146,6 +158,7 @@ class MealPlanGenerationService {
         research: research,
         sources: sources,
         dietaryNotes: dietaryNotes,
+        otherMeals: otherMeals,
         model: effectiveModel,
       );
     } finally {
@@ -302,15 +315,16 @@ class MealPlanGenerationService {
     required String research,
     required List<_GroundingSource> sources,
     required String dietaryNotes,
+    required List<OtherWeekMeal> otherMeals,
     required String model,
   }) async {
-    // otherMeals is deliberately left out here (unlike the research call) -
-    // extraction is purely mechanical formatting of what the research step
-    // already decided, and _extractionSystemPrompt never explains how to
-    // use that context, so including it would point this call at guidance
-    // that doesn't exist for it.
+    // Extraction gets the standing instructions and other meals too: it
+    // mostly formats what research decided, but when a researched
+    // component breaks a standing instruction it has to swap in a
+    // replacement, and that replacement must not repeat another meal's
+    // side (see _extractionSystemPrompt).
     final userText =
-        '${_slotsUserText(slots, items, dietaryNotes, const [])}\n\n'
+        '${_slotsUserText(slots, items, dietaryNotes, otherMeals)}\n\n'
         'Research notes from the search step, for context on which recipe fits which slot:\n$research\n\n'
         'Verified search sources, numbered - the ONLY sources you may ever cite for type "link". These are '
         'the actual links Google Search returned, not the research notes\' prose. To use one, match it to '
@@ -480,7 +494,7 @@ class MealPlanGenerationService {
         .map((meal) {
           final anchors = meal.anchorItems.map((a) => '${a.name} (${a.store})').join(', ');
           final recipe = meal.recipeNames.isEmpty ? 'not generated yet' : _labelledRecipeNames(meal.recipeNames);
-          return '${meal.mealType.name} (${meal.protein}): anchors $anchors - recipe: $recipe';
+          return '${meal.mealType.name} (${meal.protein}, ${meal.count} days): anchors $anchors - recipe: $recipe';
         })
         .join('\n');
   }
@@ -551,6 +565,11 @@ class MealPlanGenerationService {
 
   MealSlotFull _parseSlot(MealSlotPreview slot, Map<String, dynamic> rawSlot, List<_GroundingSource> sources) {
     final protein = _parseComponent(rawSlot['protein'] as Map<String, dynamic>, sources);
+    // The protein is the meal itself - a prep note or "covered by itself"
+    // would leave it with no recipe and no shopping-list ingredients.
+    if (protein.type == MealComponentType.simpleSide || protein.type == MealComponentType.coveredByProtein) {
+      throw Exception('protein component cannot be type ${protein.type.value}');
+    }
     var carb = _parseComponent(rawSlot['carb'] as Map<String, dynamic>, sources);
     var vegetable = _parseComponent(rawSlot['vegetable'] as Map<String, dynamic>, sources);
     // covered_by_protein always points at the same recipe as the protein
@@ -651,6 +670,8 @@ VARIETY ACROSS THE WEEK: the week's meals must not all share the same sides. If 
 
 A component "uses a deal item" only when that component's own ingredient is itself one of the named deal items below - never because it happens to be cooked on the same pan/tray or in the same recipe as a protein that is a deal item. E.g. a one-pan "roasted sausages and green beans" recipe where only the sausages are a deal item means the vegetable does NOT use a deal item, even though it shares the recipe with one that does. Report each component's deal-item status independently and explicitly say "no" when it doesn't match a named deal item, rather than leaving it implied.
 
+Each listed other meal shows how many days it is eaten - count those days toward any frequency limit in the standing instructions (e.g. if fish is already on 2 days elsewhere and the limit is 2, no component of this slot may use fish).
+
 If the user message lists other meals already planned for this week (a separate call may be generating just one slot at a time, so those meals aren't part of what you're researching here): treat their recipe names, once known, as dishes to stay clearly different from - not just a different named dish, but a different shape of meal (e.g. don't propose another sheet-pan roast, another stir-fry, or another dish built on the same sauce/marinade, if one of those meals is already one of those). This applies even when the protein differs. For a listed meal that has no recipe yet (still "not generated yet"), you only know its protein and anchors - lean away from an obvious overlap with those where you reasonably can, but don't strain for it the way you should once an actual recipe name is given. Never let this override a hard requirement above (a real verified link, an excluded deal item) - if the closest well-supported recipe you can verify happens to be similar in shape to another meal, use it anyway rather than inventing a weaker option just to be different.
 
 Write your findings as clear, per-slot notes covering: the protein recipe name and verified URL (or "no verified link found" plus an AI-recipe sketch), whether the carb/vegetable are covered by that recipe, and for each uncovered component its proposed name, verified URL (if any) or AI-recipe sketch or simple-side note, and whether IT SPECIFICALLY (not the recipe as a whole) uses a deal item (naming the exact item and store, only if that component's own ingredient matches one).
@@ -674,7 +695,9 @@ Set usesWeeklyDeal and dealItems (name + store, from the deal items given) truth
 
 For type "link", still record its full ingredients list, scaled to totalPortionsNeeded - this is what the app's shopping-list feature is built from, so it must reflect real grocery items even though the step-by-step instructions live at the linked page. Draw on the research notes if they mention specific ingredients or quantities; otherwise give your best standard ingredient list for that specific dish. Leave instructions empty for type "link" (the linked page has them). Leave both ingredients and instructions empty for simple_side and covered_by_protein. Leave note empty except for simple_side, where it holds the short prep note.
 
-If standing planning instructions are given, they are hard constraints from the user: never put an ingredient they forbid into any component's ingredient list (they apply across languages - e.g. "no squash" also rules out "courge musquée"). If the research notes picked a component that breaks one, swap in a compliant alternative (as ai_recipe or simple_side) rather than recording it.
+If standing planning instructions are given, they are hard constraints from the user (they apply across languages - e.g. "no squash" also rules out "courge musquée"). If the research notes picked a component whose recipe breaks one - including a linked recipe that contains a forbidden ingredient anywhere in it - do not record that recipe at all: never keep the link while just leaving the forbidden ingredient out of the ingredient list, since the shopping list would then no longer match the linked page. Instead replace the component: a protein must become type "ai_recipe" (full ingredients + instructions, built from the slot's anchor items), never simple_side or covered_by_protein; a carb or vegetable may become "ai_recipe" or "simple_side". A carb/vegetable covered by a non-compliant protein recipe is replaced along with it.
+
+When you replace a carb or vegetable this way, pick an ingredient that none of the other meals listed in the user message already uses for its carb or vegetable (e.g. not broccoli if another meal already has broccoli), even if that means not using a deal item. Other meals are listed only for this purpose - don't change components the research notes picked compliantly.
 
 Record exactly one entry per meal slot, in the same order the slots were given, by calling record_meal_components.
 ''';

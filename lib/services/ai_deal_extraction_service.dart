@@ -21,6 +21,7 @@ class AiDealExtractionService {
     String? model,
     AiCallLogRepository? logRepository,
     this.retryDelay = const Duration(seconds: 2),
+    this.imageDownloadTimeout = const Duration(seconds: 15),
   }) : model = model ?? AiConfigRepository.defaultModels.first,
        _client = client ?? http.Client(),
        _logRepository = logRepository ?? AiCallLogRepository();
@@ -49,6 +50,10 @@ class AiDealExtractionService {
   /// overloaded", a documented transient Gemini signal). Injectable so
   /// tests don't have to wait for it.
   final Duration retryDelay;
+
+  /// How long to wait for a flyer page image to download before falling
+  /// back to sending Gemini its URL instead.
+  final Duration imageDownloadTimeout;
 
   /// Extracts deal items from [pages] in a single API call. [pages] should
   /// be at most [maxPagesPerCall] long - see its doc comment for why
@@ -177,7 +182,7 @@ class AiDealExtractionService {
   }) async {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
-    final body = jsonEncode(_buildRequestBody(pages));
+    final body = jsonEncode(_buildRequestBody(await _buildUserParts(pages)));
 
     final response = await _client.post(uri, headers: headers, body: body);
     if (response.statusCode != 503) {
@@ -223,12 +228,67 @@ class AiDealExtractionService {
     final avgChars = (totalChars / pages.length).round();
     final first = pages.first;
     final snippet = first.altText.length > 300 ? '${first.altText.substring(0, 300)}…' : first.altText;
-    return '${pages.length} page(s), avg $avgChars chars/page. Page ${first.pageNumber}: "$snippet"';
+    final imagePages = pages.where((p) => p.imageUrl != null).length;
+    final imageNote = imagePages > 0 ? ' ($imagePages sent as images)' : '';
+    return '${pages.length} page(s)$imageNote, avg $avgChars chars/page. Page ${first.pageNumber}: "$snippet"';
   }
 
-  Map<String, dynamic> _buildRequestBody(List<FlyerPage> pages) {
-    final labeledPages = pages.map((p) => 'Page ${p.pageNumber}:\n${p.altText}').join('\n\n');
+  /// The user turn's parts: each page's "Page N:" label and alt text, plus
+  /// the page image itself for pages whose alt text is only a label (see
+  /// [FlyerPage.imageUrl]). Consecutive text is merged into one part.
+  Future<List<Map<String, dynamic>>> _buildUserParts(List<FlyerPage> pages) async {
+    final parts = <Map<String, dynamic>>[];
+    final text = StringBuffer();
+    void flushText() {
+      if (text.isEmpty) return;
+      parts.add({'text': text.toString()});
+      text.clear();
+    }
 
+    for (final page in pages) {
+      if (text.isNotEmpty) text.write('\n\n');
+      text.write('Page ${page.pageNumber}:\n${page.altText}');
+      final imageUrl = page.imageUrl;
+      if (imageUrl == null) continue;
+      text.write('\n(The page image follows.)');
+      flushText();
+      parts.add(await _imagePart(imageUrl));
+    }
+    flushText();
+    return parts;
+  }
+
+  /// Downloads the image in-app and sends it inline: the browser can already
+  /// reach the flyer site (it just fetched the HTML), whereas Gemini's own
+  /// URL fetcher may be refused by the site's bot protection. If the download
+  /// fails (network, CORS, non-image response), hands Gemini the URL instead.
+  Future<Map<String, dynamic>> _imagePart(String imageUrl) async {
+    try {
+      final response = await _client.get(Uri.parse(imageUrl)).timeout(imageDownloadTimeout);
+      final contentType = response.headers['content-type']?.split(';').first.trim().toLowerCase();
+      final isImage = contentType != null && contentType.startsWith('image/');
+      if (response.statusCode == 200 && response.bodyBytes.isNotEmpty && isImage) {
+        return {
+          'inlineData': {'mimeType': contentType, 'data': base64Encode(response.bodyBytes)},
+        };
+      }
+    } catch (_) {
+      // Fall through to the URL reference below.
+    }
+    return {
+      'fileData': {'mimeType': _mimeTypeFromUrl(imageUrl), 'fileUri': imageUrl},
+    };
+  }
+
+  static String _mimeTypeFromUrl(String url) {
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
+    if (path.endsWith('.png')) return 'image/png';
+    if (path.endsWith('.webp')) return 'image/webp';
+    if (path.endsWith('.gif')) return 'image/gif';
+    return 'image/jpeg';
+  }
+
+  Map<String, dynamic> _buildRequestBody(List<Map<String, dynamic>> userParts) {
     return {
       'systemInstruction': {
         'parts': [
@@ -236,12 +296,7 @@ class AiDealExtractionService {
         ],
       },
       'contents': [
-        {
-          'role': 'user',
-          'parts': [
-            {'text': labeledPages},
-          ],
-        },
+        {'role': 'user', 'parts': userParts},
       ],
       'tools': [_recordItemsTool],
       'toolConfig': {
@@ -303,6 +358,8 @@ class AiDealExtractionService {
 
 const _systemPrompt = '''
 You are extracting real grocery deals from OCR-style descriptions of grocery flyer pages. Each page's description is prose, not a delimited list, and may describe several items in one passage.
+
+Some pages have no description, only their "Page N" label, followed by an image of the flyer page itself. For those, read the deals directly from the image and attribute them to that page number.
 
 For every real product deal you find, record:
 - name: the cleaned product name. Remove narrative filler and price-connector language (e.g. "pour", "à", "ce qui revient à", "on trouve aussi"), but keep package size, brand, and format intact.

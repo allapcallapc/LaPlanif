@@ -477,4 +477,48 @@ void main() {
     expect(items.length, 20);
     expect((await logRepository.loadAll()).length, 1);
   });
+
+  group('pages with no description', () {
+    const imagePage = FlyerPage(
+      pageNumber: 2,
+      altText: 'Circulaire Maxi - Page 2',
+      imageUrl: 'https://flyers.example.com/maxi_02.jpg',
+    );
+    const textPage = FlyerPage(pageNumber: 1, altText: 'Circulaire Maxi - Page 1. Poulet 3,99 \$/lb');
+
+    Future<List<dynamic>> sentParts(http.Response Function(http.Request) imageResponse) async {
+      List<dynamic>? parts;
+      final client = MockClient((request) async {
+        if (request.url.host == 'flyers.example.com') return imageResponse(request);
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        parts = ((body['contents'] as List).single as Map<String, dynamic>)['parts'] as List<dynamic>;
+        return _successResponse(items: const []);
+      });
+      final service = AiDealExtractionService(client: client, logRepository: AiCallLogRepository());
+      await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: const [textPage, imagePage]);
+      return parts!;
+    }
+
+    test('send the downloaded page image inline after its label', () async {
+      final parts = await sentParts(
+        (_) => http.Response.bytes([1, 2, 3], 200, headers: {'content-type': 'image/jpeg'}),
+      );
+
+      expect(parts.length, 2);
+      final text = (parts[0] as Map<String, dynamic>)['text'] as String;
+      expect(text, contains('Page 1:\nCirculaire Maxi - Page 1. Poulet'));
+      expect(text, endsWith('Page 2:\nCirculaire Maxi - Page 2\n(The page image follows.)'));
+      expect(parts[1], {
+        'inlineData': {'mimeType': 'image/jpeg', 'data': base64Encode([1, 2, 3])},
+      });
+    });
+
+    test('fall back to the image URL when the download fails', () async {
+      final parts = await sentParts((_) => http.Response('Forbidden', 403, headers: {'content-type': 'text/html'}));
+
+      expect(parts[1], {
+        'fileData': {'mimeType': 'image/jpeg', 'fileUri': 'https://flyers.example.com/maxi_02.jpg'},
+      });
+    });
+  });
 }

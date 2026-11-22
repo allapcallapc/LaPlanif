@@ -24,7 +24,8 @@ class StoreConfigRepository {
     StoreConfig(
       id: 'metro',
       name: 'Metro',
-      flyerUrl: 'https://www.circulaire-en-ligne.ca/circulaire-metro/circulaire-metro-speciaux-promotions-et-rabais-de-cette-semaine',
+      flyerUrl:
+          'https://www.circulaire-en-ligne.ca/circulaire-metro/circulaire-metro-speciaux-promotions-et-rabais-de-cette-semaine',
     ),
     StoreConfig(
       id: 'maxi',
@@ -42,13 +43,16 @@ class StoreConfigRepository {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_prefsKey);
     if (raw != null) {
+      List<StoreConfig>? stores;
       try {
         final decoded = jsonDecode(raw) as List<dynamic>;
-        final stores = decoded.map((e) => StoreConfig.fromJson(e as Map<String, dynamic>)).toList();
-        return await _appendNewDefaults(prefs, stores);
+        stores = decoded.map((e) => StoreConfig.fromJson(e as Map<String, dynamic>)).toList();
       } catch (_) {
         // Leftover data from an older, incompatible schema - reseed below.
       }
+      // Outside the try: a failed write here must not fall into the reseed
+      // path, which would overwrite the user's saved stores with defaults.
+      if (stores != null) return _appendNewDefaults(prefs, stores);
     }
     final defaults = defaultStores();
     await save(defaults);

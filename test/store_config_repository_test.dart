@@ -49,6 +49,18 @@ void main() {
     expect(stores.map((s) => s.id), ['1700000000000']);
   });
 
+  // Super C is offered once even to a list the user emptied: it's a store
+  // they were never given, not one they removed.
+  test('offers Super C once to a list emptied before it was a default', () async {
+    SharedPreferences.setMockInitialValues({'store_configs': '[]'});
+
+    final repo = StoreConfigRepository();
+    expect((await repo.load()).map((s) => s.id), ['super-c']);
+
+    await repo.save([]);
+    expect(await repo.load(), isEmpty);
+  });
+
   test('reseeds defaults when stored data is from an incompatible old schema', () async {
     SharedPreferences.setMockInitialValues({
       'store_configs': '[{"id":"iga","name":"IGA","slug":"iga","useEpicerieVariant":true}]',

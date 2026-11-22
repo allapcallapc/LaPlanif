@@ -602,4 +602,55 @@ void main() {
     expect(log.inputTokens, 10);
     expect(log.outputTokens, 5);
   });
+
+  test('requires a carb for every slot, allowing pantry staples, and parses them as pantry carbs', () async {
+    final client = MockClient((request) async {
+      expect(request.body, contains('every slot must have exactly one carb anchor'));
+      expect(request.body, contains('quinoa'));
+      expect(request.body, contains('"pantry"'));
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false},
+              {'name': 'Quinoa', 'store': 'Pantry', 'pantry': true},
+            ],
+            'note': 'Chicken with quinoa.',
+          },
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA', 'pantry': false},
+              // No pantry flag, but no store either - still a pantry carb.
+              {'name': 'Couscous', 'store': ''},
+            ],
+            'note': 'Tofu with couscous.',
+          },
+        ],
+      );
+    });
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    final preview = await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: mealSlots,
+      portionsPerMeal: 3,
+      items: items,
+    );
+
+    final lunch = preview.slots[0].anchorItems;
+    expect(lunch[0].isPantry, isFalse);
+    expect(lunch[1].isPantry, isTrue);
+    expect(lunch[1].store, AnchorItem.pantryStore);
+    final supper = preview.slots[1].anchorItems;
+    expect(supper[1].name, 'Couscous');
+    expect(supper[1].isPantry, isTrue);
+    expect(supper[1].store, AnchorItem.pantryStore);
+  });
+
+  test('a pantry anchor round-trips through JSON, and old JSON without the flag is a deal item', () {
+    const quinoa = AnchorItem.pantry('Quinoa');
+    expect(AnchorItem.fromJson(quinoa.toJson()).isPantry, isTrue);
+    expect(const AnchorItem(name: 'Tofu', store: 'IGA').toJson().containsKey('pantry'), isFalse);
+    expect(AnchorItem.fromJson({'name': 'Tofu', 'store': 'IGA'}).isPantry, isFalse);
+  });
 }

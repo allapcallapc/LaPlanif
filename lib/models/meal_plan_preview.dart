@@ -1,17 +1,31 @@
 import 'meal_plan_config.dart';
 
-/// One candidate deal item anchoring a slot's batch-cooked recipe - the main
-/// protein or a key supporting ingredient.
+/// One ingredient a slot's batch-cooked recipe is built around: a deal item
+/// (the main protein, a vegetable or carb side), or - for the carb only - a
+/// pantry staple such as rice, quinoa or couscous, which isn't on sale
+/// anywhere ([isPantry], with [store] set to [pantryStore]).
 class AnchorItem {
-  const AnchorItem({required this.name, required this.store});
+  const AnchorItem({required this.name, required this.store, this.isPantry = false});
+
+  /// A pantry carb: not a deal item, so it never appears among a recipe's
+  /// deal items or the shopping list's deals.
+  const AnchorItem.pantry(this.name) : store = pantryStore, isPantry = true;
+
+  static const pantryStore = 'Pantry';
 
   final String name;
   final String store;
+  final bool isPantry;
 
-  Map<String, dynamic> toJson() => {'name': name, 'store': store};
+  // `pantry` is only written when true, so deal-item JSON (and anything
+  // saved before pantry carbs existed) is unchanged.
+  Map<String, dynamic> toJson() => {'name': name, 'store': store, if (isPantry) 'pantry': true};
 
-  factory AnchorItem.fromJson(Map<String, dynamic> json) =>
-      AnchorItem(name: json['name'] as String, store: json['store'] as String);
+  factory AnchorItem.fromJson(Map<String, dynamic> json) => AnchorItem(
+    name: json['name'] as String,
+    store: json['store'] as String,
+    isPantry: json['pantry'] as bool? ?? false,
+  );
 }
 
 /// The AI's proposed direction for one [MealSlot]'s batch-cooked recipe: a

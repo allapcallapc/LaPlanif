@@ -346,7 +346,11 @@ class MealPlanPreviewService {
           portionsPerMeal: portionsPerMeal,
           anchorItems: rawAnchors.map((a) {
             final map = a as Map<String, dynamic>;
-            return AnchorItem(name: (map['name'] as String).trim(), store: (map['store'] as String).trim());
+            final name = (map['name'] as String).trim();
+            final store = (map['store'] as String? ?? '').trim();
+            final isPantry =
+                map['pantry'] == true || store.isEmpty || store.toLowerCase() == AnchorItem.pantryStore.toLowerCase();
+            return isPantry ? AnchorItem.pantry(name) : AnchorItem(name: name, store: store);
           }).toList(),
           note: (raw['note'] as String).trim(),
         ),
@@ -361,7 +365,9 @@ You are planning a non-binding meal-plan preview: a checkpoint before full recip
 
 Each meal slot represents ONE recipe, batch-cooked once, that must yield enough portions to cover every meal instance in that slot - not one recipe per instance. A slot with count=5 and portionsPerMeal=3 needs one recipe that yields 15 portions total, batch-cooked once and portioned out across the week.
 
-For each meal slot, propose the anchor item(s) that define this slot's big-batch recipe: always the main protein item, plus a vegetable or carb side when one naturally fits that direction (e.g. rice alongside a stir-fry, potatoes alongside a roast) or when a priority item in that category is available and fits - don't force a vegetable/carb pick just to fill a slot when nothing fits well. Prioritize items marked as priority over other available deal items whenever one reasonably fits the slot, across every category (protein, vegetables, carbs) - always try to work a priority item into the anchor set when possible, not just for the protein. Items marked [COVER DEAL] are the flyer's featured best deals - prefer one when it reasonably fits a slot, especially for the vegetable/carb side. Draw from priority items first, then the other available deal items. Never propose an excluded item. Size the selection conceptually for a big-batch recipe covering the slot's total portions needed - do not invent a recipe name or instructions yet.
+For each meal slot, propose the anchor item(s) that define this slot's big-batch recipe: always the main protein item, always exactly one carb (see CARB below), plus a vegetable side when one naturally fits that direction or when a priority vegetable is available and fits - don't force a vegetable pick just to fill a slot when nothing fits well.
+
+CARB: every slot must have exactly one carb anchor - never leave a slot without one. Use a carb deal item (category Carbs) when one fits the slot's direction (e.g. a pasta deal for a pasta bake); otherwise pick a pantry staple that suits the dish - e.g. rice (basmati, jasmine), quinoa, couscous, pasta, egg noodles, rice noodles, potatoes, sweet potatoes, bulgur, orzo, barley, tortillas, naan or bread. Record a pantry staple with pantry=true and store "Pantry"; record a carb deal item with pantry=false and its real store. Vary the carb across the slots of the plan (and against the other slots listed below) - don't give two slots the same carb unless there is no sensible alternative. Never record a pantry item for anything but the carb: proteins and vegetables always come from the deal items. Prioritize items marked as priority over other available deal items whenever one reasonably fits the slot, across every category (protein, vegetables, carbs) - always try to work a priority item into the anchor set when possible, not just for the protein. Items marked [COVER DEAL] are the flyer's featured best deals - prefer one when it reasonably fits a slot, especially for the vegetable/carb side. Draw from priority items first, then the other available deal items. Never propose an excluded item. Size the selection conceptually for a big-batch recipe covering the slot's total portions needed - do not invent a recipe name or instructions yet.
 
 No ingredient may anchor more than one slot in this plan, even a priority item that would otherwise fit several slots well - each slot's anchors must be entirely distinct from every other slot's. This means the same product, not just the same exact listing: don't anchor one slot on broccoli from one store and another slot on broccoli from a different store (or a differently-worded listing of the same thing) - that still counts as reusing the same ingredient. When multiple slots are given in the same call, check your own choices for cross-slot duplicates (by ingredient, not just by exact name/store) as you go. A list of deal items already used as anchors elsewhere in this plan may also be given below - never reuse any of those either, by the same ingredient-level rule, and pick a different item for any slot that would otherwise repeat one.
 
@@ -410,8 +416,11 @@ const _recordSlotPreviewsTool = {
                     'properties': {
                       'name': {'type': 'STRING'},
                       'store': {'type': 'STRING'},
+                      // True only for the slot's pantry-staple carb (not a
+                      // deal item) - see the CARB rule in the system prompt.
+                      'pantry': {'type': 'BOOLEAN'},
                     },
-                    'required': ['name', 'store'],
+                    'required': ['name', 'store', 'pantry'],
                   },
                 },
                 'note': {'type': 'STRING'},

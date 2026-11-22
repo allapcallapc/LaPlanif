@@ -1013,4 +1013,34 @@ void main() {
 
     expect(callCount, 2);
   });
+
+  test('tells both calls a pantry carb anchor is the carb, but not a deal item', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      expect(request.body, contains('Quinoa (pantry staple carb, not a deal item)'));
+      if (callCount == 1) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+      expect(request.body, contains('never list it in dealItems'));
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Chicken stir-fry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Quinoa'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli'),
+          },
+        ],
+      );
+    });
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+    await service.generateMealPlan(
+      apiKey: 'test-key',
+      slots: [
+        slots.single.copyWith(anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA'), AnchorItem.pantry('Quinoa')]),
+      ],
+      items: items,
+    );
+
+    expect(callCount, 2);
+  });
 }

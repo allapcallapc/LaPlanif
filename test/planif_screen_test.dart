@@ -318,8 +318,21 @@ class _FailingSaveMealPlanConfigRepository extends MealPlanConfigRepository {
   }
 }
 
-/// Moves from the ingredients step to the recipes step.
+/// Moves from the ingredients step to the recipes step, first choosing a
+/// pantry carb (Quinoa) for any meal that doesn't have one yet - every meal
+/// needs a carb before the ingredients can be confirmed.
 Future<void> _confirmIngredients(WidgetTester tester) async {
+  for (var i = 0; ; i++) {
+    final card = find.byKey(ValueKey('ingredients-slot-$i'));
+    if (card.evaluate().isEmpty) break;
+    final chooseCarb = find.byKey(ValueKey('choose-carb-$i'));
+    if (chooseCarb.evaluate().isEmpty) continue;
+    await tester.ensureVisible(chooseCarb);
+    await tester.tap(chooseCarb);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Quinoa'));
+    await tester.pumpAndSettle();
+  }
   await tester.tap(find.text('Confirm ingredients'));
   await tester.pumpAndSettle();
 }
@@ -2912,7 +2925,8 @@ void main() {
     expect(lunchOtherMeals.single.mealType, MealType.supper);
     expect(lunchOtherMeals.single.protein, 'tofu');
     expect(lunchOtherMeals.single.count, greaterThan(0));
-    expect(lunchOtherMeals.single.anchorItems.single.name, 'Tofu');
+    // Tofu, plus the pantry carb chosen on the ingredients step.
+    expect(lunchOtherMeals.single.anchorItems.map((a) => a.name), ['Tofu', 'Quinoa']);
     expect(lunchOtherMeals.single.recipeNames, isEmpty);
 
     // Move on to the supper meal (via its picker tile) and generate its
@@ -4517,6 +4531,8 @@ void main() {
 
     // Swap the supper slot's Tofu anchor: Chicken thighs is already used by
     // the lunch slot, so only Ground pork should be offered.
+    await tester.ensureVisible(find.text('Tofu · IGA'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Tofu · IGA'));
     await tester.pumpAndSettle();
     expect(find.text('Swap anchor item'), findsOneWidget);
@@ -4527,6 +4543,8 @@ void main() {
 
     // Add an anchor to the lunch slot: Tofu is already used by the supper
     // slot, so only Ground pork should be offered there too.
+    await tester.ensureVisible(_inIngredientCard(0, find.text('Add item')));
+    await tester.pumpAndSettle();
     await tester.tap(_inIngredientCard(0, find.text('Add item')));
     await tester.pumpAndSettle();
     expect(find.text('Add anchor item'), findsOneWidget);
@@ -4643,6 +4661,8 @@ void main() {
     // same produce under a different store, so the add picker on the
     // supper slot must not offer it either.
     expect(find.text('Supper · meat'), findsOneWidget);
+    await tester.ensureVisible(_inIngredientCard(1, find.text('Add item')));
+    await tester.pumpAndSettle();
     await tester.tap(_inIngredientCard(1, find.text('Add item')));
     await tester.pumpAndSettle();
 
@@ -6001,5 +6021,106 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Brocoli'), findsWidgets);
     expect(find.textContaining('Carottes'), findsWidgets);
+  });
+
+  testWidgets('every meal needs a carb, from the pantry or the deals, before ingredients can be confirmed', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 2,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 3)],
+      ),
+    );
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(name: 'Spaghetti', price: '1.49\$', unit: '', category: DealCategory.carbs, storeName: 'IGA', pageIndex: 2),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 3,
+            portionsPerMeal: 2,
+            anchorItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Chicken.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    // No carb yet, so confirming is refused, naming the meal.
+    expect(find.text('Choose a carb'), findsOneWidget);
+    await tester.tap(find.text('Confirm ingredients'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose a carb for: Lunch · meat'), findsOneWidget);
+    expect(find.text('Recipes'), findsNothing);
+
+    // Something typed in counts as a pantry carb.
+    await tester.tap(find.text('Choose a carb'));
+    await tester.pumpAndSettle();
+    expect(find.text('On sale this week'), findsOneWidget);
+    expect(find.text('Spaghetti'), findsOneWidget);
+    expect(find.text('Couscous'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Polenta');
+    await tester.ensureVisible(find.text('Use'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use'));
+    await tester.pumpAndSettle();
+    expect(find.text('Polenta · Pantry'), findsOneWidget);
+    expect(find.text('Choose a carb'), findsNothing);
+
+    // Tapping the carb reopens the carb picker; a deal carb replaces it.
+    await tester.tap(find.text('Polenta · Pantry'));
+    await tester.pumpAndSettle();
+    expect(find.text('From the pantry'), findsOneWidget);
+    await tester.tap(find.text('Spaghetti'));
+    await tester.pumpAndSettle();
+    expect(find.text('Spaghetti · IGA'), findsOneWidget);
+    expect(find.text('Polenta · Pantry'), findsNothing);
+
+    await _confirmIngredients(tester);
+    expect(find.text('Recipes'), findsOneWidget);
+    expect(find.text('Spaghetti · IGA'), findsOneWidget);
   });
 }

@@ -52,6 +52,8 @@ final _deals = [
 ];
 
 void main() {
+  pantryTests();
+
   test('attaches a confirmed anchor the recipe left out to the protein component', () {
     final result = reconcileRecipeDealItems(
       recipe: _recipe(protein: const [_chicken]),
@@ -112,5 +114,20 @@ void main() {
     final result = reconcileRecipeDealItems(recipe: _recipe(), anchors: const [custom], deals: _deals);
 
     expect(result.proteinComponent.dealItems.single.name, 'Something else');
+  });
+}
+
+void pantryTests() {
+  test('never lists a pantry carb as a deal item, even when the recipe does', () {
+    const quinoa = AnchorItem.pantry('Quinoa');
+    final result = reconcileRecipeDealItems(
+      recipe: _recipe(protein: const [_chicken], carb: const [AnchorItem(name: 'Quinoa', store: 'Pantry')]),
+      anchors: const [_chicken, quinoa],
+      deals: _deals,
+    );
+
+    expect(result.carbComponent.usesWeeklyDeal, isFalse);
+    expect(result.proteinComponent.dealItems.map((d) => d.name), ['Chicken thighs']);
+    expect(addedDealItems(result, const [_chicken, quinoa]), isEmpty);
   });
 }

@@ -6,7 +6,7 @@ LaPlanif scrapes the weekly flyers for your stores (IGA, Metro, Maxi and Super C
 
 ## Features
 
-- **Planif**: fetch this week's deals, mark the items you want or want to skip, review the plan's structure, confirm the deal items for every meal on one page, then generate the recipes (one at a time or all at once). A recipe always keeps the ingredients you confirmed, and can add another item from the deals when it uses one. You can regenerate a single recipe and pull out the week's full ingredient list. Your in-progress plan is saved automatically, so a refresh or crash doesn't lose it.
+- **Planif**: fetch this week's deals, mark the items you want or want to skip, review the plan's structure, confirm the ingredients for every meal on one page (each meal always gets a carb, from the deals or a pantry staple like rice, quinoa or couscous), then generate the recipes (one at a time or all at once). A recipe always keeps the ingredients you confirmed, and can add another item from the deals when it uses one. You can regenerate a single recipe and pull out the week's full ingredient list. Your in-progress plan is saved automatically, so a refresh or crash doesn't lose it.
 - **History**: keep the meal plans you save and edit their recipe links. Recently saved meals are passed to the generator so it doesn't suggest them again too soon.
 - **Config**: set the stores and flyer URLs, your Gemini API key and the order models are tried in, and the default meal plan (meal slots, portions, how many days before a meal can repeat, and standing dietary instructions). An AI Usage log shows each AI call.
 

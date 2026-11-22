@@ -12,6 +12,7 @@ import '../utils/error_formatting.dart';
 import '../utils/iso_week.dart';
 import '../utils/recipe_deal_items.dart';
 import '../widgets/anchor_picker_dialog.dart';
+import '../widgets/carb_picker_dialog.dart';
 import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
 import 'planif_screen.dart';
@@ -255,6 +256,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   };
 
   Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
+    if (_isCarb(current)) return _chooseCarb(slotIndex);
     final usedKeys = _usedAnchorKeys();
     final available = widget.items
         .where((item) => item.preference != DealPreference.excluded)
@@ -308,6 +310,48 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   }
 
   void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
+
+  // A slot's carb is either a pantry staple or a deal item filed under Carbs.
+  bool _isCarb(AnchorItem anchor) =>
+      anchor.isPantry ||
+      widget.items.any(
+        (item) => item.category == DealCategory.carbs && _anchorNameKey(item.name) == _anchorNameKey(anchor.name),
+      );
+
+  bool _hasCarb(MealSlotPreview slot) => slot.anchorItems.any(_isCarb);
+
+  // Picks (or replaces) a meal's one carb. Deal carbs another meal already
+  // anchors on aren't offered, same as the other pickers; pantry staples
+  // other meals use are still offered, just flagged.
+  Future<void> _chooseCarb(int slotIndex) async {
+    final otherAnchors = [
+      for (var i = 0; i < _preview.slots.length; i++)
+        if (i != slotIndex) ..._preview.slots[i].anchorItems,
+    ];
+    final otherKeys = {for (final anchor in otherAnchors) _anchorNameKey(anchor.name)};
+    final deals = widget.items
+        .where((item) => item.category == DealCategory.carbs && item.preference != DealPreference.excluded)
+        .where((item) => !otherKeys.contains(_anchorNameKey(item.name)))
+        .toList();
+    final selected = await showCarbPickerDialog(
+      context,
+      deals: deals,
+      usedElsewhere: {
+        for (final anchor in otherAnchors)
+          if (_isCarb(anchor)) _anchorNameKey(anchor.name),
+      },
+    );
+    if (selected == null || !mounted) return;
+
+    setState(() {
+      final slots = [..._preview.slots];
+      final slot = slots[slotIndex];
+      slots[slotIndex] = slot.copyWith(anchorItems: [...slot.anchorItems.where((a) => !_isCarb(a)), selected]);
+      _preview = MealPlanPreview(slots: slots);
+      _slotRecipes[slotIndex] = null;
+    });
+    await _saveDraft();
+  }
 
   // A side covered by the protein recipe is part of that dish rather than
   // a standalone side, so flag it - otherwise the AI can't tell it apart
@@ -427,6 +471,16 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
 
   Future<void> _confirmIngredients() async {
     if (_busy) return;
+    final missingCarb = [
+      for (final slot in _preview.slots)
+        if (!_hasCarb(slot)) '${_capitalize(slot.mealType.name)} · ${slot.protein}',
+    ];
+    if (missingCarb.isNotEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Choose a carb for: ${missingCarb.join(', ')}')));
+      return;
+    }
     setState(() {
       _ingredientsConfirmed = true;
       _reviewIndex = _firstMissingRecipeIndex();
@@ -539,8 +593,9 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         children: [
           Text(
-            'Check the deal items each meal is built around. Recipes come next and will keep every item you '
-            'confirm here - they may add another deal item, but never drop one.',
+            'Check what each meal is built around - every meal needs a carb, from the deals or the pantry. '
+            'Recipes come next and will keep every item you confirm here - they may add another deal item, '
+            'but never drop one.',
             style: textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -577,11 +632,35 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           children: [
             _buildSlotHeader(slot),
             const SizedBox(height: 10),
+            Text('Carb', style: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor, disabled: disabled),
+                if (_hasCarb(slot))
+                  for (final anchor in slot.anchorItems.where(_isCarb))
+                    _buildAnchorChip(index, anchor, disabled: disabled)
+                else
+                  ActionChip(
+                    key: ValueKey('choose-carb-$index'),
+                    avatar: Icon(Icons.add, size: 16, color: Theme.of(context).colorScheme.error),
+                    label: const Text('Choose a carb'),
+                    side: BorderSide(color: Theme.of(context).colorScheme.error),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: disabled ? null : () => _chooseCarb(index),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text('Deal items', style: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final anchor in slot.anchorItems.where((a) => !_isCarb(a)))
+                  _buildAnchorChip(index, anchor, disabled: disabled),
                 ActionChip(
                   avatar: const Icon(Icons.add, size: 16),
                   label: const Text('Add item'),
@@ -646,7 +725,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
 
   Widget _buildAnchorChip(int slotIndex, AnchorItem anchor, {bool disabled = false}) {
     return InputChip(
-      avatar: const Icon(Icons.swap_horiz, size: 16),
+      avatar: Icon(anchor.isPantry ? Icons.kitchen_outlined : Icons.swap_horiz, size: 16),
       label: Text('${anchor.name} · ${anchor.store}'),
       tooltip: 'Tap to swap, or use the × to remove',
       onPressed: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
@@ -745,7 +824,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
                 Icons.set_meal_outlined,
                 _anchorForCategory(slot, DealCategory.protein) ?? slot.protein,
               ),
-              _buildReviewTileIngredient(Icons.grain, _anchorForCategory(slot, DealCategory.carbs) ?? '—'),
+              _buildReviewTileIngredient(
+                Icons.grain,
+                _anchorForCategory(slot, DealCategory.carbs) ??
+                    slot.anchorItems.where((a) => a.isPantry).map((a) => a.name).firstOrNull ??
+                    '—',
+              ),
               _buildReviewTileIngredient(Icons.eco_outlined, _anchorForCategory(slot, DealCategory.vegetables) ?? '—'),
             ] else ...[
               _buildReviewTileIngredient(Icons.set_meal_outlined, _tileIngredientLabel(recipe.proteinComponent)),
@@ -832,13 +916,13 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           children: [
             _buildSlotHeader(slot),
             const SizedBox(height: 12),
-            Text('Deal items', style: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+            Text('Built around', style: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 6),
             Wrap(
               spacing: 6,
               runSpacing: 6,
               children: [
-                if (slot.anchorItems.isEmpty && added.isEmpty) Text('No deal items', style: textTheme.bodySmall),
+                if (slot.anchorItems.isEmpty && added.isEmpty) Text('No ingredients', style: textTheme.bodySmall),
                 for (final anchor in slot.anchorItems) _buildDealItemChip(anchor, added: false),
                 for (final item in added) _buildDealItemChip(item, added: true),
               ],
@@ -876,7 +960,14 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     return Chip(
       key: added ? ValueKey('added-deal-${item.name}') : null,
-      avatar: Icon(added ? Icons.add_circle_outline : Icons.check, size: 16),
+      avatar: Icon(
+        added
+            ? Icons.add_circle_outline
+            : item.isPantry
+            ? Icons.kitchen_outlined
+            : Icons.check,
+        size: 16,
+      ),
       label: Text('${item.name} · ${item.store}'),
       backgroundColor: added ? colorScheme.tertiaryContainer : null,
       visualDensity: VisualDensity.compact,

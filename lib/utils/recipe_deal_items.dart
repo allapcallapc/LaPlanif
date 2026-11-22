@@ -17,11 +17,14 @@ String _nameKey(String name) => name.trim().toLowerCase();
 ///   name, with the store taken from the deal itself if the AI got it
 ///   wrong) - a recipe can pick up a vegetable that happens to be on sale,
 ///   but can't invent a deal or bring back one the user excluded.
+/// - A pantry carb anchor isn't a deal item, so it's never listed among a
+///   component's deal items (the recipe's own ingredients cover it).
 MealSlotFull reconcileRecipeDealItems({
   required MealSlotFull recipe,
   required List<AnchorItem> anchors,
   required List<DealItem> deals,
 }) {
+  anchors = anchors.where((anchor) => !anchor.isPantry).toList();
   final anchorKeys = {for (final anchor in anchors) _nameKey(anchor.name)};
   final dealsByKey = <String, List<DealItem>>{};
   for (final deal in deals) {

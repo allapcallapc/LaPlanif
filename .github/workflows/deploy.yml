@@ -55,7 +55,8 @@ jobs:
       - name: Build web app
         run: |
           flutter build web --base-href "/${{ github.event.repository.name }}/" \
-            --build-name=${{ steps.version.outputs.name }}
+            --build-name=${{ steps.version.outputs.name }} \
+            --dart-define=APP_VERSION=${{ steps.version.outputs.name }}
 
       # Production lives at the root of gh-pages, alongside /main/ (latest
       # main branch) and /pr-<n>/ (per-PR previews) published by the other

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/ai_config_repository.dart';
 import '../services/meal_plan_config_repository.dart';
 import '../services/store_config_repository.dart';
+import '../utils/app_version.dart' as build_info;
 import 'config_ai_screen.dart';
 import 'config_meal_plan_screen.dart';
 import 'config_stores_screen.dart';
@@ -19,12 +20,16 @@ class ConfigScreen extends StatelessWidget {
     required this.repository,
     AiConfigRepository? aiConfigRepository,
     MealPlanConfigRepository? mealPlanConfigRepository,
+    this.appVersion = build_info.appVersion,
   }) : aiConfigRepository = aiConfigRepository ?? AiConfigRepository(),
        mealPlanConfigRepository = mealPlanConfigRepository ?? MealPlanConfigRepository();
 
   final StoreConfigRepository repository;
   final AiConfigRepository aiConfigRepository;
   final MealPlanConfigRepository mealPlanConfigRepository;
+
+  /// Shown at the bottom of the menu; overridable for tests.
+  final String appVersion;
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +60,12 @@ class ConfigScreen extends StatelessWidget {
             onTap: () => Navigator.of(
               context,
             ).push(MaterialPageRoute(builder: (_) => ConfigAiScreen(repository: aiConfigRepository))),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('Version'),
+            trailing: Text(appVersion),
           ),
         ],
       ),

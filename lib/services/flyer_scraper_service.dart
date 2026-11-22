@@ -100,19 +100,20 @@ class FlyerScraperService {
     return FlyerPage(pageNumber: int.parse(match.group(1)!), altText: alt, imageUrl: imageUrl);
   }
 
-  /// The image's real URL, resolved against the flyer page. Prefers lazy-load
-  /// attributes over `src`, since lazy-loaded images keep a placeholder (often
-  /// a `data:` URI) in `src` until scrolled into view. Returns null when no
-  /// usable http(s) URL is found.
+  /// The image's real URL, resolved against the flyer page. Lazy-load
+  /// attributes and srcsets come before `src`, since lazy-loaded images keep
+  /// a placeholder in `src` (a `data:` URI or a real blank/spinner image)
+  /// until scrolled into view. Returns null when no usable http(s) URL is
+  /// found.
   static String? _imageUrlOf(Element img, Uri baseUri) {
-    final srcset = img.attributes['data-srcset'] ?? img.attributes['srcset'];
+    final attributes = img.attributes;
     final candidates = [
-      img.attributes['data-src'],
-      img.attributes['data-lazy-src'],
-      img.attributes['data-original'],
-      img.attributes['src'],
-      // Last entry of a srcset is conventionally the largest.
-      srcset?.split(',').last.trim().split(RegExp(r'\s+')).first,
+      attributes['data-src'],
+      attributes['data-lazy-src'],
+      attributes['data-original'],
+      _largestSrcsetUrl(attributes['data-srcset']),
+      _largestSrcsetUrl(attributes['srcset']),
+      attributes['src'],
     ];
     for (final candidate in candidates) {
       final value = candidate?.trim();
@@ -126,6 +127,27 @@ class FlyerScraperService {
       if (resolved.scheme == 'http' || resolved.scheme == 'https') return resolved.toString();
     }
     return null;
+  }
+
+  /// The URL of a srcset's widest candidate (by its `w` descriptor; the last
+  /// candidate when none has one). Candidates are separated by a comma
+  /// *followed by whitespace* - URLs themselves may contain commas (CDN
+  /// transforms like `w_1280,q_80`).
+  static String? _largestSrcsetUrl(String? srcset) {
+    if (srcset == null) return null;
+    String? best;
+    var bestWidth = -1;
+    for (final candidate in srcset.trim().split(RegExp(r',\s+'))) {
+      final fields = candidate.trim().split(RegExp(r'\s+'));
+      if (fields.first.isEmpty) continue;
+      final descriptor = fields.length > 1 ? fields[1] : '';
+      final width = descriptor.endsWith('w') ? int.tryParse(descriptor.substring(0, descriptor.length - 1)) ?? 0 : 0;
+      if (width >= bestWidth) {
+        best = fields.first;
+        bestWidth = width;
+      }
+    }
+    return best;
   }
 
   /// Maxi's flyer (seen Oct-Nov 2026) labels every page `Maxi - Page N`

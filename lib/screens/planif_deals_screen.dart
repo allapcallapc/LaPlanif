@@ -109,9 +109,7 @@ class _PlanifDealsScreenState extends State<PlanifDealsScreen> {
     var remainingModels = models;
     try {
       final pages = await widget.services.scraperService.fetchPages(state.store);
-      for (var start = 0; start < pages.length; start += AiDealExtractionService.maxPagesPerCall) {
-        final end = (start + AiDealExtractionService.maxPagesPerCall).clamp(0, pages.length);
-        final chunk = pages.sublist(start, end);
+      for (final chunk in AiDealExtractionService.chunkPages(pages)) {
         final controller = ModelFallbackController(
           models: remainingModels,
           waitBeforeRetry: widget.services.rateLimitWait,

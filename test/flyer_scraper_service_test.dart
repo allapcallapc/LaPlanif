@@ -306,6 +306,20 @@ void main() {
       ]);
     });
 
+    test('prefer a srcset over a placeholder image in src, splitting candidates correctly', () async {
+      final pages = await scrape('''
+        <html><body>
+          <img src="/assets/lazy-placeholder.gif" data-srcset="page1_640.jpg 640w, page1_1280.jpg 1280w" alt="Circulaire Maxi - Page 1">
+          <img src="/blank.gif" srcset="https://cdn.example.com/w_1280,q_80/p2.jpg 1280w, https://cdn.example.com/w_640,q_80/p2.jpg 640w" alt="Circulaire Maxi - Page 2">
+        </body></html>
+      ''');
+
+      expect(pages.map((p) => p.imageUrl), [
+        'https://www.example.com/circulaire-maxi/page1_1280.jpg',
+        'https://cdn.example.com/w_1280,q_80/p2.jpg',
+      ]);
+    });
+
     test('are not given an image when the alt text describes the page', () async {
       final pages = await scrape('''
         <html><body>

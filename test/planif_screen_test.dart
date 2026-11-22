@@ -134,6 +134,10 @@ class _FakePreviewService extends MealPlanPreviewService {
   /// slots already claimed.
   final List<List<AnchorItem>> usedAnchorsCalls = [];
 
+  /// Every otherSlots list passed to previewMealPlan, in call order - lets
+  /// tests assert a regenerate call told the AI the other slots' counts.
+  final List<List<MealSlotPreview>> otherSlotsCalls = [];
+
   /// Every portionsPerMeal/dietaryNotes passed to previewMealPlan, in call
   /// order - lets tests assert the structure step's edits actually reached
   /// the generation call, not just the meal slots.
@@ -147,11 +151,13 @@ class _FakePreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
     String? model,
   }) {
     calls.add(mealSlots);
+    otherSlotsCalls.add(otherSlots);
     usedAnchorsCalls.add(alreadyUsedAnchors);
     portionsPerMealCalls.add(portionsPerMeal);
     dietaryNotesCalls.add(dietaryNotes);
@@ -173,6 +179,7 @@ class _FakeDeferredPreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
     String? model,
@@ -197,6 +204,7 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     required int portionsPerMeal,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
+    List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
     String? model,
@@ -2844,8 +2852,10 @@ void main() {
               name: 'Quinoa',
               usesWeeklyDeal: false,
             ),
+            // Covered by the protein recipe, so other meals see it marked
+            // as part of that dish rather than as a standalone side.
             vegetableComponent: const MealComponent(
-              type: MealComponentType.simpleSide,
+              type: MealComponentType.coveredByProtein,
               name: 'Green beans',
               usesWeeklyDeal: false,
             ),
@@ -2893,6 +2903,7 @@ void main() {
     expect(lunchOtherMeals.length, 1);
     expect(lunchOtherMeals.single.mealType, MealType.supper);
     expect(lunchOtherMeals.single.protein, 'tofu');
+    expect(lunchOtherMeals.single.count, greaterThan(0));
     expect(lunchOtherMeals.single.anchorItems.single.name, 'Tofu');
     expect(lunchOtherMeals.single.recipeNames, isEmpty);
 
@@ -2937,7 +2948,7 @@ void main() {
     expect(generationService.otherMealsCalls[2].single.recipeNames, [
       'Original supper recipe',
       'Quinoa',
-      'Green beans',
+      'Green beans (part of the protein recipe)',
     ]);
 
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
@@ -3561,6 +3572,10 @@ void main() {
     // The regenerate call is told the supper slot's current anchor, so the
     // AI doesn't reuse an ingredient another slot is already using.
     expect(previewService.usedAnchorsCalls[1].map((a) => a.name), ['Tofu']);
+    // ...and the other slot itself, with its count, so plan-wide frequency
+    // limits ("no more than 2 days of fish") still hold on a regenerate.
+    expect(previewService.otherSlotsCalls[1].single.mealType, MealType.supper);
+    expect(previewService.otherSlotsCalls[1].single.count, greaterThan(0));
 
     // The regenerated slot changed... The picker tile above now also
     // guesses at a protein/carb/veg breakdown from the anchors, so the new

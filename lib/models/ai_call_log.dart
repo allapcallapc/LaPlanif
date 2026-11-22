@@ -8,6 +8,7 @@ class AiCallLog {
     this.outputTokens = 0,
     this.errorMessage,
     this.pageSample,
+    this.details,
   });
 
   final DateTime timestamp;
@@ -25,6 +26,12 @@ class AiCallLog {
   /// tell "the AI found nothing" apart from "there was nothing to find".
   final String? pageSample;
 
+  /// Free-form diagnostic text about the call, shown alongside
+  /// [pageSample] on the AI Usage screen - e.g. the meal plan preview's
+  /// instructionCheck, the model's own account of how it applied the
+  /// user's standing instructions.
+  final String? details;
+
   Map<String, dynamic> toJson() => {
     'timestamp': timestamp.toIso8601String(),
     'storeName': storeName,
@@ -34,6 +41,7 @@ class AiCallLog {
     'outputTokens': outputTokens,
     'errorMessage': errorMessage,
     'pageSample': pageSample,
+    'details': details,
   };
 
   factory AiCallLog.fromJson(Map<String, dynamic> json) => AiCallLog(
@@ -45,5 +53,6 @@ class AiCallLog {
     outputTokens: json['outputTokens'] as int? ?? 0,
     errorMessage: json['errorMessage'] as String?,
     pageSample: json['pageSample'] as String?,
+    details: json['details'] as String?,
   );
 }

@@ -18,6 +18,7 @@ http.Response _successResponse({
   int inputTokens = 100,
   int outputTokens = 50,
   required List<Map<String, dynamic>> slots,
+  String? instructionCheck,
 }) {
   return http.Response(
     jsonEncode({
@@ -28,7 +29,7 @@ http.Response _successResponse({
               {
                 'functionCall': {
                   'name': 'record_slot_previews',
-                  'args': {'slots': slots},
+                  'args': {if (instructionCheck != null) 'instructionCheck': instructionCheck, 'slots': slots},
                 },
               },
             ],
@@ -209,6 +210,112 @@ void main() {
       items: items,
       dietaryNotes: 'No more than 2 days of fish per week.',
     );
+  });
+
+  test('makes the AI check standing instructions against every slot before picking anchors', () async {
+    final client = MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final params =
+          ((body['tools'] as List).single['functionDeclarations'] as List).single['parameters'] as Map<String, dynamic>;
+      // instructionCheck must be required and come before slots, so the
+      // model reasons through e.g. "max 2 days of fish" vs a count=5 slot
+      // before it commits to anchors.
+      expect(params['required'], contains('instructionCheck'));
+      expect(params['propertyOrdering'], ['instructionCheck', 'slots']);
+
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'note',
+          },
+        ],
+      );
+    });
+
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+      dietaryNotes: 'No more than 2 days of fish per week.',
+    );
+  });
+
+  test('tells a single-slot regenerate about the other slots\' counts for frequency limits', () async {
+    final client = MockClient((request) async {
+      expect(
+        request.body,
+        contains(
+          'Other slots already in this plan, not part of this call - their anchors are fixed, but count their '
+          'days toward any frequency limit in the standing instructions:\\n'
+          '- supper, protein=meat, count=2 days, anchors: Salmon fillet (IGA)',
+        ),
+      );
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Chicken thighs', 'store': 'IGA'},
+            ],
+            'note': 'note',
+          },
+        ],
+      );
+    });
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      portionsPerMeal: 3,
+      items: items,
+      dietaryNotes: 'No more than 2 days of fish.',
+      otherSlots: const [
+        MealSlotPreview(
+          mealType: MealType.supper,
+          protein: 'meat',
+          count: 2,
+          portionsPerMeal: 3,
+          anchorItems: [AnchorItem(name: 'Salmon fillet', store: 'IGA')],
+          note: '',
+        ),
+      ],
+    );
+  });
+
+  test('parses a response that includes instructionCheck and keeps it in the call log', () async {
+    final client = MockClient(
+      (request) async => _successResponse(
+        instructionCheck: 'No fish over 2 days: slot 1 (count=4) uses tofu, no fish.',
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Firm tofu', 'store': 'IGA'},
+            ],
+            'note': 'Tofu stir-fry.',
+          },
+        ],
+      ),
+    );
+    final logRepository = AiCallLogRepository();
+    final service = MealPlanPreviewService(client: client, logRepository: logRepository);
+
+    final preview = await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      portionsPerMeal: 3,
+      items: items,
+      dietaryNotes: 'No more than 2 days of fish.',
+    );
+
+    expect(preview.slots.single.anchorItems.single.name, 'Firm tofu');
+    final logs = await logRepository.loadAll();
+    expect(logs.single.details, 'Instruction check: No fish over 2 days: slot 1 (count=4) uses tofu, no fish.');
   });
 
   test('omits the standing-instructions section when dietaryNotes is empty', () async {

@@ -112,11 +112,11 @@ class _AiUsageScreenState extends State<AiUsageScreen> {
           : '${_formatTimestamp(log.timestamp)} · ${log.errorMessage ?? "Failed"}',
     );
 
-    final sample = log.pageSample;
-    if (sample == null) {
+    final sample = [log.pageSample, log.details].whereType<String>().join('\n\n');
+    if (sample.isEmpty) {
       return ListTile(leading: icon, title: title, subtitle: subtitle);
     }
-    // The scraped-page sample is opt-in (tap to expand) rather than always
+    // The scraped-page sample / diagnostic details are opt-in (tap to expand) rather than always
     // shown - most rows are unremarkable, and always showing it would bury
     // the timestamp/token summary that's useful at a glance.
     return ExpansionTile(

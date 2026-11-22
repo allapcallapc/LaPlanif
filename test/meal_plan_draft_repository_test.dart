@@ -69,6 +69,28 @@ void main() {
     expect(loaded.slotRecipes, [null]);
   });
 
+  test('round-trips which step the draft was left on', () async {
+    final repo = MealPlanDraftRepository();
+
+    await repo.save(const MealPlanDraft(config: config, preview: preview, slotRecipes: [null]));
+    expect((await repo.load())!.ingredientsConfirmed, isFalse);
+
+    await repo.save(
+      const MealPlanDraft(config: config, preview: preview, slotRecipes: [null], ingredientsConfirmed: true),
+    );
+    expect((await repo.load())!.ingredientsConfirmed, isTrue);
+  });
+
+  test('a draft saved before the ingredients step existed is on recipes once one was generated', () {
+    final withRecipe = const MealPlanDraft(config: config, preview: preview, slotRecipes: [fullSlot]).toJson()
+      ..remove('ingredientsConfirmed');
+    final withoutRecipe = const MealPlanDraft(config: config, preview: preview, slotRecipes: [null]).toJson()
+      ..remove('ingredientsConfirmed');
+
+    expect(MealPlanDraft.fromJson(withRecipe).ingredientsConfirmed, isTrue);
+    expect(MealPlanDraft.fromJson(withoutRecipe).ingredientsConfirmed, isFalse);
+  });
+
   test('round-trips an already-generated slot recipe', () async {
     final repo = MealPlanDraftRepository();
     const draft = MealPlanDraft(config: config, preview: preview, slotRecipes: [fullSlot]);

@@ -36,6 +36,8 @@ void main() {
     expect(find.text('Metro'), findsOneWidget);
     expect(find.textContaining('circulaire-metro-speciaux'), findsOneWidget);
     expect(find.text('Maxi'), findsOneWidget);
+    expect(find.text('Super C'), findsOneWidget);
+    expect(find.textContaining('circulaire-super-c'), findsOneWidget);
   });
 
   testWidgets('adding a store requires both fields and rejects a bad URL', (tester) async {
@@ -49,21 +51,21 @@ void main() {
     await tester.pump();
     expect(find.text('Required'), findsNWidgets(2));
 
-    await tester.enterText(find.widgetWithText(TextFormField, 'Display name'), 'Super C');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Display name'), 'Provigo');
     await tester.enterText(find.widgetWithText(TextFormField, 'Flyer URL'), 'not a url');
     await tester.tap(find.text('Save'));
     await tester.pump();
     expect(find.text('Enter a valid URL'), findsOneWidget);
 
-    await tester.enterText(find.widgetWithText(TextFormField, 'Flyer URL'), 'https://example.com/super-c');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Flyer URL'), 'https://example.com/provigo');
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Super C'), findsOneWidget);
-    expect(find.textContaining('example.com/super-c'), findsOneWidget);
+    expect(find.text('Provigo'), findsOneWidget);
+    expect(find.textContaining('example.com/provigo'), findsOneWidget);
 
     final saved = await repo.load();
-    expect(saved.any((s) => s.name == 'Super C' && s.flyerUrl == 'https://example.com/super-c'), isTrue);
+    expect(saved.any((s) => s.name == 'Provigo' && s.flyerUrl == 'https://example.com/provigo'), isTrue);
   });
 
   // Deal items are matched back to a store by display name on retry
@@ -147,7 +149,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final saved = await repo.load();
-    expect(saved.length, 2);
+    expect(saved.length, 3);
   });
 
   testWidgets('cancelling the delete confirmation keeps the store', (tester) async {
@@ -160,14 +162,14 @@ void main() {
     await tester.pumpAndSettle();
 
     final saved = await repo.load();
-    expect(saved.length, 3);
+    expect(saved.length, 4);
   });
 
   testWidgets('shows empty state once every store is removed', (tester) async {
     final repo = StoreConfigRepository();
     await pumpScreen(tester, repo);
 
-    for (var i = 0; i < 3; i++) {
+    for (var i = 0; i < 4; i++) {
       await tester.tap(find.byIcon(Icons.delete_outline).first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete'));

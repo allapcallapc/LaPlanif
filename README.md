@@ -2,7 +2,7 @@
 
 A Flutter web app that plans a week of meals around what's on sale at your grocery stores.
 
-LaPlanif scrapes the weekly flyers for your stores (IGA, Metro and Maxi by default), uses Google's Gemini models to pull out the deals, and builds a meal plan with recipes and an aisle-grouped shopping list from them.
+LaPlanif scrapes the weekly flyers for your stores (IGA, Metro, Maxi and Super C by default), uses Google's Gemini models to pull out the deals, and builds a meal plan with recipes and an aisle-grouped shopping list from them.
 
 ## Features
 

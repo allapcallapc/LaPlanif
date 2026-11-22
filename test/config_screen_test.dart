@@ -52,4 +52,12 @@ void main() {
 
     expect(find.byType(ConfigAiScreen), findsOneWidget);
   });
+
+  testWidgets('shows the app version', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: ConfigScreen(repository: StoreConfigRepository(), appVersion: '1.2.3')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Version'), findsOneWidget);
+    expect(find.text('1.2.3'), findsOneWidget);
+  });
 }

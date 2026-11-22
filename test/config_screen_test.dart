@@ -60,4 +60,10 @@ void main() {
     expect(find.text('Version'), findsOneWidget);
     expect(find.text('1.2.3'), findsOneWidget);
   });
+
+  testWidgets('shows dev as the version when no APP_VERSION is defined', (tester) async {
+    await pumpScreen(tester);
+
+    expect(find.text('dev'), findsOneWidget);
+  });
 }

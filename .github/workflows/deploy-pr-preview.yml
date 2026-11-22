@@ -48,12 +48,17 @@ jobs:
           BASE_VERSION=$(jq -r '.["."]' .release-please-manifest.json)
           SHORT_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
           echo "name=${BASE_VERSION}-pr${{ github.event.pull_request.number }}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          # Shown on the config screen. Uses semver build metadata (+) rather
+          # than the pre-release (-) form above, since these builds are newer
+          # than BASE_VERSION, not a pre-release of it. --build-name keeps the
+          # "-" form in case Flutter rejects "+" in build names.
+          echo "display=${BASE_VERSION}+pr${{ github.event.pull_request.number }}.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Build web app
         run: |
           flutter build web --base-href "/${{ github.event.repository.name }}/pr-${{ github.event.pull_request.number }}/" \
             --build-name=${{ steps.version.outputs.name }} \
-            --dart-define=APP_VERSION=${{ steps.version.outputs.name }} --build-number=0
+            --dart-define=APP_VERSION=${{ steps.version.outputs.display }} --build-number=0
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4

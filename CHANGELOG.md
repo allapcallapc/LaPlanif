@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/allapcallapc/LaPlanif/compare/v0.4.0...v0.5.0) (2026-11-22)
+
+
+### Features
+
+* show app version on the config screen ([#56](https://github.com/allapcallapc/LaPlanif/issues/56)) ([3a4fea6](https://github.com/allapcallapc/LaPlanif/commit/3a4fea6c62e9f0afcfd2d28e674ea352acac6bfe))
+
 ## [0.4.0](https://github.com/allapcallapc/LaPlanif/compare/v0.3.0...v0.4.0) (2026-11-22)
 
 

@@ -2852,8 +2852,10 @@ void main() {
               name: 'Quinoa',
               usesWeeklyDeal: false,
             ),
+            // Covered by the protein recipe, so other meals see it marked
+            // as part of that dish rather than as a standalone side.
             vegetableComponent: const MealComponent(
-              type: MealComponentType.simpleSide,
+              type: MealComponentType.coveredByProtein,
               name: 'Green beans',
               usesWeeklyDeal: false,
             ),
@@ -2946,7 +2948,7 @@ void main() {
     expect(generationService.otherMealsCalls[2].single.recipeNames, [
       'Original supper recipe',
       'Quinoa',
-      'Green beans',
+      'Green beans (part of the protein recipe)',
     ]);
 
     await tester.tap(find.byKey(const ValueKey('review-step-1')));

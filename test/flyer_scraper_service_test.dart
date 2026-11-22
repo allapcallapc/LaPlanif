@@ -259,4 +259,75 @@ void main() {
 
     await expectLater(FlyerScraperService(client: client).fetchPages(store), throwsException);
   });
+
+  // Maxi's flyer (week of Nov 21 2026): every page's alt text was just
+  // "Circulaire Maxi - Page N", with no item descriptions at all, so the AI
+  // was sent 27 empty pages and returned no deals. Such pages now carry
+  // their image URL so the AI can read the deals from the image instead.
+  group('pages with a bare label', () {
+    const maxi = StoreConfig(
+      id: 'maxi',
+      name: 'Maxi',
+      flyerUrl: 'https://www.example.com/circulaire-maxi/speciaux-promotions-rabais-semaine',
+    );
+
+    Future<List<FlyerPage>> scrape(String body) {
+      final client = MockClient((request) async => http.Response(body, 200));
+      return FlyerScraperService(client: client).fetchPages(maxi);
+    }
+
+    test('carry their absolute image URL', () async {
+      final pages = await scrape('''
+        <html><body>
+          <img src="/images/circulaire-maxi_01.jpg" alt="Circulaire Maxi - Page 1">
+          <img src="https://cdn.example.com/maxi_02.webp" alt="Circulaire Maxi - Page 2.">
+        </body></html>
+      ''');
+
+      expect(pages.map((p) => p.imageUrl), [
+        'https://www.example.com/images/circulaire-maxi_01.jpg',
+        'https://cdn.example.com/maxi_02.webp',
+      ]);
+    });
+
+    test('prefer a lazy-load URL over a data: placeholder in src', () async {
+      final pages = await scrape('''
+        <html><body>
+          <img src="data:image/gif;base64,R0lGOD" data-src="maxi_01.jpg" alt="Circulaire Maxi - Page 1">
+          <img src="data:image/gif;base64,R0lGOD" srcset="small.jpg 640w, large.jpg 1280w" alt="Circulaire Maxi - Page 2">
+          <img src="data:image/gif;base64,R0lGOD" alt="Circulaire Maxi - Page 3">
+        </body></html>
+      ''');
+
+      expect(pages.map((p) => p.imageUrl), [
+        'https://www.example.com/circulaire-maxi/maxi_01.jpg',
+        'https://www.example.com/circulaire-maxi/large.jpg',
+        null,
+      ]);
+    });
+
+    test('prefer a srcset over a placeholder image in src, splitting candidates correctly', () async {
+      final pages = await scrape('''
+        <html><body>
+          <img src="/assets/lazy-placeholder.gif" data-srcset="page1_640.jpg 640w, page1_1280.jpg 1280w" alt="Circulaire Maxi - Page 1">
+          <img src="/blank.gif" srcset="https://cdn.example.com/w_1280,q_80/p2.jpg 1280w, https://cdn.example.com/w_640,q_80/p2.jpg 640w" alt="Circulaire Maxi - Page 2">
+        </body></html>
+      ''');
+
+      expect(pages.map((p) => p.imageUrl), [
+        'https://www.example.com/circulaire-maxi/page1_1280.jpg',
+        'https://cdn.example.com/w_1280,q_80/p2.jpg',
+      ]);
+    });
+
+    test('are not given an image when the alt text describes the page', () async {
+      final pages = await scrape('''
+        <html><body>
+          <img src="/maxi_01.jpg" alt="Circulaire Maxi - Page 1. Poulet entier 3,99 \$/lb">
+        </body></html>
+      ''');
+
+      expect(pages.single.imageUrl, isNull);
+    });
+  });
 }

@@ -21,6 +21,7 @@ class AiDealExtractionService {
     String? model,
     AiCallLogRepository? logRepository,
     this.retryDelay = const Duration(seconds: 2),
+    this.imageDownloadTimeout = const Duration(seconds: 15),
   }) : model = model ?? AiConfigRepository.defaultModels.first,
        _client = client ?? http.Client(),
        _logRepository = logRepository ?? AiCallLogRepository();
@@ -41,6 +42,41 @@ class AiDealExtractionService {
   /// discard already-extracted chunks and re-pay for them.
   static const maxPagesPerCall = 10;
 
+  /// The most page *images* (see [FlyerPage.imageUrl]) to send in one call.
+  /// A whole flyer page read from its image yields far more items than a
+  /// short alt text, and every image adds to the request size, so batches
+  /// containing images are kept much smaller than [maxPagesPerCall].
+  static const maxImagePagesPerCall = 3;
+
+  /// Splits [pages] (in order) into chunks for [extractItems]: at most
+  /// [maxPagesPerCall] pages each, of which at most [maxImagePagesPerCall]
+  /// carry an image.
+  static List<List<FlyerPage>> chunkPages(List<FlyerPage> pages) {
+    final chunks = <List<FlyerPage>>[];
+    var current = <FlyerPage>[];
+    var imagesInCurrent = 0;
+    for (final page in pages) {
+      final isImage = page.imageUrl != null;
+      if (current.length == maxPagesPerCall || (isImage && imagesInCurrent == maxImagePagesPerCall)) {
+        chunks.add(current);
+        current = <FlyerPage>[];
+        imagesInCurrent = 0;
+      }
+      current.add(page);
+      if (isImage) imagesInCurrent++;
+    }
+    if (current.isNotEmpty) chunks.add(current);
+    return chunks;
+  }
+
+  /// Largest page image (raw bytes) sent inline. With [maxImagePagesPerCall]
+  /// images and base64's ~33% overhead this keeps a request around 20 MB at
+  /// most; a bigger image is left out rather than risking the whole call.
+  static const maxImageBytes = 5 * 1024 * 1024;
+
+  /// Image formats the Gemini API accepts as inline data.
+  static const _supportedImageTypes = {'image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif'};
+
   final http.Client _client;
   final AiCallLogRepository _logRepository;
   final String model;
@@ -50,9 +86,20 @@ class AiDealExtractionService {
   /// tests don't have to wait for it.
   final Duration retryDelay;
 
+  /// How long to wait for a flyer page image to download before leaving it
+  /// out of the request.
+  final Duration imageDownloadTimeout;
+
+  /// Recently downloaded page images (URL -> inline part, or null if the
+  /// image couldn't be used), so a retry of the same chunk - same model on a
+  /// 503 / malformed response, or another model via ModelFallbackController -
+  /// doesn't download every image again. Kept small: only the current chunk's
+  /// images are ever needed again.
+  final _imageCache = <String, Future<Map<String, dynamic>?>>{};
+
   /// Extracts deal items from [pages] in a single API call. [pages] should
-  /// be at most [maxPagesPerCall] long - see its doc comment for why
-  /// chunking a larger page list is the caller's responsibility.
+  /// be one chunk from [chunkPages] - see [maxPagesPerCall]'s doc comment for
+  /// why chunking a larger page list is the caller's responsibility.
   Future<List<DealItem>> extractItems({
     required String apiKey,
     required String storeName,
@@ -78,10 +125,11 @@ class AiDealExtractionService {
     // function calling (finishReason MALFORMED_FUNCTION_CALL) - a
     // documented, non-deterministic quirk worth a single full retry, same
     // as the HTTP 503 case.
+    final body = jsonEncode(_buildRequestBody(await _buildUserParts(pages)));
     for (var attempt = 1;; attempt++) {
       final http.Response response;
       try {
-        response = await _postWithRetry(apiKey: apiKey, storeName: storeName, pages: pages, model: model);
+        response = await _postWithRetry(apiKey: apiKey, storeName: storeName, pages: pages, model: model, body: body);
       } catch (_) {
         await _log(
           storeName: storeName,
@@ -174,10 +222,10 @@ class AiDealExtractionService {
     required String storeName,
     required List<FlyerPage> pages,
     required String model,
+    required String body,
   }) async {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
-    final body = jsonEncode(_buildRequestBody(pages));
 
     final response = await _client.post(uri, headers: headers, body: body);
     if (response.statusCode != 503) {
@@ -223,12 +271,93 @@ class AiDealExtractionService {
     final avgChars = (totalChars / pages.length).round();
     final first = pages.first;
     final snippet = first.altText.length > 300 ? '${first.altText.substring(0, 300)}…' : first.altText;
-    return '${pages.length} page(s), avg $avgChars chars/page. Page ${first.pageNumber}: "$snippet"';
+    final imagePages = pages.where((p) => p.imageUrl != null).length;
+    final imageNote = imagePages > 0 ? ' ($imagePages with images)' : '';
+    return '${pages.length} page(s)$imageNote, avg $avgChars chars/page. Page ${first.pageNumber}: "$snippet"';
   }
 
-  Map<String, dynamic> _buildRequestBody(List<FlyerPage> pages) {
-    final labeledPages = pages.map((p) => 'Page ${p.pageNumber}:\n${p.altText}').join('\n\n');
+  /// The user turn's parts: each page's "Page N:" label and alt text, plus
+  /// the page image itself for pages whose alt text is only a label (see
+  /// [FlyerPage.imageUrl]). Consecutive text is merged into one part. Images
+  /// are downloaded in parallel; one that can't be used is left out (and
+  /// noted in the text) so it never fails the pages around it.
+  Future<List<Map<String, dynamic>>> _buildUserParts(List<FlyerPage> pages) async {
+    final images = await Future.wait(
+      pages.map((p) => p.imageUrl == null ? Future<Map<String, dynamic>?>.value() : _cachedImagePart(p.imageUrl!)),
+    );
 
+    final parts = <Map<String, dynamic>>[];
+    final text = StringBuffer();
+    for (var i = 0; i < pages.length; i++) {
+      final page = pages[i];
+      if (text.isNotEmpty) text.write('\n\n');
+      text.write('Page ${page.pageNumber}:\n${page.altText}');
+      if (page.imageUrl == null) continue;
+      final image = images[i];
+      if (image == null) {
+        text.write('\n(The page image could not be loaded.)');
+        continue;
+      }
+      text.write('\n(The page image follows.)');
+      parts.add({'text': text.toString()});
+      text.clear();
+      parts.add(image);
+    }
+    if (text.isNotEmpty) parts.add({'text': text.toString()});
+    return parts;
+  }
+
+  Future<Map<String, dynamic>?> _cachedImagePart(String imageUrl) {
+    final cached = _imageCache[imageUrl];
+    if (cached != null) return cached;
+    while (_imageCache.length >= maxImagePagesPerCall * 2) {
+      _imageCache.remove(_imageCache.keys.first);
+    }
+    return _imageCache[imageUrl] = _downloadImagePart(imageUrl);
+  }
+
+  /// Downloads the image in-app and returns it as an inline part, or null if
+  /// it can't be used (network/CORS failure, timeout, non-200, too large, or
+  /// a format Gemini doesn't accept). Inline rather than a URL reference:
+  /// the browser can already reach the flyer site (it just fetched the
+  /// HTML), whereas Gemini's own URL fetcher may be refused by the site's
+  /// bot protection - and a refused URL fails the whole request.
+  Future<Map<String, dynamic>?> _downloadImagePart(String imageUrl) async {
+    try {
+      final response = await _client.get(Uri.parse(imageUrl)).timeout(imageDownloadTimeout);
+      final bytes = response.bodyBytes;
+      if (response.statusCode != 200 || bytes.isEmpty || bytes.length > maxImageBytes) return null;
+      final mimeType = _imageMimeType(response.headers['content-type'], bytes);
+      if (mimeType == null) return null;
+      return {
+        'inlineData': {'mimeType': mimeType, 'data': base64Encode(bytes)},
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The image's MIME type if Gemini accepts it: the Content-Type header when
+  /// it names a supported format, otherwise sniffed from the file's magic
+  /// bytes (CDNs often send `application/octet-stream`).
+  static String? _imageMimeType(String? contentTypeHeader, List<int> bytes) {
+    final header = contentTypeHeader?.split(';').first.trim().toLowerCase();
+    if (header != null && _supportedImageTypes.contains(header)) return header;
+    bool startsWith(List<int> signature, [int offset = 0]) {
+      if (bytes.length < offset + signature.length) return false;
+      for (var i = 0; i < signature.length; i++) {
+        if (bytes[offset + i] != signature[i]) return false;
+      }
+      return true;
+    }
+
+    if (startsWith([0xFF, 0xD8, 0xFF])) return 'image/jpeg';
+    if (startsWith([0x89, 0x50, 0x4E, 0x47])) return 'image/png';
+    if (startsWith('RIFF'.codeUnits) && startsWith('WEBP'.codeUnits, 8)) return 'image/webp';
+    return null;
+  }
+
+  Map<String, dynamic> _buildRequestBody(List<Map<String, dynamic>> userParts) {
     return {
       'systemInstruction': {
         'parts': [
@@ -236,12 +365,7 @@ class AiDealExtractionService {
         ],
       },
       'contents': [
-        {
-          'role': 'user',
-          'parts': [
-            {'text': labeledPages},
-          ],
-        },
+        {'role': 'user', 'parts': userParts},
       ],
       'tools': [_recordItemsTool],
       'toolConfig': {
@@ -303,6 +427,8 @@ class AiDealExtractionService {
 
 const _systemPrompt = '''
 You are extracting real grocery deals from OCR-style descriptions of grocery flyer pages. Each page's description is prose, not a delimited list, and may describe several items in one passage.
+
+Some pages have no description, only their "Page N" label, followed by an image of the flyer page itself. For those, read the deals directly from the image and attribute them to that page number. If such a page says its image could not be loaded, record nothing for it.
 
 For every real product deal you find, record:
 - name: the cleaned product name. Remove narrative filler and price-connector language (e.g. "pour", "à", "ce qui revient à", "on trouve aussi"), but keep package size, brand, and format intact.

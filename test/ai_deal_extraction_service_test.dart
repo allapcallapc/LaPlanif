@@ -477,4 +477,152 @@ void main() {
     expect(items.length, 20);
     expect((await logRepository.loadAll()).length, 1);
   });
+
+  group('pages with no description', () {
+    const imagePage = FlyerPage(
+      pageNumber: 2,
+      altText: 'Circulaire Maxi - Page 2',
+      imageUrl: 'https://flyers.example.com/maxi_02.jpg',
+    );
+    const textPage = FlyerPage(pageNumber: 1, altText: 'Circulaire Maxi - Page 1. Poulet 3,99 \$/lb');
+    const jpegBytes = [0xFF, 0xD8, 0xFF, 0xE0, 1, 2];
+
+    late int imageRequests;
+    late List<List<dynamic>> sentParts;
+
+    AiDealExtractionService serviceWith(
+      http.Response Function(http.Request) imageResponse, {
+      List<http.Response Function()>? aiResponses,
+    }) {
+      imageRequests = 0;
+      sentParts = [];
+      var aiCall = 0;
+      final client = MockClient((request) async {
+        if (request.url.host == 'flyers.example.com') {
+          imageRequests++;
+          return imageResponse(request);
+        }
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        sentParts.add(((body['contents'] as List).single as Map<String, dynamic>)['parts'] as List<dynamic>);
+        final responses = aiResponses;
+        if (responses != null && aiCall < responses.length) return responses[aiCall++]();
+        return _successResponse(items: const []);
+      });
+      return AiDealExtractionService(client: client, logRepository: AiCallLogRepository(), retryDelay: Duration.zero);
+    }
+
+    Future<List<dynamic>> partsFor(http.Response Function(http.Request) imageResponse) async {
+      final service = serviceWith(imageResponse);
+      await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: const [textPage, imagePage]);
+      return sentParts.single;
+    }
+
+    test('send the downloaded page image inline after its label', () async {
+      final parts = await partsFor(
+        (_) => http.Response.bytes(jpegBytes, 200, headers: {'content-type': 'image/jpeg'}),
+      );
+
+      expect(parts.length, 2);
+      final text = (parts[0] as Map<String, dynamic>)['text'] as String;
+      expect(text, contains('Page 1:\nCirculaire Maxi - Page 1. Poulet'));
+      expect(text, endsWith('Page 2:\nCirculaire Maxi - Page 2\n(The page image follows.)'));
+      expect(parts[1], {
+        'inlineData': {'mimeType': 'image/jpeg', 'data': base64Encode(jpegBytes)},
+      });
+    });
+
+    test('work out the format from the bytes when the server sends a generic type', () async {
+      final parts = await partsFor(
+        (_) => http.Response.bytes(jpegBytes, 200, headers: {'content-type': 'application/octet-stream'}),
+      );
+
+      expect((parts[1] as Map<String, dynamic>)['inlineData'], containsPair('mimeType', 'image/jpeg'));
+    });
+
+    // An image Gemini can't take must never fail the request (and with it,
+    // the chunk's other pages): it's left out and noted in the text instead.
+    for (final (reason, response) in [
+      ('the download fails', () => http.Response('Forbidden', 403)),
+      ('the format is unsupported', () => http.Response.bytes([1, 2, 3], 200, headers: {'content-type': 'image/avif'})),
+      (
+        'the image is too large',
+        () => http.Response.bytes(
+          List.filled(AiDealExtractionService.maxImageBytes + 1, 0xFF),
+          200,
+          headers: {'content-type': 'image/jpeg'},
+        ),
+      ),
+    ]) {
+      test('are sent as text only when $reason', () async {
+        final parts = await partsFor((_) => response());
+
+        expect(parts.length, 1);
+        expect((parts.single as Map<String, dynamic>)['text'], endsWith('(The page image could not be loaded.)'));
+      });
+    }
+
+    test('download each image once across retries of the same chunk', () async {
+      final service = serviceWith(
+        (_) => http.Response.bytes(jpegBytes, 200, headers: {'content-type': 'image/jpeg'}),
+        aiResponses: [() => http.Response('overloaded', 503)],
+      );
+
+      await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: const [imagePage]);
+      // ModelFallbackController retries by calling extractItems again.
+      await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: const [imagePage]);
+
+      expect(sentParts.length, 3);
+      expect(imageRequests, 1);
+    });
+
+    test('only keep the most recent images cached', () async {
+      final service = serviceWith(
+        (_) => http.Response.bytes(jpegBytes, 200, headers: {'content-type': 'image/jpeg'}),
+      );
+      FlyerPage pageWithImage(int n) =>
+          FlyerPage(pageNumber: n, altText: 'Maxi - Page $n', imageUrl: 'https://flyers.example.com/$n.jpg');
+      const cacheSize = AiDealExtractionService.maxImagePagesPerCall * 2;
+
+      for (var n = 1; n <= cacheSize + 1; n++) {
+        await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: [pageWithImage(n)]);
+      }
+      expect(imageRequests, cacheSize + 1);
+
+      // Image 1 was evicted to make room for the last one; the last is cached.
+      await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: [pageWithImage(1)]);
+      await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: [pageWithImage(cacheSize + 1)]);
+      expect(imageRequests, cacheSize + 2);
+    });
+  });
+
+  group('chunkPages', () {
+    FlyerPage page(int n, {bool image = false}) =>
+        FlyerPage(pageNumber: n, altText: 'Page $n', imageUrl: image ? 'https://x/$n.jpg' : null);
+
+    List<List<int>> numbers(List<List<FlyerPage>> chunks) =>
+        chunks.map((c) => c.map((p) => p.pageNumber).toList()).toList();
+
+    test('splits text pages into maxPagesPerCall-sized chunks', () {
+      final pages = List.generate(AiDealExtractionService.maxPagesPerCall + 2, (i) => page(i + 1));
+
+      expect(
+        AiDealExtractionService.chunkPages(pages).map((c) => c.length),
+        [AiDealExtractionService.maxPagesPerCall, 2],
+      );
+    });
+
+    test('caps the image pages per chunk, keeping page order', () {
+      final pages = [page(1), for (var n = 2; n <= 8; n++) page(n, image: true), page(9)];
+
+      expect(numbers(AiDealExtractionService.chunkPages(pages)), [
+        [1, 2, 3, 4],
+        [5, 6, 7],
+        [8, 9],
+      ]);
+    });
+
+    test('returns no chunks for no pages', () {
+      expect(AiDealExtractionService.chunkPages(const []), isEmpty);
+    });
+  });
 }

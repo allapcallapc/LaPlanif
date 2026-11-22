@@ -42,6 +42,11 @@ class FlyerScraperService {
   /// to tell an unlabeled cover apart from those.
   static final _itemPricePattern = RegExp(r'\d+[,.]\d{2}\s*\$');
 
+  /// Alt text that is nothing but the page label ("Circulaire Maxi - Page 7",
+  /// optionally with a trailing period) - i.e. the site didn't describe the
+  /// page's contents, so the AI needs the image itself.
+  static final _labelOnlyPattern = RegExp(r'^[^.]{0,40}?[-–—]\s*Page\s+\d+\s*\.?$');
+
   Future<List<FlyerPage>> fetchPages(StoreConfig store) async {
     final http.Response response;
     try {
@@ -63,12 +68,13 @@ class FlyerScraperService {
     // UTF-8.
     final document = html_parser.parse(utf8.decode(response.bodyBytes, allowMalformed: true));
     final images = document.querySelectorAll('img');
+    final baseUri = Uri.parse(store.flyerUrl);
 
     final pages = <FlyerPage>[];
     // For each page-2 image: its position in [images] and in [pages].
     final page2Positions = <({int image, int page})>[];
     for (var i = 0; i < images.length; i++) {
-      final page = _labeledPage(images[i]);
+      final page = _labeledPage(images[i], baseUri);
       if (page == null) continue;
       if (page.pageNumber == 2) page2Positions.add((image: i, page: pages.length));
       pages.add(page);
@@ -86,11 +92,62 @@ class FlyerScraperService {
 
   static String _altOf(Element img) => img.attributes['alt']?.trim() ?? '';
 
-  static FlyerPage? _labeledPage(Element img) {
+  static FlyerPage? _labeledPage(Element img, Uri baseUri) {
     final alt = _altOf(img);
     final match = _pageNumberPattern.firstMatch(alt);
     if (match == null) return null;
-    return FlyerPage(pageNumber: int.parse(match.group(1)!), altText: alt);
+    final imageUrl = _labelOnlyPattern.hasMatch(alt) ? _imageUrlOf(img, baseUri) : null;
+    return FlyerPage(pageNumber: int.parse(match.group(1)!), altText: alt, imageUrl: imageUrl);
+  }
+
+  /// The image's real URL, resolved against the flyer page. Lazy-load
+  /// attributes and srcsets come before `src`, since lazy-loaded images keep
+  /// a placeholder in `src` (a `data:` URI or a real blank/spinner image)
+  /// until scrolled into view. Returns null when no usable http(s) URL is
+  /// found.
+  static String? _imageUrlOf(Element img, Uri baseUri) {
+    final attributes = img.attributes;
+    final candidates = [
+      attributes['data-src'],
+      attributes['data-lazy-src'],
+      attributes['data-original'],
+      _largestSrcsetUrl(attributes['data-srcset']),
+      _largestSrcsetUrl(attributes['srcset']),
+      attributes['src'],
+    ];
+    for (final candidate in candidates) {
+      final value = candidate?.trim();
+      if (value == null || value.isEmpty || value.startsWith('data:')) continue;
+      final Uri resolved;
+      try {
+        resolved = baseUri.resolve(value);
+      } catch (_) {
+        continue;
+      }
+      if (resolved.scheme == 'http' || resolved.scheme == 'https') return resolved.toString();
+    }
+    return null;
+  }
+
+  /// The URL of a srcset's widest candidate (by its `w` descriptor; the last
+  /// candidate when none has one). Candidates are separated by a comma
+  /// *followed by whitespace* - URLs themselves may contain commas (CDN
+  /// transforms like `w_1280,q_80`).
+  static String? _largestSrcsetUrl(String? srcset) {
+    if (srcset == null) return null;
+    String? best;
+    var bestWidth = -1;
+    for (final candidate in srcset.trim().split(RegExp(r',\s+'))) {
+      final fields = candidate.trim().split(RegExp(r'\s+'));
+      if (fields.first.isEmpty) continue;
+      final descriptor = fields.length > 1 ? fields[1] : '';
+      final width = descriptor.endsWith('w') ? int.tryParse(descriptor.substring(0, descriptor.length - 1)) ?? 0 : 0;
+      if (width >= bestWidth) {
+        best = fields.first;
+        bestWidth = width;
+      }
+    }
+    return best;
   }
 
   /// Maxi's flyer (seen Oct-Nov 2026) labels every page `Maxi - Page N`
@@ -114,7 +171,7 @@ class FlyerScraperService {
     for (final position in page2Positions) {
       if (position.image == 0) continue;
       final neighbor = images[position.image - 1];
-      if (_labeledPage(neighbor) != null) continue;
+      if (_pageNumberPattern.hasMatch(_altOf(neighbor))) continue;
       final alt = _altOf(neighbor);
       if (!_itemPricePattern.hasMatch(alt)) continue;
       pages.insert(position.page, FlyerPage(pageNumber: 1, altText: alt));

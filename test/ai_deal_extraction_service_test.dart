@@ -574,6 +574,25 @@ void main() {
       expect(sentParts.length, 3);
       expect(imageRequests, 1);
     });
+
+    test('only keep the most recent images cached', () async {
+      final service = serviceWith(
+        (_) => http.Response.bytes(jpegBytes, 200, headers: {'content-type': 'image/jpeg'}),
+      );
+      FlyerPage pageWithImage(int n) =>
+          FlyerPage(pageNumber: n, altText: 'Maxi - Page $n', imageUrl: 'https://flyers.example.com/$n.jpg');
+      const cacheSize = AiDealExtractionService.maxImagePagesPerCall * 2;
+
+      for (var n = 1; n <= cacheSize + 1; n++) {
+        await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: [pageWithImage(n)]);
+      }
+      expect(imageRequests, cacheSize + 1);
+
+      // Image 1 was evicted to make room for the last one; the last is cached.
+      await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: [pageWithImage(1)]);
+      await service.extractItems(apiKey: 'k', storeName: 'Maxi', pages: [pageWithImage(cacheSize + 1)]);
+      expect(imageRequests, cacheSize + 2);
+    });
   });
 
   group('chunkPages', () {

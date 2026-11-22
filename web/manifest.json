@@ -5,7 +5,7 @@
     "display": "standalone",
     "background_color": "#02504C",
     "theme_color": "#02504C",
-    "description": "LaPlanif - under construction",
+    "description": "LaPlanif - weekly meal planning from grocery flyer deals",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

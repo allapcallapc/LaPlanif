@@ -25,6 +25,7 @@ import 'package:laplanif/services/meal_plan_generation_service.dart';
 import 'package:laplanif/services/meal_plan_preview_service.dart';
 import 'package:laplanif/services/model_fallback_controller.dart';
 import 'package:laplanif/services/store_config_repository.dart';
+import 'package:laplanif/widgets/suggestion_request_dialog.dart';
 
 class _FakePagesScraper extends FlyerScraperService {
   _FakePagesScraper(this._pages);
@@ -132,6 +133,10 @@ class _FakePreviewService extends MealPlanPreviewService {
   /// filling an empty row), in order.
   final List<AnchorItem?> replacementCalls = [];
 
+  /// The user's request passed with every previewMealPlan / suggestReplacement call, in order.
+  final List<String> previewRequests = [];
+  final List<String> replacementRequests = [];
+
   @override
   Future<AnchorItem> suggestReplacement({
     required String apiKey,
@@ -141,9 +146,11 @@ class _FakePreviewService extends MealPlanPreviewService {
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) {
     replacementCalls.add(replacing);
+    replacementRequests.add(request);
     final handler = replacementHandler;
     if (handler == null) throw Exception('no replacement handler');
     return handler(replacing, role, alreadyUsedAnchors);
@@ -180,6 +187,7 @@ class _FakePreviewService extends MealPlanPreviewService {
     List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) {
     calls.add(mealSlots);
@@ -187,6 +195,7 @@ class _FakePreviewService extends MealPlanPreviewService {
     usedAnchorsCalls.add(alreadyUsedAnchors);
     portionsPerMealCalls.add(portionsPerMeal);
     dietaryNotesCalls.add(dietaryNotes);
+    previewRequests.add(request);
     return _handler(mealSlots, portionsPerMeal, items);
   }
 }
@@ -208,6 +217,7 @@ class _FakeDeferredPreviewService extends MealPlanPreviewService {
     List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) {
     final completer = Completer<MealPlanPreview>();
@@ -233,6 +243,7 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) {
     return _byModel(model!);
@@ -248,6 +259,7 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) async {
     if (model == 'model-a') throw RateLimitedException(model!);
@@ -274,6 +286,7 @@ class _FakeGenerationService extends MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     String dietaryNotes = '',
+    String request = '',
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
@@ -298,6 +311,7 @@ class _FakeModelAwareGenerationService extends MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     String dietaryNotes = '',
+    String request = '',
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
@@ -327,6 +341,7 @@ class _FakeDeferredGenerationService extends MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     String dietaryNotes = '',
+    String request = '',
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
@@ -381,6 +396,16 @@ Future<void> _confirmIngredients(WidgetTester tester) async {
   }
   await tester.tap(find.text('Confirm ingredients'));
   await tester.pumpAndSettle();
+}
+
+/// Confirms the "Anything specific?" dialog every suggestion button opens,
+/// optionally typing [request] first. Leaves the suggestion call itself
+/// un-pumped, so a test can still look at its pending state.
+Future<void> _confirmSuggestion(WidgetTester tester, [String request = '']) async {
+  await tester.pumpAndSettle();
+  final dialog = find.byType(SuggestionRequestDialog);
+  if (request.isNotEmpty) await tester.enterText(find.descendant(of: dialog, matching: find.byType(TextField)), request);
+  await tester.tap(find.descendant(of: dialog, matching: find.text('Suggest')));
 }
 
 /// A viewport tall enough for every meal's ingredients card to be built.
@@ -3656,12 +3681,21 @@ void main() {
     expect(find.text('Original supper note.'), findsOneWidget);
     expect(previewService.calls.length, 1);
 
+    // Cancelling the dialog suggests nothing.
     await tester.tap(_inIngredientCard(0, find.text('Suggest others')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(previewService.calls.length, 1);
+
+    await tester.tap(_inIngredientCard(0, find.text('Suggest others')));
+    await _confirmSuggestion(tester, 'Make it vegetarian');
     await tester.pumpAndSettle();
 
     expect(previewService.calls.length, 2);
     expect(previewService.calls[1].length, 1);
     expect(previewService.calls[1].single.mealType, MealType.lunch);
+    expect(previewService.previewRequests[1], 'Make it vegetarian');
     // The regenerate call is told the supper slot's current anchor, so the
     // AI doesn't reuse an ingredient another slot is already using.
     expect(previewService.usedAnchorsCalls[1].map((a) => a.name), ['Tofu']);
@@ -3775,6 +3809,14 @@ void main() {
       find.descendant(of: find.byKey(const ValueKey('role-0-other')), matching: _anchor(0, 'Ground pork')),
       findsOneWidget,
     );
+
+    // ✨ on an extra item asks for another ingredient; cancelling changes nothing.
+    await _tapVisible(tester, find.descendant(of: _anchor(0, 'Ground pork'), matching: find.byTooltip('Suggest another')));
+    expect(find.text('Suggest another ingredient'), findsOneWidget);
+    expect(find.text('From the pantry'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(_anchor(0, 'Ground pork'), findsOneWidget);
   });
 
   testWidgets('removes an anchor item from a slot via its chip delete icon', (tester) async {
@@ -3942,6 +3984,7 @@ void main() {
     final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
     final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
     await tester.tap(regenerateButton);
+    await _confirmSuggestion(tester);
     await tester.pump();
     await tester.pump();
     await tester.pump();
@@ -4164,6 +4207,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Suggest others'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Could not regenerate these suggestions: boom'), findsOneWidget);
@@ -4358,6 +4402,7 @@ void main() {
     final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
     final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
     await tester.tap(regenerateButton);
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(promptCalls, 2, reason: 'the regenerate call goes through its own rate-limit retry flow');
@@ -4367,11 +4412,13 @@ void main() {
     // "Regenerate all suggestions" (the app bar action, not the per-card
     // one) is its own call site too, with its own rate-limit retry flow.
     await tester.tap(find.byTooltip('Regenerate all suggestions'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(promptCalls, 3, reason: 'regenerating every suggestion goes through its own rate-limit retry flow too');
 
     await tester.tap(find.descendant(of: _anchor(0, 'Chicken thighs'), matching: find.byTooltip('Suggest another')));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(promptCalls, 4, reason: 'suggesting another ingredient goes through its own rate-limit retry flow too');
@@ -4455,6 +4502,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Regenerate all suggestions'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate preview: boom'), findsOneWidget);
@@ -5831,6 +5879,7 @@ void main() {
       await tester.tap(find.text('Continue planning'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Regenerate all suggestions'));
+      await _confirmSuggestion(tester);
       await tester.pumpAndSettle();
 
       // A missing API key would have shown a snackbar instead of calling the
@@ -6464,8 +6513,13 @@ void main() {
 
     // ✨ on the vegetable asks for another vegetable, told what other meals use.
     await tester.tap(suggestButton(0, 'Brocoli'));
+    await tester.pumpAndSettle();
+    expect(find.text('Suggest another vegetable'), findsOneWidget);
+    await _confirmSuggestion(tester, 'A green vegetable');
     await tester.pump();
     expect(previewService.replacementCalls.single?.name, 'Brocoli');
+    // What was typed in the dialog goes with the request.
+    expect(previewService.replacementRequests.single, 'A green vegetable');
     expect(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.byType(CircularProgressIndicator)), findsOneWidget);
     suggestion.complete(const AnchorItem(name: 'Asperges', store: 'IGA', role: AnchorRole.vegetable));
     await tester.pumpAndSettle();
@@ -6479,6 +6533,7 @@ void main() {
     // A failed suggestion says so and leaves the ingredient as it was.
     failNext = true;
     await tester.tap(suggestButton(0, 'Chicken thighs'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
     expect(find.text('Could not suggest another: AI API HTTP 500'), findsOneWidget);
     expect(inRow(0, 'protein', 'Chicken thighs'), findsOneWidget);
@@ -6498,6 +6553,7 @@ void main() {
     failNext = false;
     expect(find.descendant(of: find.byKey(const ValueKey('role-1-vegetable')), matching: find.text('Choose a vegetable')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('suggest-1-vegetable')));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
     expect(previewService.replacementCalls.last, isNull);
     expect(inRow(1, 'vegetable', 'Kale'), findsOneWidget);

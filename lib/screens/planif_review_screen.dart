@@ -15,6 +15,7 @@ import '../widgets/anchor_picker_dialog.dart';
 import '../widgets/carb_picker_dialog.dart';
 import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
+import '../widgets/suggestion_request_dialog.dart';
 import 'planif_screen.dart';
 import 'planif_structure_screen.dart';
 
@@ -141,6 +142,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           .showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
       return;
     }
+    final request = await showSuggestionRequestDialog(
+      context,
+      title: 'Suggest new ingredients for every meal',
+      examples: const ['Use what\'s in the pantry', 'Make one meal vegetarian', 'Quick to cook'],
+    );
+    if (request == null || !mounted) return;
 
     final recentlyUsed = await widget.services.mealHistoryRepository.recentlyUsed(
       diversityWindowDays: widget.config.diversityWindowDays,
@@ -157,6 +164,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           items: widget.items,
           recentlyUsed: recentlyUsed,
           dietaryNotes: widget.config.dietaryNotes,
+          request: request,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
@@ -189,6 +197,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   Future<void> _regenerateSlot(int index) async {
     final apiKey = widget.apiKey;
     if (apiKey == null || _isPreviewLoading || _regeneratingSlots.contains(index)) return;
+    final request = await showSuggestionRequestDialog(
+      context,
+      title: 'Suggest other ingredients for this meal',
+      examples: const ['Use what\'s in the pantry', 'Make it vegetarian', 'Something lighter'],
+    );
+    if (request == null || !mounted) return;
 
     setState(() => _regeneratingSlots.add(index));
 
@@ -220,6 +234,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           ],
           recentlyUsed: recentlyUsed,
           dietaryNotes: widget.config.dietaryNotes,
+          request: request,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
@@ -323,6 +338,27 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       return;
     }
     if (_suggestingAnchors.contains(key)) return;
+    final noun = switch (effectiveRole) {
+      AnchorRole.protein => 'protein',
+      AnchorRole.carb => 'carb',
+      AnchorRole.vegetable => 'vegetable',
+      AnchorRole.other => 'ingredient',
+    };
+    final request = await showSuggestionRequestDialog(
+      context,
+      title: current == null ? 'Suggest a $noun' : 'Suggest another $noun',
+      examples: [
+        'From the pantry',
+        ...switch (effectiveRole) {
+          AnchorRole.vegetable => const ['A red vegetable', 'A leafy green'],
+          AnchorRole.carb => const ['Something lighter', 'A whole grain'],
+          AnchorRole.protein => const ['Vegetarian', 'Fish'],
+          AnchorRole.other => const <String>[],
+        },
+        'Something cheaper',
+      ],
+    );
+    if (request == null || !mounted || _suggestingAnchors.contains(key)) return;
     setState(() => _suggestingAnchors.add(key));
     final otherAnchors = [
       for (var i = 0; i < _preview.slots.length; i++)
@@ -339,6 +375,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           items: widget.items,
           alreadyUsedAnchors: otherAnchors,
           dietaryNotes: widget.config.dietaryNotes,
+          request: request,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {

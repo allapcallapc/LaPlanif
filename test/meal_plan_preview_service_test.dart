@@ -788,6 +788,28 @@ void main() {
       expect(replacement.role, AnchorRole.carb);
     });
 
+    test('passes the user\'s own request along, and leaves it out when empty', () async {
+      final bodies = <String>[];
+      final client = MockClient((request) async {
+        bodies.add(request.body);
+        return replacementResponse({'name': 'Poivrons rouges', 'store': 'IGA', 'pantry': false});
+      });
+      final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+      await service.suggestReplacement(
+        apiKey: 'test-key',
+        slot: slot,
+        role: AnchorRole.vegetable,
+        items: items,
+        request: '  a red vegetable ',
+      );
+      await service.suggestReplacement(apiKey: 'test-key', slot: slot, role: AnchorRole.vegetable, items: items);
+
+      expect(bodies[0], contains("The user's own request for this suggestion"));
+      expect(bodies[0], contains('a red vegetable'));
+      expect(bodies[1], isNot(contains("The user's own request")));
+    });
+
     test('with nothing to replace, asks for an ingredient for an empty role', () async {
       late String body;
       final client = MockClient((request) async {
@@ -872,5 +894,39 @@ void main() {
     expect(restored.role, AnchorRole.protein);
     // A pantry carb is written as before, without a role.
     expect(const AnchorItem.pantry('Rice').toJson(), {'name': 'Rice', 'store': 'Pantry', 'pantry': true});
+  });
+
+  test('a whole-meal suggestion passes the user\'s request and keeps a non-carb pantry item\'s role', () async {
+    late String body;
+    final client = MockClient((request) async {
+      body = request.body;
+      return _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Chickpeas', 'store': 'Pantry', 'pantry': true, 'role': 'protein'},
+              {'name': 'Rice', 'store': 'Pantry', 'pantry': true, 'role': 'carb'},
+            ],
+            'note': 'Chickpea curry.',
+          },
+        ],
+      );
+    });
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    final preview = await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      portionsPerMeal: 3,
+      items: items,
+      request: 'Use what is in the pantry',
+    );
+
+    expect(body, contains("The user's own request for this suggestion"));
+    expect(body, contains('Use what is in the pantry'));
+    final anchors = preview.slots.single.anchorItems;
+    expect(anchors[0].isPantry, isTrue);
+    expect(anchors[0].role, AnchorRole.protein);
+    expect(anchors[1].role, AnchorRole.carb);
   });
 }

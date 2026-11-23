@@ -55,6 +55,10 @@ class MealPlanPreviewService {
   /// [recentlyUsed] lists recipes/deal items from saved plan history within
   /// the configured diversity window - a soft "try to vary" hint, unlike
   /// [alreadyUsedAnchors] which is a hard same-plan exclusion.
+  ///
+  /// [request] is the user's own wording for this one suggestion (e.g. "use
+  /// something from the pantry"), followed unless it conflicts with the
+  /// standing instructions or excluded items.
   Future<MealPlanPreview> previewMealPlan({
     required String apiKey,
     required List<MealSlot> mealSlots,
@@ -64,6 +68,7 @@ class MealPlanPreviewService {
     List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) async {
     final effectiveModel = model ?? this.model;
@@ -78,6 +83,7 @@ class MealPlanPreviewService {
         otherSlots: otherSlots,
         recentlyUsed: recentlyUsed,
         dietaryNotes: dietaryNotes,
+        request: request,
         model: effectiveModel,
       );
     } finally {
@@ -94,6 +100,7 @@ class MealPlanPreviewService {
     required List<MealSlotPreview> otherSlots,
     required List<RecentHistoryItem> recentlyUsed,
     required String dietaryNotes,
+    required String request,
     required String model,
   }) async {
     return _post(
@@ -107,6 +114,7 @@ class MealPlanPreviewService {
         otherSlots,
         recentlyUsed,
         dietaryNotes,
+        request,
       ),
       parse: (decoded) => _parsePreview(decoded, mealSlots, portionsPerMeal),
       details: _instructionCheck,
@@ -120,7 +128,8 @@ class MealPlanPreviewService {
   /// vegetable). [alreadyUsedAnchors] are the
   /// plan's other slots' ingredients, never proposed again. The replacement
   /// is a deal item when one fits, otherwise something not on sale (e.g. a
-  /// pantry carb), returned as [AnchorItem.pantry].
+  /// pantry carb), returned as [AnchorItem.pantry]. [request] is the user's
+  /// own wording for this suggestion, as for [previewMealPlan].
   Future<AnchorItem> suggestReplacement({
     required String apiKey,
     required MealSlotPreview slot,
@@ -129,6 +138,7 @@ class MealPlanPreviewService {
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) async {
     final effectiveModel = model ?? this.model;
@@ -137,7 +147,7 @@ class MealPlanPreviewService {
       return await _post(
         apiKey: apiKey,
         model: effectiveModel,
-        body: _buildReplacementBody(slot, replacing, role, items, alreadyUsedAnchors, dietaryNotes),
+        body: _buildReplacementBody(slot, replacing, role, items, alreadyUsedAnchors, dietaryNotes, request),
         parse: (decoded) => _parseReplacement(decoded, role),
       );
     } finally {
@@ -254,6 +264,7 @@ class MealPlanPreviewService {
     List<MealSlotPreview> otherSlots,
     List<RecentHistoryItem> recentlyUsed,
     String dietaryNotes,
+    String request,
   ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
     final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
@@ -272,6 +283,7 @@ class MealPlanPreviewService {
 
     final userText =
         'Meal slots to propose anchors for, in order:\n$slotsText\n\n'
+        '${_requestText(request)}'
         '${otherSlots.isEmpty ? '' : 'Other slots already in this plan, not part of this call - their anchors are fixed, '
               'but count their days toward any frequency limit in the standing instructions:\n${_otherSlotsText(otherSlots)}\n\n'}'
         '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - follow these across every slot:\n${dietaryNotes.trim()}\n\n'}'
@@ -311,6 +323,15 @@ class MealPlanPreviewService {
       'generationConfig': {'maxOutputTokens': 16384},
     };
   }
+
+  // The user's own wording for one suggestion. It may steer the pick away
+  // from deal preferences (e.g. "from the pantry"), but never past a
+  // standing instruction or an excluded item.
+  String _requestText(String request) => request.trim().isEmpty
+      ? ''
+      : 'The user\'s own request for this suggestion - follow it, even over the deal-item preferences below '
+            '(e.g. "from the pantry" means an ingredient that is not a deal item, recorded as a pantry item), '
+            'but never against a standing planning instruction or an excluded item:\n${request.trim()}\n\n';
 
   String _itemsText(List<DealItem> list) {
     if (list.isEmpty) return '(none)';
@@ -357,6 +378,7 @@ class MealPlanPreviewService {
     List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors,
     String dietaryNotes,
+    String request,
   ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
     final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
@@ -368,6 +390,7 @@ class MealPlanPreviewService {
         'totalPortionsNeeded=${slot.totalPortionsNeeded}. Direction: ${slot.note}\n\n'
         '${replacing == null ? 'No ingredient yet - propose one for this role: ${role.name}' : 'Ingredient to replace (role: ${role.name}): ${_anchorItemsInlineText([replacing])}'}\n\n'
         'The meal\'s other ingredients, which stay as they are:\n${_anchorItemsText(others)}\n\n'
+        '${_requestText(request)}'
         '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - hard constraints:\n${dietaryNotes.trim()}\n\n'}'
         'Priority deal items (prefer these first):\n${_itemsText(priority)}\n\n'
         'Excluded deal items (never propose these):\n${_itemsText(excluded)}\n\n'
@@ -469,9 +492,10 @@ class MealPlanPreviewService {
             final store = (map['store'] as String? ?? '').trim();
             final isPantry =
                 map['pantry'] == true || store.isEmpty || store.toLowerCase() == AnchorItem.pantryStore.toLowerCase();
+            final role = AnchorRole.fromName(map['role'] as String?);
             return isPantry
-                ? AnchorItem.pantry(name)
-                : AnchorItem(name: name, store: store, role: AnchorRole.fromName(map['role'] as String?));
+                ? AnchorItem.pantry(name, role: role ?? AnchorRole.carb)
+                : AnchorItem(name: name, store: store, role: role);
           }).toList(),
           note: (raw['note'] as String).trim(),
         ),
@@ -488,7 +512,7 @@ Each meal slot represents ONE recipe, batch-cooked once, that must yield enough 
 
 For each meal slot, propose the anchor item(s) that define this slot's big-batch recipe: always the main protein item, always exactly one carb (see CARB below), plus a vegetable side when one naturally fits that direction or when a priority vegetable is available and fits - don't force a vegetable pick just to fill a slot when nothing fits well.
 
-CARB: every slot must have exactly one carb anchor - never leave a slot without one. Use a carb deal item (category Carbs) when one fits the slot's direction (e.g. a pasta deal for a pasta bake); otherwise pick a pantry staple that suits the dish - e.g. rice (basmati, jasmine), quinoa, couscous, pasta, egg noodles, rice noodles, potatoes, sweet potatoes, bulgur, orzo, barley, tortillas, naan or bread. Give every anchor its role in the meal: "protein", "carb" (exactly one per slot), "vegetable", or "other" for anything else. Decide the role from what the item actually is, not from the category its deal is listed under - a protein such as tofu, meat or fish is never the carb. Record a pantry staple with pantry=true and store "Pantry"; record a carb deal item with pantry=false and its real store. Vary the carb across the slots of the plan (and against the other slots listed below) - don't give two slots the same carb unless there is no sensible alternative. Never record a pantry item for anything but the carb: proteins and vegetables always come from the deal items. Prioritize items marked as priority over other available deal items whenever one reasonably fits the slot, across every category (protein, vegetables, carbs) - always try to work a priority item into the anchor set when possible, not just for the protein. Items marked [COVER DEAL] are the flyer's featured best deals - prefer one when it reasonably fits a slot, especially for the vegetable/carb side. Draw from priority items first, then the other available deal items. Never propose an excluded item. Size the selection conceptually for a big-batch recipe covering the slot's total portions needed - do not invent a recipe name or instructions yet.
+CARB: every slot must have exactly one carb anchor - never leave a slot without one. Use a carb deal item (category Carbs) when one fits the slot's direction (e.g. a pasta deal for a pasta bake); otherwise pick a pantry staple that suits the dish - e.g. rice (basmati, jasmine), quinoa, couscous, pasta, egg noodles, rice noodles, potatoes, sweet potatoes, bulgur, orzo, barley, tortillas, naan or bread. Give every anchor its role in the meal: "protein", "carb" (exactly one per slot), "vegetable", or "other" for anything else. Decide the role from what the item actually is, not from the category its deal is listed under - a protein such as tofu, meat or fish is never the carb. Record a pantry staple with pantry=true and store "Pantry"; record a carb deal item with pantry=false and its real store. Vary the carb across the slots of the plan (and against the other slots listed below) - don't give two slots the same carb unless there is no sensible alternative. Never record a pantry item for anything but the carb: proteins and vegetables always come from the deal items - unless the user's own request for this suggestion asks for something not on sale (e.g. "from the pantry"). Prioritize items marked as priority over other available deal items whenever one reasonably fits the slot, across every category (protein, vegetables, carbs) - always try to work a priority item into the anchor set when possible, not just for the protein. Items marked [COVER DEAL] are the flyer's featured best deals - prefer one when it reasonably fits a slot, especially for the vegetable/carb side. Draw from priority items first, then the other available deal items. Never propose an excluded item. Size the selection conceptually for a big-batch recipe covering the slot's total portions needed - do not invent a recipe name or instructions yet.
 
 No ingredient may anchor more than one slot in this plan, even a priority item that would otherwise fit several slots well - each slot's anchors must be entirely distinct from every other slot's. This means the same product, not just the same exact listing: don't anchor one slot on broccoli from one store and another slot on broccoli from a different store (or a differently-worded listing of the same thing) - that still counts as reusing the same ingredient. When multiple slots are given in the same call, check your own choices for cross-slot duplicates (by ingredient, not just by exact name/store) as you go. A list of deal items already used as anchors elsewhere in this plan may also be given below - never reuse any of those either, by the same ingredient-level rule, and pick a different item for any slot that would otherwise repeat one.
 

@@ -608,20 +608,20 @@ void main() {
       expect(request.body, contains('every slot must have exactly one carb anchor'));
       expect(request.body, contains('quinoa'));
       expect(request.body, contains('"pantry"'));
-      expect(request.body, contains('"carb"'));
+      expect(request.body, contains('"role"'));
       expect(request.body, contains('a protein such as tofu'));
       return _successResponse(
         slots: [
           {
             'anchorItems': [
-              {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false, 'carb': false},
-              {'name': 'Quinoa', 'store': 'Pantry', 'pantry': true, 'carb': true},
+              {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false, 'role': 'protein'},
+              {'name': 'Quinoa', 'store': 'Pantry', 'pantry': true, 'role': 'carb'},
             ],
             'note': 'Chicken with quinoa.',
           },
           {
             'anchorItems': [
-              {'name': 'Firm tofu', 'store': 'IGA', 'pantry': false, 'carb': false},
+              {'name': 'Firm tofu', 'store': 'IGA', 'pantry': false, 'role': 'protein'},
               // No pantry flag, but no store either - still a pantry carb.
               {'name': 'Couscous', 'store': ''},
             ],
@@ -642,6 +642,7 @@ void main() {
     final lunch = preview.slots[0].anchorItems;
     expect(lunch[0].isPantry, isFalse);
     expect(lunch[0].isCarb, isFalse);
+    expect(lunch[0].role, AnchorRole.protein);
     expect(lunch[1].isCarb, isTrue);
     expect(preview.slots[1].anchorItems[0].isCarb, isFalse);
     expect(preview.slots[1].anchorItems[1].isCarb, isTrue);
@@ -666,8 +667,8 @@ void main() {
         slots: [
           {
             'anchorItems': [
-              {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false, 'carb': false},
-              {'name': 'Spaghetti', 'store': 'IGA', 'pantry': false, 'carb': true},
+              {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false, 'role': 'protein'},
+              {'name': 'Spaghetti', 'store': 'IGA', 'pantry': false, 'role': 'carb'},
             ],
             'note': 'Chicken pasta.',
           },
@@ -690,5 +691,15 @@ void main() {
     expect(restored.isCarb, isTrue);
     expect(restored.isPantry, isFalse);
     expect(AnchorItem.fromJson(const AnchorItem.pantry('Rice').toJson()).isCarb, isTrue);
+  });
+
+  test('an item\'s role round-trips through JSON, and older saved items still load', () {
+    const veg = AnchorItem(name: 'Brocoli', store: 'IGA', role: AnchorRole.vegetable);
+    expect(AnchorItem.fromJson(veg.toJson()).role, AnchorRole.vegetable);
+    // Saved before roles: no role at all, or the earlier `carb` flag.
+    expect(AnchorItem.fromJson({'name': 'Tofu', 'store': 'IGA'}).role, isNull);
+    expect(AnchorItem.fromJson({'name': 'Riz', 'store': 'Maxi', 'carb': true}).role, AnchorRole.carb);
+    // Plain deal items (e.g. in saved history) are written exactly as before.
+    expect(const AnchorItem(name: 'Tofu', store: 'IGA').toJson(), {'name': 'Tofu', 'store': 'IGA'});
   });
 }

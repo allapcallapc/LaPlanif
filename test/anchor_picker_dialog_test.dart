@@ -37,7 +37,7 @@ void main() {
   // What the last-closed picker resolved to.
   DealItem? picked;
 
-  Future<void> pumpAndOpen(WidgetTester tester, List<DealItem> items) async {
+  Future<void> pumpAndOpen(WidgetTester tester, List<DealItem> items, {DealCategory? initialCategory}) async {
     picked = null;
     // Tall enough for every row to be built, so off-screen items don't read
     // as filtered out.
@@ -51,7 +51,12 @@ void main() {
           body: Builder(
             builder: (context) => ElevatedButton(
               onPressed: () async =>
-                  picked = await showAnchorPickerDialog(context, items: items, title: 'Add anchor item'),
+                  picked = await showAnchorPickerDialog(
+                context,
+                items: items,
+                title: 'Add anchor item',
+                initialCategory: initialCategory,
+              ),
               child: const Text('open'),
             ),
           ),
@@ -146,5 +151,17 @@ void main() {
     await pumpAndOpen(tester, const []);
     expect(find.text('No available deal items.'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
+  });
+
+  testWidgets('opens on the initial category, which can still be changed', (tester) async {
+    await pumpAndOpen(tester, items, initialCategory: DealCategory.vegetables);
+
+    expect(tester.widget<ChoiceChip>(chip('Vegetables')).selected, isTrue);
+    expect(find.text('Brocoli'), findsOneWidget);
+    expect(find.text('Chicken thighs'), findsNothing);
+
+    await tester.tap(chip('All'));
+    await tester.pumpAndSettle();
+    expect(find.text('Chicken thighs'), findsOneWidget);
   });
 }

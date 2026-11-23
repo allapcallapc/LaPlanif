@@ -95,7 +95,7 @@ class _CarbPickerDialogState extends State<CarbPickerDialog> {
                           dense: true,
                           onTap: () =>
                               Navigator.of(context)
-                                  .pop(AnchorItem(name: deal.name, store: deal.storeName, isCarb: true)),
+                                  .pop(AnchorItem(name: deal.name, store: deal.storeName, role: AnchorRole.carb)),
                           leading: deal.preference == DealPreference.priority
                               ? Icon(Icons.star, color: Theme.of(context).colorScheme.primary)
                               : const Icon(Icons.local_offer_outlined),

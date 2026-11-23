@@ -255,21 +255,42 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       for (final anchor in slot.anchorItems) _anchorNameKey(anchor.name),
   };
 
-  Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
-    if (_isCarb(current)) return _chooseCarb(slotIndex);
+  List<DealItem> _availableDeals() {
     final usedKeys = _usedAnchorKeys();
-    final available = widget.items
+    return widget.items
         .where((item) => item.preference != DealPreference.excluded)
         .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
         .toList();
-    final selected = await showAnchorPickerDialog(context, items: available, title: 'Swap anchor item');
+  }
+
+  static DealCategory? _categoryForRole(AnchorRole role) => switch (role) {
+    AnchorRole.protein => DealCategory.protein,
+    AnchorRole.vegetable => DealCategory.vegetables,
+    _ => null,
+  };
+
+  Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
+    final role = _roleOf(current);
+    if (role == AnchorRole.carb) return _chooseCarb(slotIndex);
+    final selected = await showAnchorPickerDialog(
+      context,
+      items: _availableDeals(),
+      title: switch (role) {
+        AnchorRole.protein => 'Swap the protein',
+        AnchorRole.vegetable => 'Swap the vegetable',
+        _ => 'Swap this item',
+      },
+      initialCategory: _categoryForRole(role),
+    );
     if (selected == null) return;
 
     setState(() {
       final slots = [..._preview.slots];
       final slot = slots[slotIndex];
       final anchors = slot.anchorItems
-          .map((a) => identical(a, current) ? AnchorItem(name: selected.name, store: selected.storeName) : a)
+          .map(
+            (a) => identical(a, current) ? AnchorItem(name: selected.name, store: selected.storeName, role: role) : a,
+          )
           .toList();
       slots[slotIndex] = slot.copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
@@ -278,18 +299,25 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     await _saveDraft();
   }
 
-  Future<void> _addAnchorItem(int slotIndex) async {
-    final usedKeys = _usedAnchorKeys();
-    final available = widget.items
-        .where((item) => item.preference != DealPreference.excluded)
-        .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
-        .toList();
-    final selected = await showAnchorPickerDialog(context, items: available, title: 'Add anchor item');
+  Future<void> _addAnchorItem(int slotIndex, {AnchorRole role = AnchorRole.other}) async {
+    final selected = await showAnchorPickerDialog(
+      context,
+      items: _availableDeals(),
+      title: switch (role) {
+        AnchorRole.protein => 'Choose a protein',
+        AnchorRole.vegetable => 'Choose a vegetable',
+        _ => 'Add an item',
+      },
+      initialCategory: _categoryForRole(role),
+    );
     if (selected == null) return;
 
     setState(() {
       final slots = [..._preview.slots];
-      final anchors = [...slots[slotIndex].anchorItems, AnchorItem(name: selected.name, store: selected.storeName)];
+      final anchors = [
+        ...slots[slotIndex].anchorItems,
+        AnchorItem(name: selected.name, store: selected.storeName, role: role),
+      ];
       slots[slotIndex] = slots[slotIndex].copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
@@ -311,10 +339,30 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
 
   void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
 
-  // Marked explicitly (by the AI's suggestion or the carb picker), never
-  // inferred from the flyer category - extraction can misfile e.g. tofu as
-  // a carb.
+  // Set explicitly by the AI's suggestion or the picker it came from. Only
+  // items saved before roles existed fall back to the flyer's category -
+  // never for the carb, since extraction can misfile e.g. tofu as a carb.
+  AnchorRole _roleOf(AnchorItem anchor) {
+    if (anchor.role != null) return anchor.role!;
+    final category = _dealFor(anchor)?.category;
+    return switch (category) {
+      DealCategory.protein => AnchorRole.protein,
+      DealCategory.vegetables => AnchorRole.vegetable,
+      _ => AnchorRole.other,
+    };
+  }
+
   bool _isCarb(AnchorItem anchor) => anchor.isCarb;
+
+  // This week's deal matching [anchor] by name, preferring the same store -
+  // for its price and (for old items) its category.
+  DealItem? _dealFor(AnchorItem anchor) {
+    if (anchor.isPantry) return null;
+    final key = _anchorNameKey(anchor.name);
+    final matches = widget.items.where((item) => _anchorNameKey(item.name) == key).toList();
+    if (matches.isEmpty) return null;
+    return matches.firstWhere((item) => item.storeName == anchor.store, orElse: () => matches.first);
+  }
 
   bool _hasCarb(MealSlotPreview slot) => slot.anchorItems.any(_isCarb);
 
@@ -628,44 +676,9 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildSlotHeader(slot),
-            const SizedBox(height: 10),
-            Text('Carb', style: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (_hasCarb(slot))
-                  for (final anchor in slot.anchorItems.where(_isCarb))
-                    _buildAnchorChip(index, anchor, disabled: disabled)
-                else
-                  ActionChip(
-                    key: ValueKey('choose-carb-$index'),
-                    avatar: Icon(Icons.add, size: 16, color: Theme.of(context).colorScheme.error),
-                    label: const Text('Choose a carb'),
-                    side: BorderSide(color: Theme.of(context).colorScheme.error),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: disabled ? null : () => _chooseCarb(index),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text('Deal items', style: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final anchor in slot.anchorItems.where((a) => !_isCarb(a)))
-                  _buildAnchorChip(index, anchor, disabled: disabled),
-                ActionChip(
-                  avatar: const Icon(Icons.add, size: 16),
-                  label: const Text('Add item'),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: disabled ? null : () => _addAnchorItem(index),
-                ),
-              ],
-            ),
+            const SizedBox(height: 8),
+            for (final role in const [AnchorRole.protein, AnchorRole.carb, AnchorRole.vegetable, AnchorRole.other])
+              _buildRoleRow(index, slot, role, disabled: disabled),
             const SizedBox(height: 8),
             Text(slot.note, style: textTheme.bodyMedium?.copyWith(fontStyle: FontStyle.italic)),
             Row(
@@ -720,14 +733,126 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     );
   }
 
-  Widget _buildAnchorChip(int slotIndex, AnchorItem anchor, {bool disabled = false}) {
-    return InputChip(
-      avatar: Icon(anchor.isPantry ? Icons.kitchen_outlined : Icons.swap_horiz, size: 16),
-      label: Text('${anchor.name} · ${anchor.store}'),
-      tooltip: 'Tap to swap, or use the × to remove',
-      onPressed: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
-      deleteIcon: const Icon(Icons.close, size: 16),
-      onDeleted: disabled ? null : () => _removeAnchorItem(slotIndex, anchor),
+  static String _roleLabel(AnchorRole role) => switch (role) {
+    AnchorRole.protein => 'Protein',
+    AnchorRole.carb => 'Carb',
+    AnchorRole.vegetable => 'Veg',
+    AnchorRole.other => 'Also',
+  };
+
+  // One line of the card per part of the meal: its item(s), each tappable to
+  // swap, or - when there's none - a button to choose one. The carb is
+  // required, so its button is red; "Also" holds any extra item and always
+  // offers to add one.
+  Widget _buildRoleRow(int index, MealSlotPreview slot, AnchorRole role, {required bool disabled}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final anchors = slot.anchorItems.where((anchor) => _roleOf(anchor) == role).toList();
+    final missingCarb = role == AnchorRole.carb && anchors.isEmpty;
+
+    Widget chooseButton(String label, VoidCallback onPressed, {Key? key, Color? color}) => Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        key: key,
+        onPressed: disabled ? null : onPressed,
+        icon: Icon(Icons.add, size: 18, color: color),
+        label: Text(label, style: TextStyle(color: color)),
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+        ),
+      ),
+    );
+
+    return Container(
+      key: ValueKey('role-$index-${role.name}'),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 64,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                _roleLabel(role),
+                style: textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: missingCarb ? colorScheme.error : colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final anchor in anchors) _buildAnchorTile(index, anchor, disabled: disabled),
+                if (missingCarb)
+                  chooseButton(
+                    'Choose a carb',
+                    () => _chooseCarb(index),
+                    key: ValueKey('choose-carb-$index'),
+                    color: colorScheme.error,
+                  )
+                else if (anchors.isEmpty && role == AnchorRole.protein)
+                  chooseButton('Choose a protein', () => _addAnchorItem(index, role: AnchorRole.protein))
+                else if (anchors.isEmpty && role == AnchorRole.vegetable)
+                  chooseButton('Choose a vegetable', () => _addAnchorItem(index, role: AnchorRole.vegetable))
+                else if (role == AnchorRole.other)
+                  chooseButton('Add item', () => _addAnchorItem(index)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // The full flyer name (up to two lines - they're often long), with the
+  // store and price underneath. Tapping it swaps it; × removes it.
+  Widget _buildAnchorTile(int slotIndex, AnchorItem anchor, {required bool disabled}) {
+    final textTheme = Theme.of(context).textTheme;
+    final deal = _dealFor(anchor);
+    final details = anchor.isPantry ? 'Pantry staple' : [anchor.store, ?deal?.priceText].join(' · ');
+    return InkWell(
+      key: ValueKey('anchor-$slotIndex-${anchor.name}'),
+      onTap: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(anchor.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: textTheme.bodyMedium),
+                  Text(
+                    details,
+                    style: textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.swap_horiz, size: 20),
+              tooltip: 'Swap',
+              visualDensity: VisualDensity.compact,
+              onPressed: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 20),
+              tooltip: 'Remove',
+              visualDensity: VisualDensity.compact,
+              onPressed: disabled ? null : () => _removeAnchorItem(slotIndex, anchor),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -819,13 +944,17 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
             if (recipe == null) ...[
               _buildReviewTileIngredient(
                 Icons.set_meal_outlined,
-                _anchorForCategory(slot, DealCategory.protein) ?? slot.protein,
+                slot.anchorItems.where((a) => _roleOf(a) == AnchorRole.protein).map((a) => a.name).firstOrNull ??
+                    slot.protein,
               ),
               _buildReviewTileIngredient(
                 Icons.grain,
                 slot.anchorItems.where(_isCarb).map((a) => a.name).firstOrNull ?? '—',
               ),
-              _buildReviewTileIngredient(Icons.eco_outlined, _anchorForCategory(slot, DealCategory.vegetables) ?? '—'),
+              _buildReviewTileIngredient(
+                Icons.eco_outlined,
+                slot.anchorItems.where((a) => _roleOf(a) == AnchorRole.vegetable).map((a) => a.name).firstOrNull ?? '—',
+              ),
             ] else ...[
               _buildReviewTileIngredient(Icons.set_meal_outlined, _tileIngredientLabel(recipe.proteinComponent)),
               _buildReviewTileIngredient(Icons.grain, _tileIngredientLabel(recipe.carbComponent)),
@@ -835,21 +964,6 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         ),
       ),
     );
-  }
-
-  // The first of this slot's anchor items that's actually filed under
-  // [category] in the fetched deals, if any - lets the tile guess at a
-  // protein/carb/vegetable breakdown before a recipe (and its own confirmed
-  // components) exists yet.
-  String? _anchorForCategory(MealSlotPreview slot, DealCategory category) {
-    for (final anchor in slot.anchorItems) {
-      for (final item in widget.items) {
-        if (item.category == category && _anchorNameKey(item.name) == _anchorNameKey(anchor.name)) {
-          return anchor.name;
-        }
-      }
-    }
-    return null;
   }
 
   String _tileIngredientLabel(MealComponent component) {

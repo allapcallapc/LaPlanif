@@ -6,19 +6,27 @@ import 'deal_grouping.dart';
 /// Lets the user pick one of [items] as a meal's anchor. Laid out like the
 /// deals list - grouped by category, filterable by store and category - plus
 /// a name search, since a full week of flyers is far too long to scan as one
-/// flat list. Resolves to the picked item, or null on cancel.
-Future<DealItem?> showAnchorPickerDialog(BuildContext context, {required List<DealItem> items, required String title}) {
+/// flat list. [initialCategory] preselects a category filter (still
+/// changeable, since the flyer's categories aren't always right). Resolves
+/// to the picked item, or null on cancel.
+Future<DealItem?> showAnchorPickerDialog(
+  BuildContext context, {
+  required List<DealItem> items,
+  required String title,
+  DealCategory? initialCategory,
+}) {
   return showDialog<DealItem>(
     context: context,
-    builder: (_) => AnchorPickerDialog(items: items, title: title),
+    builder: (_) => AnchorPickerDialog(items: items, title: title, initialCategory: initialCategory),
   );
 }
 
 class AnchorPickerDialog extends StatefulWidget {
-  const AnchorPickerDialog({super.key, required this.items, required this.title});
+  const AnchorPickerDialog({super.key, required this.items, required this.title, this.initialCategory});
 
   final List<DealItem> items;
   final String title;
+  final DealCategory? initialCategory;
 
   @override
   State<AnchorPickerDialog> createState() => _AnchorPickerDialogState();
@@ -26,7 +34,7 @@ class AnchorPickerDialog extends StatefulWidget {
 
 class _AnchorPickerDialogState extends State<AnchorPickerDialog> {
   String? _storeFilter;
-  DealCategory? _categoryFilter;
+  late DealCategory? _categoryFilter = widget.initialCategory;
   String _query = '';
 
   List<String> get _storeNames => widget.items.map((item) => item.storeName).toSet().toList()..sort();

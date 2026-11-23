@@ -1041,7 +1041,7 @@ void main() {
           anchorItems: const [
             AnchorItem(name: 'Chicken thighs', store: 'IGA'),
             AnchorItem.pantry('Quinoa'),
-            AnchorItem(name: 'Spaghetti', store: 'IGA', isCarb: true),
+            AnchorItem(name: 'Spaghetti', store: 'IGA', role: AnchorRole.carb),
           ],
         ),
       ],

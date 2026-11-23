@@ -322,18 +322,33 @@ class _FailingSaveMealPlanConfigRepository extends MealPlanConfigRepository {
 /// pantry carb (Quinoa) for any meal that doesn't have one yet - every meal
 /// needs a carb before the ingredients can be confirmed.
 Future<void> _confirmIngredients(WidgetTester tester) async {
+  // Tall enough for every meal's card to be built, not just the first.
+  tester.view.physicalSize = const Size(800, 4000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.pumpAndSettle();
   for (var i = 0; ; i++) {
     final card = find.byKey(ValueKey('ingredients-slot-$i'));
     if (card.evaluate().isEmpty) break;
     final chooseCarb = find.byKey(ValueKey('choose-carb-$i'));
     if (chooseCarb.evaluate().isEmpty) continue;
-    await tester.ensureVisible(chooseCarb);
-    await tester.tap(chooseCarb);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Quinoa'));
+    await _tapVisible(tester, chooseCarb);
+    await tester.tap(find.widgetWithText(ActionChip, 'Quinoa'));
     await tester.pumpAndSettle();
   }
   await tester.tap(find.text('Confirm ingredients'));
+  await tester.pumpAndSettle();
+}
+
+/// The ingredients step's row for the item named [name] in slot [index].
+Finder _anchor(int index, String name) => find.byKey(ValueKey('anchor-$index-$name'));
+
+/// Taps [finder] after scrolling it into view - the ingredient cards are tall.
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
   await tester.pumpAndSettle();
 }
 
@@ -2037,19 +2052,24 @@ void main() {
     expect(find.text('15 portions'), findsOneWidget);
     // The ingredients step comes first, on its own: no recipe action yet.
     expect(find.text('Ingredients'), findsOneWidget);
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+    // The chicken sits on the Protein row, with its store and price below.
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('role-0-protein')), matching: _anchor(0, 'Chicken thighs')),
+      findsOneWidget,
+    );
+    expect(find.text('IGA · 3.99\$/lb'), findsOneWidget);
     expect(find.text('Big-batch chicken thigh stir-fry.'), findsOneWidget);
     expect(find.text('Generate recipe'), findsNothing);
 
-    // Swap the anchor item for another available deal item.
-    await tester.tap(find.text('Chicken thighs · IGA'));
+    // Swap the protein for another available deal item.
+    await tester.tap(_anchor(0, 'Chicken thighs'));
     await tester.pumpAndSettle();
-    expect(find.text('Swap anchor item'), findsOneWidget);
+    expect(find.text('Swap the protein'), findsOneWidget);
 
     await tester.tap(find.text('Ground pork'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Ground pork'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
     await _confirmIngredients(tester);
@@ -3371,14 +3391,14 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Chicken thighs · IGA'));
+    await tester.tap(_anchor(0, 'Chicken thighs'));
     await tester.pumpAndSettle();
-    expect(find.text('Swap anchor item'), findsOneWidget);
+    expect(find.text('Swap the protein'), findsOneWidget);
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
   });
 
   testWidgets('prompts for the next model when the preview call is still rate limited, and continues with it', (
@@ -3601,12 +3621,12 @@ void main() {
 
     // The regenerated slot changed...
     expect(find.text('Regenerated lunch note.'), findsOneWidget);
-    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Ground pork'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
     // ...and the supper meal is untouched.
     expect(find.text('Original supper note.'), findsOneWidget);
-    expect(find.text('Tofu · IGA'), findsOneWidget);
+    expect(_anchor(1, 'Tofu'), findsOneWidget);
   });
 
   testWidgets('adds an anchor item to a slot via the Add item chip', (tester) async {
@@ -3687,9 +3707,8 @@ void main() {
 
     expect(find.textContaining('Ground pork'), findsNothing);
 
-    await tester.tap(find.text('Add item'));
-    await tester.pumpAndSettle();
-    expect(find.text('Add anchor item'), findsOneWidget);
+    await _tapVisible(tester, find.text('Add item'));
+    expect(find.text('Add an item'), findsOneWidget);
     // Chicken thighs is already an anchor, so it should not be offered again.
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing);
 
@@ -3699,8 +3718,12 @@ void main() {
     // The picker tile's protein-summary row keeps showing Chicken thighs
     // (the first protein-category anchor), so its chip is checked by exact
     // text to avoid also matching the tile.
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
-    expect(find.textContaining('Ground pork'), findsOneWidget);
+    // The added item goes on the "Also" row, next to the protein.
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('role-0-other')), matching: _anchor(0, 'Ground pork')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('removes an anchor item from a slot via its chip delete icon', (tester) async {
@@ -3771,17 +3794,19 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    // Exact chip text - the picker tile above shows the same anchor's bare
-    // name in its own protein-summary row.
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
 
-    final chip = find.widgetWithText(InputChip, 'Chicken thighs · IGA');
-    final deleteIcon = find.descendant(of: chip, matching: find.byIcon(Icons.close));
+    final deleteIcon = find.descendant(of: _anchor(0, 'Chicken thighs'), matching: find.byTooltip('Remove'));
     await tester.tap(deleteIcon);
     await tester.pumpAndSettle();
 
+    // Removing the only protein leaves the row offering to choose one.
     expect(find.textContaining('Chicken thighs'), findsNothing);
-    expect(find.text('Add item'), findsOneWidget);
+    expect(find.text('Choose a protein'), findsOneWidget);
+
+    // On the recipes step, the meal's tile falls back to its protein type.
+    await _confirmIngredients(tester);
+    expect(find.descendant(of: find.byKey(const ValueKey('review-step-0')), matching: find.text('meat')), findsOneWidget);
   });
 
   testWidgets('shows a spinner on the card while a slot regenerate call is pending', (tester) async {
@@ -4179,16 +4204,15 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Add item'));
-    await tester.pumpAndSettle();
-    expect(find.text('Add anchor item'), findsOneWidget);
+    await _tapVisible(tester, find.text('Add item'));
+    expect(find.text('Add an item'), findsOneWidget);
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
     // Exact chip text - the picker tile above shows the same anchor's bare
     // name in its own protein-summary row.
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
     expect(find.textContaining('Ground pork'), findsNothing);
   });
 
@@ -4531,11 +4555,8 @@ void main() {
 
     // Swap the supper slot's Tofu anchor: Chicken thighs is already used by
     // the lunch slot, so only Ground pork should be offered.
-    await tester.ensureVisible(find.text('Tofu · IGA'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tofu · IGA'));
-    await tester.pumpAndSettle();
-    expect(find.text('Swap anchor item'), findsOneWidget);
+    await _tapVisible(tester, _anchor(1, 'Tofu'));
+    expect(find.text('Swap the protein'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing);
     expect(find.widgetWithText(ListTile, 'Ground pork'), findsOneWidget);
     await tester.tap(find.text('Cancel'));
@@ -4547,7 +4568,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(_inIngredientCard(0, find.text('Add item')));
     await tester.pumpAndSettle();
-    expect(find.text('Add anchor item'), findsOneWidget);
+    expect(find.text('Add an item'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Tofu'), findsNothing);
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing, reason: 'already an anchor on this slot');
     expect(find.widgetWithText(ListTile, 'Ground pork'), findsOneWidget);
@@ -4666,7 +4687,7 @@ void main() {
     await tester.tap(_inIngredientCard(1, find.text('Add item')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Add anchor item'), findsOneWidget);
+    expect(find.text('Add an item'), findsOneWidget);
     // Both listings of Brocoli (IGA and Metro) are excluded, since the lunch
     // slot already claims the ingredient regardless of which store it's
     // from - but unrelated items are still offered, proving the dialog
@@ -5996,6 +6017,7 @@ void main() {
 
     // Both meals' ingredients on one page.
     expect(find.byKey(const ValueKey('ingredients-slot-0')), findsOneWidget);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('ingredients-slot-1')), 300);
     expect(find.byKey(const ValueKey('ingredients-slot-1')), findsOneWidget);
     await _confirmIngredients(tester);
 
@@ -6107,17 +6129,19 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Use'));
     await tester.pumpAndSettle();
-    expect(find.text('Polenta · Pantry'), findsOneWidget);
+    expect(_anchor(0, 'Polenta'), findsOneWidget);
+    expect(find.text('Pantry staple'), findsOneWidget);
     expect(find.text('Choose a carb'), findsNothing);
 
     // Tapping the carb reopens the carb picker; a deal carb replaces it.
-    await tester.tap(find.text('Polenta · Pantry'));
+    await tester.tap(_anchor(0, 'Polenta'));
     await tester.pumpAndSettle();
     expect(find.text('From the pantry'), findsOneWidget);
     await tester.tap(find.text('Spaghetti'));
     await tester.pumpAndSettle();
-    expect(find.text('Spaghetti · IGA'), findsOneWidget);
-    expect(find.text('Polenta · Pantry'), findsNothing);
+    expect(_anchor(0, 'Spaghetti'), findsOneWidget);
+    expect(find.text('IGA · 1.49\$'), findsOneWidget);
+    expect(find.textContaining('Polenta'), findsNothing);
 
     await _confirmIngredients(tester);
     expect(find.text('Recipes'), findsOneWidget);
@@ -6159,7 +6183,7 @@ void main() {
             portionsPerMeal: 3,
             anchorItems: [
               AnchorItem(name: 'Tofu Unisoya', store: 'Maxi'),
-              AnchorItem(name: 'Riz jasmin', store: 'Maxi', isCarb: true),
+              AnchorItem(name: 'Riz jasmin', store: 'Maxi', role: AnchorRole.carb),
             ],
             note: 'Tofu stir-fry with jasmine rice.',
           ),
@@ -6187,17 +6211,102 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    double y(Finder finder) => tester.getTopLeft(finder).dy;
-    final carbLabel = find.text('Carb');
-    final dealItemsLabel = find.text('Deal items');
-    final rice = find.text('Riz jasmin · Maxi');
-    final tofu = find.text('Tofu Unisoya · Maxi');
+    Finder inRow(String role, String name) =>
+        find.descendant(of: find.byKey(ValueKey('role-0-$role')), matching: _anchor(0, name));
 
     expect(find.text('Choose a carb'), findsNothing);
-    // Rice sits in the carb row, between the two labels...
-    expect(y(rice), greaterThan(y(carbLabel)));
-    expect(y(rice), lessThan(y(dealItemsLabel)));
-    // ...and tofu with the deal items, below them.
-    expect(y(tofu), greaterThan(y(dealItemsLabel)));
+    // Rice is on the Carb row; the misfiled tofu isn't.
+    expect(inRow('carb', 'Riz jasmin'), findsOneWidget);
+    expect(inRow('carb', 'Tofu Unisoya'), findsNothing);
+    expect(_anchor(0, 'Tofu Unisoya'), findsOneWidget);
+  });
+
+  testWidgets('each item sits on the row for its part of the meal, and an empty row offers to choose one', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      ),
+    );
+    final scraper = _FakePagesScraper({
+      'maxi': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'Maxi': () async => const [
+        // Misfiled by the flyer extraction: tofu is a protein, not a carb.
+        DealItem(name: 'Tofu Unisoya', price: '4.99\$', unit: '', category: DealCategory.carbs, storeName: 'Maxi', pageIndex: 2),
+        DealItem(name: 'Riz jasmin', price: '6.99\$', unit: '', category: DealCategory.carbs, storeName: 'Maxi', pageIndex: 3),
+        DealItem(name: 'Brocoli', price: '2.49\$', unit: '', category: DealCategory.vegetables, storeName: 'Maxi', pageIndex: 4),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'tofu',
+            count: 4,
+            portionsPerMeal: 3,
+            anchorItems: [
+              AnchorItem(name: 'Tofu Unisoya', store: 'Maxi', role: AnchorRole.protein),
+              AnchorItem(name: 'Riz jasmin', store: 'Maxi', role: AnchorRole.carb),
+            ],
+            note: 'Tofu stir-fry with jasmine rice.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    Finder inRow(String role, String name) =>
+        find.descendant(of: find.byKey(ValueKey('role-0-$role')), matching: _anchor(0, name));
+
+    expect(inRow('protein', 'Tofu Unisoya'), findsOneWidget);
+    expect(inRow('carb', 'Riz jasmin'), findsOneWidget);
+    expect(find.text('Maxi · 6.99\$'), findsOneWidget);
+
+    // No vegetable yet: its row offers one, opening the picker on vegetables.
+    await _tapVisible(tester, find.text('Choose a vegetable'));
+    expect(find.text('Choose a vegetable'), findsNWidgets(2));
+    expect(find.widgetWithText(ListTile, 'Tofu Unisoya'), findsNothing);
+    await tester.tap(find.widgetWithText(ListTile, 'Brocoli'));
+    await tester.pumpAndSettle();
+    expect(inRow('vegetable', 'Brocoli'), findsOneWidget);
+    expect(find.text('Choose a vegetable'), findsNothing);
+
+    // Its swap button opens the picker for a vegetable again.
+    await tester.tap(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.byTooltip('Swap')));
+    await tester.pumpAndSettle();
+    expect(find.text('Swap the vegetable'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(inRow('vegetable', 'Brocoli'), findsOneWidget);
   });
 }

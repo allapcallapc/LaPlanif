@@ -1018,8 +1018,11 @@ void main() {
     var callCount = 0;
     final client = MockClient((request) async {
       callCount++;
-      expect(request.body, contains('Quinoa (pantry staple carb, not a deal item)'));
+      expect(request.body, contains("Quinoa (not a deal item, the meal's carb)"));
       expect(request.body, contains("Spaghetti (IGA, the meal's carb)"));
+      expect(request.body, contains('Chicken breast (not a deal item, protein)'));
+      expect(request.body, contains("Kale (not a deal item, the meal's vegetable)"));
+      expect(request.body, contains('Parmesan (not a deal item, extra ingredient)'));
       if (callCount == 1) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
       expect(request.body, contains('never list it in dealItems'));
       return _extractionResponse(
@@ -1042,6 +1045,9 @@ void main() {
             AnchorItem(name: 'Chicken thighs', store: 'IGA'),
             AnchorItem.pantry('Quinoa'),
             AnchorItem(name: 'Spaghetti', store: 'IGA', role: AnchorRole.carb),
+            AnchorItem.pantry('Chicken breast', role: AnchorRole.protein),
+            AnchorItem.pantry('Kale', role: AnchorRole.vegetable),
+            AnchorItem.pantry('Parmesan', role: AnchorRole.other),
           ],
         ),
       ],

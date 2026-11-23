@@ -96,15 +96,67 @@ class MealPlanPreviewService {
     required String dietaryNotes,
     required String model,
   }) async {
+    return _post(
+      apiKey: apiKey,
+      model: model,
+      body: _buildRequestBody(
+        mealSlots,
+        portionsPerMeal,
+        items,
+        alreadyUsedAnchors,
+        otherSlots,
+        recentlyUsed,
+        dietaryNotes,
+      ),
+      parse: (decoded) => _parsePreview(decoded, mealSlots, portionsPerMeal),
+      details: _instructionCheck,
+    );
+  }
+
+  /// Proposes one replacement for [replacing], a single ingredient of
+  /// [slot], playing the same [role] in the meal - the per-ingredient
+  /// counterpart of regenerating a whole slot. [alreadyUsedAnchors] are the
+  /// plan's other slots' ingredients, never proposed again. The replacement
+  /// is a deal item when one fits, otherwise something not on sale (e.g. a
+  /// pantry carb), returned as [AnchorItem.pantry].
+  Future<AnchorItem> suggestReplacement({
+    required String apiKey,
+    required MealSlotPreview slot,
+    required AnchorItem replacing,
+    required AnchorRole role,
+    required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
+    String? model,
+  }) async {
+    final effectiveModel = model ?? this.model;
+    final activityId = AiCallActivity.start(storeName: _logStoreName, model: effectiveModel);
+    try {
+      return await _post(
+        apiKey: apiKey,
+        model: effectiveModel,
+        body: _buildReplacementBody(slot, replacing, role, items, alreadyUsedAnchors, dietaryNotes),
+        parse: (decoded) => _parseReplacement(decoded, role),
+      );
+    } finally {
+      AiCallActivity.finish(activityId);
+    }
+  }
+
+  /// Sends [body] to [model], logs the call, and returns [parse]'s result -
+  /// shared by every call this service makes.
+  Future<T> _post<T>({
+    required String apiKey,
+    required String model,
+    required Map<String, dynamic> body,
+    required T Function(Map<String, dynamic> decoded) parse,
+    String? Function(Map<String, dynamic> decoded)? details,
+  }) async {
     final uri = Uri.parse('$_apiBase/$model:generateContent');
     final headers = {'x-goog-api-key': apiKey, 'content-type': 'application/json'};
-    final body = jsonEncode(
-      _buildRequestBody(mealSlots, portionsPerMeal, items, alreadyUsedAnchors, otherSlots, recentlyUsed, dietaryNotes),
-    );
-
     final http.Response response;
     try {
-      response = await _client.post(uri, headers: headers, body: body);
+      response = await _client.post(uri, headers: headers, body: jsonEncode(body));
     } catch (_) {
       await _log(model: model, success: false, errorMessage: 'Could not reach the AI API');
       throw Exception('Could not reach the AI API');
@@ -133,15 +185,15 @@ class MealPlanPreviewService {
     final outputTokens = (usage?['candidatesTokenCount'] as num?)?.toInt() ?? 0;
 
     try {
-      final preview = _parsePreview(decoded, mealSlots, portionsPerMeal);
+      final result = parse(decoded);
       await _log(
         model: model,
         success: true,
         inputTokens: inputTokens,
         outputTokens: outputTokens,
-        details: _instructionCheck(decoded),
+        details: details?.call(decoded),
       );
-      return preview;
+      return result;
     } catch (e) {
       await _log(
         model: model,
@@ -296,6 +348,71 @@ class MealPlanPreviewService {
     return list.map((a) => '${a.name} (${a.store})').join(', ');
   }
 
+  Map<String, dynamic> _buildReplacementBody(
+    MealSlotPreview slot,
+    AnchorItem replacing,
+    AnchorRole role,
+    List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors,
+    String dietaryNotes,
+  ) {
+    final priority = items.where((i) => i.preference == DealPreference.priority).toList();
+    final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
+    final available = items.where((i) => i.preference == DealPreference.neutral).toList();
+    final others = slot.anchorItems.where((a) => !identical(a, replacing)).toList();
+
+    final userText =
+        'Meal: ${slot.mealType.name}, protein=${slot.protein}, count=${slot.count} days, '
+        'totalPortionsNeeded=${slot.totalPortionsNeeded}. Direction: ${slot.note}\n\n'
+        'Ingredient to replace (role: ${role.name}): ${_anchorItemsInlineText([replacing])}\n\n'
+        'The meal\'s other ingredients, which stay as they are:\n${_anchorItemsText(others)}\n\n'
+        '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - hard constraints:\n${dietaryNotes.trim()}\n\n'}'
+        'Priority deal items (prefer these first):\n${_itemsText(priority)}\n\n'
+        'Excluded deal items (never propose these):\n${_itemsText(excluded)}\n\n'
+        'All other available deal items:\n${_itemsText(available)}\n\n'
+        'Ingredients already used by other meals in this plan - never propose any of these:\n'
+        '${_anchorItemsText(alreadyUsedAnchors)}';
+
+    return {
+      'systemInstruction': {
+        'parts': [
+          {'text': _replacementSystemPrompt},
+        ],
+      },
+      'contents': [
+        {
+          'role': 'user',
+          'parts': [
+            {'text': userText},
+          ],
+        },
+      ],
+      'tools': [_recordReplacementTool],
+      'toolConfig': {
+        'functionCallingConfig': {
+          'mode': 'ANY',
+          'allowedFunctionNames': ['record_replacement'],
+        },
+      },
+    };
+  }
+
+  AnchorItem _parseReplacement(Map<String, dynamic> decoded, AnchorRole role) {
+    final parts = ((decoded['candidates'] as List<dynamic>?)?.firstOrNull as Map<String, dynamic>?)?['content']?['parts'];
+    if (parts is! List) throw Exception('no content in response');
+    for (final part in parts) {
+      final args = (part as Map<String, dynamic>)['functionCall']?['args'];
+      if (args is! Map<String, dynamic>) continue;
+      final name = (args['name'] as String? ?? '').trim();
+      if (name.isEmpty) throw Exception('empty replacement name');
+      final store = (args['store'] as String? ?? '').trim();
+      final isPantry =
+          args['pantry'] == true || store.isEmpty || store.toLowerCase() == AnchorItem.pantryStore.toLowerCase();
+      return isPantry ? AnchorItem.pantry(name, role: role) : AnchorItem(name: name, store: store, role: role);
+    }
+    throw Exception('no functionCall in response');
+  }
+
   MealPlanPreview _parsePreview(Map<String, dynamic> decoded, List<MealSlot> mealSlots, int portionsPerMeal) {
     final candidates = decoded['candidates'] as List<dynamic>?;
     if (candidates == null || candidates.isEmpty) {
@@ -438,6 +555,38 @@ const _recordSlotPreviewsTool = {
         },
         'required': ['instructionCheck', 'slots'],
         'propertyOrdering': ['instructionCheck', 'slots'],
+      },
+    },
+  ],
+};
+
+const _replacementSystemPrompt = '''
+You are swapping ONE ingredient of one meal in a meal-plan preview. The meal is ONE recipe, batch-cooked once for all its portions. Propose exactly one replacement for the named ingredient.
+
+- It plays the same role in the meal (protein, carb, vegetable or other) as the ingredient it replaces. Decide what an item is from what it actually is, not from the category its deal is listed under - e.g. tofu, meat or fish are proteins, never carbs.
+- It must be clearly different from the ingredient being replaced - not the same product from another store or in another format.
+- It must fit the meal's direction and its other ingredients, which stay as they are.
+- Prefer this week's deal items: priority items first, then [COVER DEAL] items, then the other available ones. Never propose an excluded item, one of the meal's other ingredients, or an ingredient already used by another meal in the plan (by ingredient, not just exact listing).
+- For a carb, a pantry staple (e.g. rice, quinoa, couscous, pasta, egg noodles, potatoes, bulgur, orzo) is a good choice when no carb deal fits. For a protein or vegetable, use a deal item whenever one fits; only if none does, name a common grocery item instead.
+- Record a deal item with its exact name and store and pantry=false. Record anything not on sale with pantry=true and store "Pantry".
+- Standing planning instructions, if given, are hard constraints from the user. They apply across languages (deal items are often in French) and to every variety of what they name.
+
+Record your answer by calling record_replacement.
+''';
+
+const _recordReplacementTool = {
+  'functionDeclarations': [
+    {
+      'name': 'record_replacement',
+      'description': 'Records the one replacement ingredient.',
+      'parameters': {
+        'type': 'OBJECT',
+        'properties': {
+          'name': {'type': 'STRING'},
+          'store': {'type': 'STRING'},
+          'pantry': {'type': 'BOOLEAN'},
+        },
+        'required': ['name', 'store', 'pantry'],
       },
     },
   ],

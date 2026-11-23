@@ -121,7 +121,32 @@ class _FakeMultiStoreChunkAwareExtractionService extends AiDealExtractionService
 /// Preview-service fake: the caller decides what preview comes back for a
 /// given set of slots/portions/items, independent of the real AI call.
 class _FakePreviewService extends MealPlanPreviewService {
-  _FakePreviewService(this._handler);
+  _FakePreviewService(this._handler, {this.replacementHandler});
+
+  /// Answers suggestReplacement - given the ingredient being replaced and
+  /// its role. Unset, the call fails.
+  final Future<AnchorItem> Function(AnchorItem replacing, AnchorRole role, List<AnchorItem> alreadyUsed)?
+  replacementHandler;
+
+  /// Every ingredient suggestReplacement was asked to replace, in order.
+  final List<AnchorItem> replacementCalls = [];
+
+  @override
+  Future<AnchorItem> suggestReplacement({
+    required String apiKey,
+    required MealSlotPreview slot,
+    required AnchorItem replacing,
+    required AnchorRole role,
+    required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
+    String? model,
+  }) {
+    replacementCalls.add(replacing);
+    final handler = replacementHandler;
+    if (handler == null) throw Exception('no replacement handler');
+    return handler(replacing, role, alreadyUsedAnchors);
+  }
 
   final Future<MealPlanPreview> Function(List<MealSlot> mealSlots, int portionsPerMeal, List<DealItem> items) _handler;
 
@@ -210,6 +235,22 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     String? model,
   }) {
     return _byModel(model!);
+  }
+
+  /// Rate-limited on model-a like the other calls here, then swaps in Ground pork.
+  @override
+  Future<AnchorItem> suggestReplacement({
+    required String apiKey,
+    required MealSlotPreview slot,
+    required AnchorItem replacing,
+    required AnchorRole role,
+    required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
+    String? model,
+  }) async {
+    if (model == 'model-a') throw RateLimitedException(model!);
+    return AnchorItem(name: 'Ground pork', store: 'IGA', role: role);
   }
 }
 
@@ -339,6 +380,14 @@ Future<void> _confirmIngredients(WidgetTester tester) async {
   }
   await tester.tap(find.text('Confirm ingredients'));
   await tester.pumpAndSettle();
+}
+
+/// A viewport tall enough for every meal's ingredients card to be built.
+void _useTallView(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 4000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
 }
 
 /// The ingredients step's row for the item named [name] in slot [index].
@@ -3491,6 +3540,7 @@ void main() {
   });
 
   testWidgets('regenerates a single slot without affecting the other slots', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4319,6 +4369,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(promptCalls, 3, reason: 'regenerating every suggestion goes through its own rate-limit retry flow too');
+
+    await tester.tap(find.descendant(of: _anchor(0, 'Chicken thighs'), matching: find.byTooltip('Suggest another')));
+    await tester.pumpAndSettle();
+
+    expect(promptCalls, 4, reason: 'suggesting another ingredient goes through its own rate-limit retry flow too');
+    expect(_anchor(0, 'Ground pork'), findsOneWidget);
   });
 
   testWidgets("shows an error snackbar and re-enables the button when review's own regenerate-all call fails", (
@@ -4459,6 +4515,7 @@ void main() {
   );
 
   testWidgets('does not offer an anchor already used by another slot in the swap or add picker', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4575,6 +4632,7 @@ void main() {
   });
 
   testWidgets('treats the same produce name at a different store as already used too', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [
       StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
@@ -6224,6 +6282,7 @@ void main() {
   testWidgets('each item sits on the row for its part of the meal, and an empty row offers to choose one', (
     tester,
   ) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi')]);
     final aiConfigRepo = AiConfigRepository();
@@ -6301,12 +6360,184 @@ void main() {
     expect(inRow('vegetable', 'Brocoli'), findsOneWidget);
     expect(find.text('Choose a vegetable'), findsNothing);
 
-    // Its swap button opens the picker for a vegetable again.
-    await tester.tap(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.byTooltip('Swap')));
+    // Tapping it opens the picker for a vegetable again.
+    await tester.tap(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.text('Brocoli')));
     await tester.pumpAndSettle();
     expect(find.text('Swap the vegetable'), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(inRow('vegetable', 'Brocoli'), findsOneWidget);
+  });
+
+  testWidgets('one ingredient can be replaced by an AI suggestion or by an ingredient typed in, for any part of the meal', (
+    tester,
+  ) async {
+    _useTallView(tester);
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 2,
+        diversityWindowDays: 28,
+        mealSlots: [
+          MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 3),
+          MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 2),
+        ],
+      ),
+    );
+    DealItem deal(String name, DealCategory category) =>
+        DealItem(name: name, price: '2.99\$', unit: '', category: category, storeName: 'IGA', pageIndex: 2);
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => [
+        deal('Chicken thighs', DealCategory.protein),
+        deal('Brocoli', DealCategory.vegetables),
+        deal('Asperges', DealCategory.vegetables),
+        deal('Tofu', DealCategory.protein),
+      ],
+    });
+    var failNext = false;
+    final suggestion = Completer<AnchorItem>();
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 3,
+            portionsPerMeal: 2,
+            anchorItems: [
+              AnchorItem(name: 'Chicken thighs', store: 'IGA', role: AnchorRole.protein),
+              AnchorItem.pantry('Basmati rice'),
+              AnchorItem(name: 'Brocoli', store: 'IGA', role: AnchorRole.vegetable),
+            ],
+            note: 'Chicken and broccoli.',
+          ),
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'tofu',
+            count: 2,
+            portionsPerMeal: 2,
+            anchorItems: [AnchorItem(name: 'Tofu', store: 'IGA', role: AnchorRole.protein), AnchorItem.pantry('Quinoa')],
+            note: 'Tofu bowl.',
+          ),
+        ],
+      ),
+      replacementHandler: (replacing, role, alreadyUsed) {
+        if (failNext) throw Exception('AI API HTTP 500');
+        return suggestion.future;
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    Finder inRow(int slot, String role, String name) =>
+        find.descendant(of: find.byKey(ValueKey('role-$slot-$role')), matching: _anchor(slot, name));
+    Finder suggestButton(int slot, String name) =>
+        find.descendant(of: _anchor(slot, name), matching: find.byTooltip('Suggest another'));
+
+    // ✨ on the vegetable asks for another vegetable, told what other meals use.
+    await tester.tap(suggestButton(0, 'Brocoli'));
+    await tester.pump();
+    expect(previewService.replacementCalls.single.name, 'Brocoli');
+    expect(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.byType(CircularProgressIndicator)), findsOneWidget);
+    suggestion.complete(const AnchorItem(name: 'Asperges', store: 'IGA', role: AnchorRole.vegetable));
+    await tester.pumpAndSettle();
+    expect(inRow(0, 'vegetable', 'Asperges'), findsOneWidget);
+    expect(_anchor(0, 'Brocoli'), findsNothing);
+    // Only that ingredient changed.
+    expect(inRow(0, 'protein', 'Chicken thighs'), findsOneWidget);
+    expect(inRow(0, 'carb', 'Basmati rice'), findsOneWidget);
+    expect(inRow(1, 'protein', 'Tofu'), findsOneWidget);
+
+    // A failed suggestion says so and leaves the ingredient as it was.
+    failNext = true;
+    await tester.tap(suggestButton(0, 'Chicken thighs'));
+    await tester.pumpAndSettle();
+    expect(find.text('Could not suggest another: AI API HTTP 500'), findsOneWidget);
+    expect(inRow(0, 'protein', 'Chicken thighs'), findsOneWidget);
+
+    // Tapping the protein lets you type your own, not-on-sale protein.
+    await tester.tap(find.descendant(of: _anchor(0, 'Chicken thighs'), matching: find.text('Chicken thighs')));
+    await tester.pumpAndSettle();
+    expect(find.text('Swap the protein'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Not on sale? Type an ingredient'), 'Chicken breast');
+    await tester.tap(find.text('Use'));
+    await tester.pumpAndSettle();
+    expect(inRow(0, 'protein', 'Chicken breast'), findsOneWidget);
+    expect(find.descendant(of: _anchor(0, 'Chicken breast'), matching: find.text('Not on sale')), findsOneWidget);
+    expect(find.descendant(of: _anchor(0, 'Basmati rice'), matching: find.text('Pantry staple')), findsOneWidget);
+  });
+
+  testWidgets('suggesting another ingredient without an API key asks for one instead of calling the AI', (tester) async {
+    final draftRepository = MealPlanDraftRepository();
+    await draftRepository.save(
+      const MealPlanDraft(
+        config: MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+        preview: MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: MealType.lunch,
+              protein: 'meat',
+              count: 5,
+              portionsPerMeal: 3,
+              anchorItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA', role: AnchorRole.protein)],
+              note: 'Chicken.',
+            ),
+          ],
+        ),
+        slotRecipes: [null],
+      ),
+    );
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => throw Exception('not called'),
+      replacementHandler: (replacing, role, alreadyUsed) async => throw Exception('not called'),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: StoreConfigRepository(),
+          mealPlanDraftRepository: draftRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue planning'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Suggest another'));
+    await tester.pumpAndSettle();
+    expect(find.text('Set your Google AI API key in Config first.'), findsOneWidget);
+    expect(previewService.replacementCalls, isEmpty);
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
   });
 }

@@ -490,7 +490,12 @@ class MealPlanGenerationService {
   }
 
   String _anchorText(AnchorItem anchor) => anchor.isPantry
-      ? '${anchor.name} (pantry staple carb, not a deal item)'
+      ? '${anchor.name} (not a deal item, ${switch (anchor.role) {
+          AnchorRole.protein => 'protein',
+          AnchorRole.vegetable => 'the meal\'s vegetable',
+          AnchorRole.other => 'extra ingredient',
+          _ => 'the meal\'s carb',
+        }})'
       : switch (anchor.role) {
           AnchorRole.carb => '${anchor.name} (${anchor.store}, the meal\'s carb)',
           AnchorRole.protein => '${anchor.name} (${anchor.store}, protein)',
@@ -659,7 +664,7 @@ You are researching the recipes needed to turn confirmed meal-plan slots into fu
 
 Every meal (slot) is composed of exactly 3 components: protein, carb, vegetable.
 
-CONFIRMED ANCHOR ITEMS ARE FIXED: the user has already validated each slot's anchor items on a separate ingredients step. Every one of them must be used in that slot's meal - never drop, swap or replace one, even to add variety or to follow a rule below. A protein anchor is the protein. A vegetable anchor is the vegetable component (or is cooked as part of the protein recipe); a carb anchor is the carb component (or is part of the protein recipe). Only a vegetable (or carb) with no confirmed anchor of its own is yours to choose. An anchor marked "pantry staple carb" (e.g. quinoa, rice, couscous) is the user's chosen carb for that slot: use exactly that carb, even though it is not a deal item. You MAY additionally use other non-excluded deal items from the lists below (e.g. a vegetable on sale that fits the recipe) - adding deal items is welcome, removing confirmed ones is not.
+CONFIRMED ANCHOR ITEMS ARE FIXED: the user has already validated each slot's anchor items on a separate ingredients step. Every one of them must be used in that slot's meal - never drop, swap or replace one, even to add variety or to follow a rule below. A protein anchor is the protein. A vegetable anchor is the vegetable component (or is cooked as part of the protein recipe); a carb anchor is the carb component (or is part of the protein recipe). Only a vegetable (or carb) with no confirmed anchor of its own is yours to choose. An anchor marked "not a deal item" (e.g. quinoa, rice or couscous from the pantry, or an ingredient the user typed in) is the user's choice for the part of the meal it names: use exactly that ingredient, even though it is not on sale. You MAY additionally use other non-excluded deal items from the lists below (e.g. a vegetable on sale that fits the recipe) - adding deal items is welcome, removing confirmed ones is not.
 
 For the protein: it is built from the slot's confirmed protein anchor item(s), scaled to totalPortionsNeeded. Use your search tool to find and verify a real recipe URL for it. A real, verified recipe link is REQUIRED unless none can be found - this is a hard requirement, not a soft preference. Falling back to an AI-authored recipe when a real link was actually available is the single biggest failure to avoid. Do not settle after one search: if your first query doesn't turn up a solid text/article recipe match, try at least one or two more searches with different phrasing (different site, different wording of the dish, add "recipe") before concluding none exists. Never report a URL you have not actually looked up and confirmed exists.
 
@@ -696,7 +701,7 @@ Every meal (slot) is composed of exactly 3 components: protein, carb, vegetable.
 - protein: scaled to totalPortionsNeeded, built from the slot's confirmed protein anchor item(s).
 - carb and vegetable: each either covered_by_protein (when the research notes say the protein recipe already explicitly includes it), or its own component.
 
-Every confirmed anchor item of a slot must be used by that slot's meal, and listed in the dealItems of the component that uses it (a vegetable anchor on the vegetable component, a carb anchor on the carb component, or on the protein component when the protein recipe cooks it). Never drop or replace a confirmed anchor item. An anchor marked "pantry staple carb" is not a deal item: it must be the slot's carb (or the carb the protein recipe cooks), but never list it in dealItems and set usesWeeklyDeal from the other items only. Other non-excluded deal items the research notes use may be listed too.
+Every confirmed anchor item of a slot must be used by that slot's meal, and listed in the dealItems of the component that uses it (a vegetable anchor on the vegetable component, a carb anchor on the carb component, or on the protein component when the protein recipe cooks it). Never drop or replace a confirmed anchor item. An anchor marked "not a deal item" must be used for the part of the meal it names (the carb, protein or vegetable, or as part of the protein recipe), but never list it in dealItems and set usesWeeklyDeal from the other items only. Other non-excluded deal items the research notes use may be listed too.
 
 For every component, choose exactly one type: "link" (a real recipe found via search - see sourceIndex below), "ai_recipe" (full ingredients + instructions, used only when there is no matching verified source), "simple_side" (a short prep note, no full recipe - valid for carb/vegetable, not for protein), or "covered_by_protein" (carb/vegetable only).
 

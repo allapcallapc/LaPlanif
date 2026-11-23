@@ -13,9 +13,9 @@ enum AnchorRole {
 }
 
 /// One ingredient a slot's batch-cooked recipe is built around: a deal item,
-/// or - for the carb only - a pantry staple such as rice, quinoa or
-/// couscous, which isn't on sale anywhere ([isPantry], with [store] set to
-/// [pantryStore]).
+/// or something that isn't on sale - a pantry staple such as rice, quinoa
+/// or couscous, or any ingredient the user typed in ([isPantry], with
+/// [store] set to [pantryStore]).
 ///
 /// Its part of the meal ([role]) is stated explicitly - set by the AI's
 /// suggestion or by the picker the user chose it from - rather than inferred
@@ -23,11 +23,12 @@ enum AnchorRole {
 /// tofu filed under Carbs). Null only for items saved before roles existed.
 class AnchorItem {
   const AnchorItem({required this.name, required this.store, this.isPantry = false, AnchorRole? role})
-    : role = isPantry ? AnchorRole.carb : role;
+    : role = role ?? (isPantry ? AnchorRole.carb : null);
 
-  /// A pantry carb: not a deal item, so it never appears among a recipe's
-  /// deal items or the shopping list's deals.
-  const AnchorItem.pantry(this.name) : store = pantryStore, isPantry = true, role = AnchorRole.carb;
+  /// An ingredient that isn't a deal item (a carb unless [role] says
+  /// otherwise), so it never appears among a recipe's deal items or the
+  /// shopping list's deals.
+  const AnchorItem.pantry(this.name, {AnchorRole this.role = AnchorRole.carb}) : store = pantryStore, isPantry = true;
 
   static const pantryStore = 'Pantry';
 
@@ -45,7 +46,8 @@ class AnchorItem {
     'name': name,
     'store': store,
     if (isPantry) 'pantry': true,
-    if (role != null && !isPantry) 'role': role!.name,
+    // A non-deal item is a carb unless it says otherwise.
+    if (role != null && !(isPantry && role == AnchorRole.carb)) 'role': role!.name,
   };
 
   factory AnchorItem.fromJson(Map<String, dynamic> json) => AnchorItem(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:laplanif/models/deal_item.dart';
+import 'package:laplanif/models/meal_plan_preview.dart';
 import 'package:laplanif/widgets/anchor_picker_dialog.dart';
 
 void main() {
@@ -163,5 +164,72 @@ void main() {
     await tester.tap(chip('All'));
     await tester.pumpAndSettle();
     expect(find.text('Chicken thighs'), findsOneWidget);
+  });
+
+  testWidgets('as an ingredient picker, returns a deal or a typed-in ingredient in the given role', (tester) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    AnchorItem? result;
+    var closed = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () async {
+                closed = false;
+                result = await showIngredientPickerDialog(
+                  context,
+                  items: items,
+                  title: 'Choose a vegetable',
+                  role: AnchorRole.vegetable,
+                );
+                closed = true;
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    final custom = find.widgetWithText(TextField, 'Not on sale? Type an ingredient');
+
+    // A deal comes back as that part of the meal.
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Brocoli'));
+    await tester.pumpAndSettle();
+    expect(result?.name, 'Brocoli');
+    expect(result?.store, 'IGA');
+    expect(result?.role, AnchorRole.vegetable);
+    expect(result?.isPantry, isFalse);
+
+    // Blank input is ignored; a typed name is used on Enter, trimmed.
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(custom, '  ');
+    await tester.tap(find.text('Use'));
+    await tester.pumpAndSettle();
+    expect(closed, isFalse);
+    await tester.enterText(custom, ' Kale ');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(result?.name, 'Kale');
+    expect(result?.isPantry, isTrue);
+    expect(result?.role, AnchorRole.vegetable);
+
+    // Cancel gives nothing.
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(result, isNull);
+  });
+
+  testWidgets('the plain deal picker has no typed-in option', (tester) async {
+    await pumpAndOpen(tester, items);
+    expect(find.text('Not on sale? Type an ingredient'), findsNothing);
   });
 }

@@ -82,6 +82,9 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // two, so surfacing which one is running keeps the wait from reading as a
   // stuck spinner.
   final Map<int, String> _recipeGenerationPhase = {};
+  // Ingredients waiting on a per-ingredient "Suggest another" call (by
+  // identity - AnchorItem has no value equality).
+  final Set<AnchorItem> _suggestingAnchors = {};
 
   bool get _allSlotsGenerated => _slotRecipes.isNotEmpty && _slotRecipes.every((s) => s != null);
 
@@ -92,7 +95,8 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       _regeneratingSlots.isNotEmpty ||
       _generatingRecipeSlots.isNotEmpty ||
       _isSavingWeek ||
-      _isGeneratingAll;
+      _isGeneratingAll ||
+      _suggestingAnchors.isNotEmpty;
 
   @override
   void initState() {
@@ -272,7 +276,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
     final role = _roleOf(current);
     if (role == AnchorRole.carb) return _chooseCarb(slotIndex);
-    final selected = await showAnchorPickerDialog(
+    final selected = await showIngredientPickerDialog(
       context,
       items: _availableDeals(),
       title: switch (role) {
@@ -280,18 +284,21 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         AnchorRole.vegetable => 'Swap the vegetable',
         _ => 'Swap this item',
       },
+      role: role,
       initialCategory: _categoryForRole(role),
     );
     if (selected == null) return;
+    await _replaceAnchor(slotIndex, current, selected);
+  }
 
+  // Puts [replacement] where [current] was in the slot (if it's still
+  // there) - the slot's recipe no longer matches, so it's dropped.
+  Future<void> _replaceAnchor(int slotIndex, AnchorItem current, AnchorItem replacement) async {
+    if (!mounted || !_preview.slots[slotIndex].anchorItems.any((a) => identical(a, current))) return;
     setState(() {
       final slots = [..._preview.slots];
       final slot = slots[slotIndex];
-      final anchors = slot.anchorItems
-          .map(
-            (a) => identical(a, current) ? AnchorItem(name: selected.name, store: selected.storeName, role: role) : a,
-          )
-          .toList();
+      final anchors = slot.anchorItems.map((a) => identical(a, current) ? replacement : a).toList();
       slots[slotIndex] = slot.copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
@@ -299,8 +306,53 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     await _saveDraft();
   }
 
+  // Asks the AI for another ingredient in place of just this one, playing
+  // the same part in the meal - the per-ingredient version of "Suggest
+  // others" on the whole meal.
+  Future<void> _suggestAnother(int slotIndex, AnchorItem current) async {
+    final apiKey = widget.apiKey;
+    if (apiKey == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
+      return;
+    }
+    if (_suggestingAnchors.contains(current)) return;
+    setState(() => _suggestingAnchors.add(current));
+    final otherAnchors = [
+      for (var i = 0; i < _preview.slots.length; i++)
+        if (i != slotIndex) ..._preview.slots[i].anchorItems,
+    ];
+    final controller = ModelFallbackController(models: widget.models, waitBeforeRetry: widget.services.rateLimitWait);
+    try {
+      final replacement = await controller.run(
+        attempt: (model) => widget.services.previewService.suggestReplacement(
+          apiKey: apiKey,
+          slot: _preview.slots[slotIndex],
+          replacing: current,
+          role: _roleOf(current),
+          items: widget.items,
+          alreadyUsedAnchors: otherAnchors,
+          dietaryNotes: widget.config.dietaryNotes,
+          model: model,
+        ),
+        onRateLimited: ({required currentModel, nextModel}) {
+          if (!context.mounted) return Future.value(RateLimitChoice.retrySame);
+          return widget.services.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
+        },
+      );
+      if (!mounted) return;
+      setState(() => _suggestingAnchors.remove(current));
+      await _replaceAnchor(slotIndex, current, replacement);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _suggestingAnchors.remove(current));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not suggest another: ${stripExceptionPrefix(e)}')));
+    }
+  }
+
   Future<void> _addAnchorItem(int slotIndex, {AnchorRole role = AnchorRole.other}) async {
-    final selected = await showAnchorPickerDialog(
+    final selected = await showIngredientPickerDialog(
       context,
       items: _availableDeals(),
       title: switch (role) {
@@ -308,16 +360,14 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         AnchorRole.vegetable => 'Choose a vegetable',
         _ => 'Add an item',
       },
+      role: role,
       initialCategory: _categoryForRole(role),
     );
     if (selected == null) return;
 
     setState(() {
       final slots = [..._preview.slots];
-      final anchors = [
-        ...slots[slotIndex].anchorItems,
-        AnchorItem(name: selected.name, store: selected.storeName, role: role),
-      ];
+      final anchors = [...slots[slotIndex].anchorItems, selected];
       slots[slotIndex] = slots[slotIndex].copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
@@ -638,9 +688,9 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         children: [
           Text(
-            'Check what each meal is built around - every meal needs a carb, from the deals or the pantry. '
-            'Recipes come next and will keep every item you confirm here - they may add another deal item, '
-            'but never drop one.',
+            'Check what each meal is built around - every meal needs a carb. Tap an ingredient to pick another '
+            'deal or type your own, or tap ✨ to have one suggested. Recipes keep every ingredient you confirm '
+            'here - they may add another deal item, but never drop one.',
             style: textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -740,6 +790,14 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     AnchorRole.other => 'Also',
   };
 
+  // The same icons as the recipe step's meal tiles and recipe card.
+  static IconData _roleIcon(AnchorRole role) => switch (role) {
+    AnchorRole.protein => Icons.set_meal_outlined,
+    AnchorRole.carb => Icons.grain,
+    AnchorRole.vegetable => Icons.eco_outlined,
+    AnchorRole.other => Icons.more_horiz,
+  };
+
   // One line of the card per part of the meal: its item(s), each tappable to
   // swap, or - when there's none - a button to choose one. The carb is
   // required, so its button is red; "Also" holds any extra item and always
@@ -774,18 +832,25 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 64,
+            width: 56,
             child: Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Text(
-                _roleLabel(role),
-                style: textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: missingCarb ? colorScheme.error : colorScheme.onSurfaceVariant,
-                ),
+              padding: const EdgeInsets.only(top: 6),
+              child: Column(
+                children: [
+                  Icon(_roleIcon(role), size: 22, color: missingCarb ? colorScheme.error : colorScheme.primary),
+                  const SizedBox(height: 2),
+                  Text(
+                    _roleLabel(role),
+                    style: textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: missingCarb ? colorScheme.error : colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
+          const SizedBox(width: 4),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -813,11 +878,18 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   }
 
   // The full flyer name (up to two lines - they're often long), with the
-  // store and price underneath. Tapping it swaps it; × removes it.
+  // store and price underneath. Tapping it opens the picker (a deal, or an
+  // ingredient typed in); ✨ asks the AI for another; × removes it.
   Widget _buildAnchorTile(int slotIndex, AnchorItem anchor, {required bool disabled}) {
     final textTheme = Theme.of(context).textTheme;
     final deal = _dealFor(anchor);
-    final details = anchor.isPantry ? 'Pantry staple' : [anchor.store, ?deal?.priceText].join(' · ');
+    final isSuggesting = _suggestingAnchors.contains(anchor);
+    disabled = disabled || isSuggesting;
+    final details = !anchor.isPantry
+        ? [anchor.store, ?deal?.priceText].join(' · ')
+        : anchor.isCarb
+        ? 'Pantry staple'
+        : 'Not on sale';
     return InkWell(
       key: ValueKey('anchor-$slotIndex-${anchor.name}'),
       onTap: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
@@ -839,10 +911,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
               ),
             ),
             IconButton(
-              icon: const Icon(Icons.swap_horiz, size: 20),
-              tooltip: 'Swap',
+              icon: isSuggesting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.auto_awesome, size: 20),
+              tooltip: 'Suggest another',
               visualDensity: VisualDensity.compact,
-              onPressed: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
+              onPressed: disabled ? null : () => _suggestAnother(slotIndex, anchor),
             ),
             IconButton(
               icon: const Icon(Icons.close, size: 20),
@@ -1069,14 +1143,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     return Chip(
       key: added ? ValueKey('added-deal-${item.name}') : null,
-      avatar: Icon(
-        added
-            ? Icons.add_circle_outline
-            : item.isPantry
-            ? Icons.kitchen_outlined
-            : Icons.check,
-        size: 16,
-      ),
+      avatar: Icon(added ? Icons.add_circle_outline : _roleIcon(_roleOf(item)), size: 16),
       label: Text('${item.name} · ${item.store}'),
       backgroundColor: added ? colorScheme.tertiaryContainer : null,
       visualDensity: VisualDensity.compact,

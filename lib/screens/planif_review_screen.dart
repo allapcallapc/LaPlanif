@@ -82,9 +82,10 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // two, so surfacing which one is running keeps the wait from reading as a
   // stuck spinner.
   final Map<int, String> _recipeGenerationPhase = {};
-  // Ingredients waiting on a per-ingredient "Suggest another" call (by
-  // identity - AnchorItem has no value equality).
-  final Set<AnchorItem> _suggestingAnchors = {};
+  // Pending per-ingredient suggestion calls: the ingredient being replaced
+  // (by identity - AnchorItem has no value equality), or a `slot-role` key
+  // for an empty row being filled.
+  final Set<Object> _suggestingAnchors = {};
 
   bool get _allSlotsGenerated => _slotRecipes.isNotEmpty && _slotRecipes.every((s) => s != null);
 
@@ -306,18 +307,23 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     await _saveDraft();
   }
 
+  static String _emptyRowKey(int slotIndex, AnchorRole role) => '$slotIndex-${role.name}';
+
   // Asks the AI for another ingredient in place of just this one, playing
   // the same part in the meal - the per-ingredient version of "Suggest
-  // others" on the whole meal.
-  Future<void> _suggestAnother(int slotIndex, AnchorItem current) async {
+  // others" on the whole meal. With no [current], suggests one for an empty
+  // row ([role]) and adds it.
+  Future<void> _suggestAnother(int slotIndex, AnchorItem? current, {AnchorRole? role}) async {
+    final effectiveRole = current == null ? role! : _roleOf(current);
+    final Object key = current ?? _emptyRowKey(slotIndex, effectiveRole);
     final apiKey = widget.apiKey;
     if (apiKey == null) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
       return;
     }
-    if (_suggestingAnchors.contains(current)) return;
-    setState(() => _suggestingAnchors.add(current));
+    if (_suggestingAnchors.contains(key)) return;
+    setState(() => _suggestingAnchors.add(key));
     final otherAnchors = [
       for (var i = 0; i < _preview.slots.length; i++)
         if (i != slotIndex) ..._preview.slots[i].anchorItems,
@@ -329,7 +335,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           apiKey: apiKey,
           slot: _preview.slots[slotIndex],
           replacing: current,
-          role: _roleOf(current),
+          role: effectiveRole,
           items: widget.items,
           alreadyUsedAnchors: otherAnchors,
           dietaryNotes: widget.config.dietaryNotes,
@@ -341,11 +347,15 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         },
       );
       if (!mounted) return;
-      setState(() => _suggestingAnchors.remove(current));
-      await _replaceAnchor(slotIndex, current, replacement);
+      setState(() => _suggestingAnchors.remove(key));
+      if (current != null) {
+        await _replaceAnchor(slotIndex, current, replacement);
+      } else {
+        await _appendAnchor(slotIndex, replacement);
+      }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _suggestingAnchors.remove(current));
+      setState(() => _suggestingAnchors.remove(key));
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Could not suggest another: ${stripExceptionPrefix(e)}')));
     }
@@ -365,9 +375,14 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     );
     if (selected == null) return;
 
+    await _appendAnchor(slotIndex, selected);
+  }
+
+  Future<void> _appendAnchor(int slotIndex, AnchorItem anchor) async {
+    if (!mounted) return;
     setState(() {
       final slots = [..._preview.slots];
-      final anchors = [...slots[slotIndex].anchorItems, selected];
+      final anchors = [...slots[slotIndex].anchorItems, anchor];
       slots[slotIndex] = slots[slotIndex].copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
@@ -856,23 +871,49 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 for (final anchor in anchors) _buildAnchorTile(index, anchor, disabled: disabled),
-                if (missingCarb)
-                  chooseButton(
-                    'Choose a carb',
-                    () => _chooseCarb(index),
-                    key: ValueKey('choose-carb-$index'),
-                    color: colorScheme.error,
+                if (anchors.isEmpty && role != AnchorRole.other)
+                  Row(
+                    children: [
+                      Flexible(
+                        child: missingCarb
+                            ? chooseButton(
+                                'Choose a carb',
+                                () => _chooseCarb(index),
+                                key: ValueKey('choose-carb-$index'),
+                                color: colorScheme.error,
+                              )
+                            : chooseButton(
+                                role == AnchorRole.protein ? 'Choose a protein' : 'Choose a vegetable',
+                                () => _addAnchorItem(index, role: role),
+                              ),
+                      ),
+                      _buildSuggestEmptyButton(index, role, disabled: disabled),
+                    ],
                   )
-                else if (anchors.isEmpty && role == AnchorRole.protein)
-                  chooseButton('Choose a protein', () => _addAnchorItem(index, role: AnchorRole.protein))
-                else if (anchors.isEmpty && role == AnchorRole.vegetable)
-                  chooseButton('Choose a vegetable', () => _addAnchorItem(index, role: AnchorRole.vegetable))
                 else if (role == AnchorRole.other)
                   chooseButton('Add item', () => _addAnchorItem(index)),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ✨ on an empty row: asks the AI for an ingredient for that part of the
+  // meal and adds it.
+  Widget _buildSuggestEmptyButton(int index, AnchorRole role, {required bool disabled}) {
+    final isSuggesting = _suggestingAnchors.contains(_emptyRowKey(index, role));
+    return TextButton.icon(
+      key: ValueKey('suggest-$index-${role.name}'),
+      onPressed: disabled || isSuggesting ? null : () => _suggestAnother(index, null, role: role),
+      icon: isSuggesting
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.auto_awesome, size: 18),
+      label: const Text('Suggest'),
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
       ),
     );
   }

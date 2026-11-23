@@ -115,14 +115,16 @@ class MealPlanPreviewService {
 
   /// Proposes one replacement for [replacing], a single ingredient of
   /// [slot], playing the same [role] in the meal - the per-ingredient
-  /// counterpart of regenerating a whole slot. [alreadyUsedAnchors] are the
+  /// counterpart of regenerating a whole slot. With no [replacing], proposes
+  /// an ingredient for a [role] the meal doesn't have yet (e.g. no
+  /// vegetable). [alreadyUsedAnchors] are the
   /// plan's other slots' ingredients, never proposed again. The replacement
   /// is a deal item when one fits, otherwise something not on sale (e.g. a
   /// pantry carb), returned as [AnchorItem.pantry].
   Future<AnchorItem> suggestReplacement({
     required String apiKey,
     required MealSlotPreview slot,
-    required AnchorItem replacing,
+    AnchorItem? replacing,
     required AnchorRole role,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
@@ -350,7 +352,7 @@ class MealPlanPreviewService {
 
   Map<String, dynamic> _buildReplacementBody(
     MealSlotPreview slot,
-    AnchorItem replacing,
+    AnchorItem? replacing,
     AnchorRole role,
     List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors,
@@ -364,7 +366,7 @@ class MealPlanPreviewService {
     final userText =
         'Meal: ${slot.mealType.name}, protein=${slot.protein}, count=${slot.count} days, '
         'totalPortionsNeeded=${slot.totalPortionsNeeded}. Direction: ${slot.note}\n\n'
-        'Ingredient to replace (role: ${role.name}): ${_anchorItemsInlineText([replacing])}\n\n'
+        '${replacing == null ? 'No ingredient yet - propose one for this role: ${role.name}' : 'Ingredient to replace (role: ${role.name}): ${_anchorItemsInlineText([replacing])}'}\n\n'
         'The meal\'s other ingredients, which stay as they are:\n${_anchorItemsText(others)}\n\n'
         '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - hard constraints:\n${dietaryNotes.trim()}\n\n'}'
         'Priority deal items (prefer these first):\n${_itemsText(priority)}\n\n'
@@ -561,10 +563,10 @@ const _recordSlotPreviewsTool = {
 };
 
 const _replacementSystemPrompt = '''
-You are swapping ONE ingredient of one meal in a meal-plan preview. The meal is ONE recipe, batch-cooked once for all its portions. Propose exactly one replacement for the named ingredient.
+You are choosing ONE ingredient of one meal in a meal-plan preview: either a replacement for a named ingredient, or - when the meal has none for that role yet - a new one for the role named. The meal is ONE recipe, batch-cooked once for all its portions. Propose exactly one ingredient.
 
-- It plays the same role in the meal (protein, carb, vegetable or other) as the ingredient it replaces. Decide what an item is from what it actually is, not from the category its deal is listed under - e.g. tofu, meat or fish are proteins, never carbs.
-- It must be clearly different from the ingredient being replaced - not the same product from another store or in another format.
+- It plays the role named (protein, carb, vegetable or other) - the same role as the ingredient it replaces, if any. Decide what an item is from what it actually is, not from the category its deal is listed under - e.g. tofu, meat or fish are proteins, never carbs.
+- When replacing, it must be clearly different from the ingredient being replaced - not the same product from another store or in another format.
 - It must fit the meal's direction and its other ingredients, which stay as they are.
 - Prefer this week's deal items: priority items first, then [COVER DEAL] items, then the other available ones. Never propose an excluded item, one of the meal's other ingredients, or an ingredient already used by another meal in the plan (by ingredient, not just exact listing).
 - For a carb, a pantry staple (e.g. rice, quinoa, couscous, pasta, egg noodles, potatoes, bulgur, orzo) is a good choice when no carb deal fits. For a protein or vegetable, use a deal item whenever one fits; only if none does, name a common grocery item instead.

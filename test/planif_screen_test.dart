@@ -125,17 +125,18 @@ class _FakePreviewService extends MealPlanPreviewService {
 
   /// Answers suggestReplacement - given the ingredient being replaced and
   /// its role. Unset, the call fails.
-  final Future<AnchorItem> Function(AnchorItem replacing, AnchorRole role, List<AnchorItem> alreadyUsed)?
+  final Future<AnchorItem> Function(AnchorItem? replacing, AnchorRole role, List<AnchorItem> alreadyUsed)?
   replacementHandler;
 
-  /// Every ingredient suggestReplacement was asked to replace, in order.
-  final List<AnchorItem> replacementCalls = [];
+  /// Every ingredient suggestReplacement was asked to replace (null when
+  /// filling an empty row), in order.
+  final List<AnchorItem?> replacementCalls = [];
 
   @override
   Future<AnchorItem> suggestReplacement({
     required String apiKey,
     required MealSlotPreview slot,
-    required AnchorItem replacing,
+    AnchorItem? replacing,
     required AnchorRole role,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
@@ -242,7 +243,7 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
   Future<AnchorItem> suggestReplacement({
     required String apiKey,
     required MealSlotPreview slot,
-    required AnchorItem replacing,
+    AnchorItem? replacing,
     required AnchorRole role,
     required List<DealItem> items,
     List<AnchorItem> alreadyUsedAnchors = const [],
@@ -6430,6 +6431,8 @@ void main() {
       ),
       replacementHandler: (replacing, role, alreadyUsed) {
         if (failNext) throw Exception('AI API HTTP 500');
+        // Filling an empty row.
+        if (replacing == null) return Future.value(AnchorItem.pantry('Kale', role: role));
         return suggestion.future;
       },
     );
@@ -6462,7 +6465,7 @@ void main() {
     // ✨ on the vegetable asks for another vegetable, told what other meals use.
     await tester.tap(suggestButton(0, 'Brocoli'));
     await tester.pump();
-    expect(previewService.replacementCalls.single.name, 'Brocoli');
+    expect(previewService.replacementCalls.single?.name, 'Brocoli');
     expect(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.byType(CircularProgressIndicator)), findsOneWidget);
     suggestion.complete(const AnchorItem(name: 'Asperges', store: 'IGA', role: AnchorRole.vegetable));
     await tester.pumpAndSettle();
@@ -6490,6 +6493,16 @@ void main() {
     expect(inRow(0, 'protein', 'Chicken breast'), findsOneWidget);
     expect(find.descendant(of: _anchor(0, 'Chicken breast'), matching: find.text('Not on sale')), findsOneWidget);
     expect(find.descendant(of: _anchor(0, 'Basmati rice'), matching: find.text('Pantry staple')), findsOneWidget);
+
+    // The tofu meal has no vegetable: ✨ on its empty row suggests one and adds it.
+    failNext = false;
+    expect(find.descendant(of: find.byKey(const ValueKey('role-1-vegetable')), matching: find.text('Choose a vegetable')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('suggest-1-vegetable')));
+    await tester.pumpAndSettle();
+    expect(previewService.replacementCalls.last, isNull);
+    expect(inRow(1, 'vegetable', 'Kale'), findsOneWidget);
+    expect(find.byKey(const ValueKey('suggest-1-vegetable')), findsNothing);
+    expect(inRow(1, 'protein', 'Tofu'), findsOneWidget);
   });
 
   testWidgets('suggesting another ingredient without an API key asks for one instead of calling the AI', (tester) async {

@@ -788,6 +788,30 @@ void main() {
       expect(replacement.role, AnchorRole.carb);
     });
 
+    test('with nothing to replace, asks for an ingredient for an empty role', () async {
+      late String body;
+      final client = MockClient((request) async {
+        body = request.body;
+        return replacementResponse({'name': 'Brocoli', 'store': 'IGA', 'pantry': false});
+      });
+      final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+      final suggestion = await service.suggestReplacement(
+        apiKey: 'test-key',
+        slot: slot,
+        role: AnchorRole.vegetable,
+        items: items,
+      );
+
+      expect(suggestion.name, 'Brocoli');
+      expect(suggestion.role, AnchorRole.vegetable);
+      expect(body, contains('No ingredient yet - propose one for this role: vegetable'));
+      expect(body, isNot(contains('Ingredient to replace')));
+      // Both of the meal's ingredients are given as context.
+      expect(body, contains('- Chicken thighs (IGA)'));
+      expect(body, contains('- Basmati rice (Pantry)'));
+    });
+
     test('throws and logs a failure when the response has no usable answer', () async {
       for (final response in [
         replacementResponse({'name': '  ', 'store': 'IGA', 'pantry': false}),

@@ -608,18 +608,20 @@ void main() {
       expect(request.body, contains('every slot must have exactly one carb anchor'));
       expect(request.body, contains('quinoa'));
       expect(request.body, contains('"pantry"'));
+      expect(request.body, contains('"carb"'));
+      expect(request.body, contains('a protein such as tofu'));
       return _successResponse(
         slots: [
           {
             'anchorItems': [
-              {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false},
-              {'name': 'Quinoa', 'store': 'Pantry', 'pantry': true},
+              {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false, 'carb': false},
+              {'name': 'Quinoa', 'store': 'Pantry', 'pantry': true, 'carb': true},
             ],
             'note': 'Chicken with quinoa.',
           },
           {
             'anchorItems': [
-              {'name': 'Firm tofu', 'store': 'IGA', 'pantry': false},
+              {'name': 'Firm tofu', 'store': 'IGA', 'pantry': false, 'carb': false},
               // No pantry flag, but no store either - still a pantry carb.
               {'name': 'Couscous', 'store': ''},
             ],
@@ -639,6 +641,10 @@ void main() {
 
     final lunch = preview.slots[0].anchorItems;
     expect(lunch[0].isPantry, isFalse);
+    expect(lunch[0].isCarb, isFalse);
+    expect(lunch[1].isCarb, isTrue);
+    expect(preview.slots[1].anchorItems[0].isCarb, isFalse);
+    expect(preview.slots[1].anchorItems[1].isCarb, isTrue);
     expect(lunch[1].isPantry, isTrue);
     expect(lunch[1].store, AnchorItem.pantryStore);
     final supper = preview.slots[1].anchorItems;
@@ -652,5 +658,37 @@ void main() {
     expect(AnchorItem.fromJson(quinoa.toJson()).isPantry, isTrue);
     expect(const AnchorItem(name: 'Tofu', store: 'IGA').toJson().containsKey('pantry'), isFalse);
     expect(AnchorItem.fromJson({'name': 'Tofu', 'store': 'IGA'}).isPantry, isFalse);
+  });
+
+  test('a deal item marked as the carb is parsed as one and round-trips through JSON', () async {
+    final client = MockClient(
+      (request) async => _successResponse(
+        slots: [
+          {
+            'anchorItems': [
+              {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false, 'carb': false},
+              {'name': 'Spaghetti', 'store': 'IGA', 'pantry': false, 'carb': true},
+            ],
+            'note': 'Chicken pasta.',
+          },
+        ],
+      ),
+    );
+    final service = MealPlanPreviewService(client: client, logRepository: AiCallLogRepository());
+
+    final preview = await service.previewMealPlan(
+      apiKey: 'test-key',
+      mealSlots: const [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+      portionsPerMeal: 3,
+      items: items,
+    );
+
+    final spaghetti = preview.slots.single.anchorItems[1];
+    expect(spaghetti.isCarb, isTrue);
+    expect(spaghetti.isPantry, isFalse);
+    final restored = AnchorItem.fromJson(spaghetti.toJson());
+    expect(restored.isCarb, isTrue);
+    expect(restored.isPantry, isFalse);
+    expect(AnchorItem.fromJson(const AnchorItem.pantry('Rice').toJson()).isCarb, isTrue);
   });
 }

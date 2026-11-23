@@ -490,7 +490,11 @@ class MealPlanGenerationService {
   }
 
   String _anchorText(AnchorItem anchor) =>
-      anchor.isPantry ? '${anchor.name} (pantry staple carb, not a deal item)' : '${anchor.name} (${anchor.store})';
+      anchor.isPantry
+      ? '${anchor.name} (pantry staple carb, not a deal item)'
+      : anchor.isCarb
+      ? '${anchor.name} (${anchor.store}, the meal\'s carb)'
+      : '${anchor.name} (${anchor.store})';
 
   String _otherMealsText(List<OtherWeekMeal> otherMeals) {
     return otherMeals

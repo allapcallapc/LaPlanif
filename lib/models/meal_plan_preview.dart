@@ -4,12 +4,18 @@ import 'meal_plan_config.dart';
 /// (the main protein, a vegetable or carb side), or - for the carb only - a
 /// pantry staple such as rice, quinoa or couscous, which isn't on sale
 /// anywhere ([isPantry], with [store] set to [pantryStore]).
+///
+/// Which item is the meal's carb is stated explicitly ([isCarb]) - set by
+/// the AI's suggestion or by the user's pick in the carb picker - rather
+/// than inferred from the flyer's category, which the deal extraction can
+/// get wrong (e.g. tofu filed under Carbs).
 class AnchorItem {
-  const AnchorItem({required this.name, required this.store, this.isPantry = false});
+  const AnchorItem({required this.name, required this.store, this.isPantry = false, bool isCarb = false})
+    : isCarb = isCarb || isPantry;
 
   /// A pantry carb: not a deal item, so it never appears among a recipe's
   /// deal items or the shopping list's deals.
-  const AnchorItem.pantry(this.name) : store = pantryStore, isPantry = true;
+  const AnchorItem.pantry(this.name) : store = pantryStore, isPantry = true, isCarb = true;
 
   static const pantryStore = 'Pantry';
 
@@ -17,14 +23,23 @@ class AnchorItem {
   final String store;
   final bool isPantry;
 
-  // `pantry` is only written when true, so deal-item JSON (and anything
-  // saved before pantry carbs existed) is unchanged.
-  Map<String, dynamic> toJson() => {'name': name, 'store': store, if (isPantry) 'pantry': true};
+  /// Whether this is the meal's carb. Always true for a pantry item.
+  final bool isCarb;
+
+  // `pantry`/`carb` are only written when true, so plain deal-item JSON (and
+  // anything saved before carbs were tracked) is unchanged.
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'store': store,
+    if (isPantry) 'pantry': true,
+    if (isCarb && !isPantry) 'carb': true,
+  };
 
   factory AnchorItem.fromJson(Map<String, dynamic> json) => AnchorItem(
     name: json['name'] as String,
     store: json['store'] as String,
     isPantry: json['pantry'] as bool? ?? false,
+    isCarb: json['carb'] as bool? ?? false,
   );
 }
 

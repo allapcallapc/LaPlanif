@@ -311,12 +311,10 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
 
   void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
 
-  // A slot's carb is either a pantry staple or a deal item filed under Carbs.
-  bool _isCarb(AnchorItem anchor) =>
-      anchor.isPantry ||
-      widget.items.any(
-        (item) => item.category == DealCategory.carbs && _anchorNameKey(item.name) == _anchorNameKey(anchor.name),
-      );
+  // Marked explicitly (by the AI's suggestion or the carb picker), never
+  // inferred from the flyer category - extraction can misfile e.g. tofu as
+  // a carb.
+  bool _isCarb(AnchorItem anchor) => anchor.isCarb;
 
   bool _hasCarb(MealSlotPreview slot) => slot.anchorItems.any(_isCarb);
 
@@ -476,9 +474,8 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         if (!_hasCarb(slot)) '${_capitalize(slot.mealType.name)} · ${slot.protein}',
     ];
     if (missingCarb.isNotEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Choose a carb for: ${missingCarb.join(', ')}')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Choose a carb for: ${missingCarb.join(', ')}')));
       return;
     }
     setState(() {
@@ -826,9 +823,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
               ),
               _buildReviewTileIngredient(
                 Icons.grain,
-                _anchorForCategory(slot, DealCategory.carbs) ??
-                    slot.anchorItems.where((a) => a.isPantry).map((a) => a.name).firstOrNull ??
-                    '—',
+                slot.anchorItems.where(_isCarb).map((a) => a.name).firstOrNull ?? '—',
               ),
               _buildReviewTileIngredient(Icons.eco_outlined, _anchorForCategory(slot, DealCategory.vegetables) ?? '—'),
             ] else ...[

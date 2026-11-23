@@ -1019,6 +1019,7 @@ void main() {
     final client = MockClient((request) async {
       callCount++;
       expect(request.body, contains('Quinoa (pantry staple carb, not a deal item)'));
+      expect(request.body, contains("Spaghetti (IGA, the meal's carb)"));
       if (callCount == 1) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
       expect(request.body, contains('never list it in dealItems'));
       return _extractionResponse(
@@ -1036,7 +1037,13 @@ void main() {
     await service.generateMealPlan(
       apiKey: 'test-key',
       slots: [
-        slots.single.copyWith(anchorItems: const [AnchorItem(name: 'Chicken thighs', store: 'IGA'), AnchorItem.pantry('Quinoa')]),
+        slots.single.copyWith(
+          anchorItems: const [
+            AnchorItem(name: 'Chicken thighs', store: 'IGA'),
+            AnchorItem.pantry('Quinoa'),
+            AnchorItem(name: 'Spaghetti', store: 'IGA', isCarb: true),
+          ],
+        ),
       ],
       items: items,
     );

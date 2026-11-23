@@ -6123,4 +6123,81 @@ void main() {
     expect(find.text('Recipes'), findsOneWidget);
     expect(find.text('Spaghetti · IGA'), findsOneWidget);
   });
+
+  testWidgets('the carb row only holds the item marked as the carb, not whatever the flyer filed under Carbs', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      ),
+    );
+    final scraper = _FakePagesScraper({
+      'maxi': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'Maxi': () async => const [
+        // Misfiled by the flyer extraction: tofu is a protein, not a carb.
+        DealItem(name: 'Tofu Unisoya', price: '4.99\$', unit: '', category: DealCategory.carbs, storeName: 'Maxi', pageIndex: 2),
+        DealItem(name: 'Riz jasmin', price: '6.99\$', unit: '', category: DealCategory.carbs, storeName: 'Maxi', pageIndex: 3),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'tofu',
+            count: 4,
+            portionsPerMeal: 3,
+            anchorItems: [
+              AnchorItem(name: 'Tofu Unisoya', store: 'Maxi'),
+              AnchorItem(name: 'Riz jasmin', store: 'Maxi', isCarb: true),
+            ],
+            note: 'Tofu stir-fry with jasmine rice.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    double y(Finder finder) => tester.getTopLeft(finder).dy;
+    final carbLabel = find.text('Carb');
+    final dealItemsLabel = find.text('Deal items');
+    final rice = find.text('Riz jasmin · Maxi');
+    final tofu = find.text('Tofu Unisoya · Maxi');
+
+    expect(find.text('Choose a carb'), findsNothing);
+    // Rice sits in the carb row, between the two labels...
+    expect(y(rice), greaterThan(y(carbLabel)));
+    expect(y(rice), lessThan(y(dealItemsLabel)));
+    // ...and tofu with the deal items, below them.
+    expect(y(tofu), greaterThan(y(dealItemsLabel)));
+  });
 }

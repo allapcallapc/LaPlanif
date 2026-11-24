@@ -69,4 +69,32 @@ void main() {
     expect(closed, isTrue);
     expect(result, isNull);
   });
+
+  testWidgets('the confirm button can be relabelled, e.g. for a recipe', (tester) async {
+    String? value;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () async => value = await showSuggestionRequestDialog(
+                context,
+                title: 'Regenerate the recipe',
+                examples: const ['Slow cooker'],
+                actionLabel: 'Generate',
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Suggest'), findsNothing);
+    expect(find.text('e.g. slow cooker'), findsOneWidget);
+    await tester.tap(find.text('Generate'));
+    await tester.pumpAndSettle();
+    expect(value, '');
+  });
 }

@@ -122,6 +122,10 @@ class MealPlanGenerationService {
   /// [AiConfigRepository.loadGroundingModels]).
   final List<String> groundingModels;
 
+  /// [request] is the user's own wording for this recipe (e.g. "something
+  /// spicy"), sent to both calls; it never overrides a confirmed anchor, an
+  /// excluded item or a standing instruction.
+  ///
   /// [onPhase] is called with `'research'` right before the grounded search
   /// call and `'extraction'` right before the structured-output call, so a
   /// caller (e.g. the review screen) can show which of the two long-running
@@ -132,6 +136,7 @@ class MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     String dietaryNotes = '',
+    String request = '',
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
@@ -147,6 +152,7 @@ class MealPlanGenerationService {
         slots: slots,
         items: items,
         dietaryNotes: dietaryNotes,
+        request: request,
         groundingModels: effectiveGroundingModels,
         otherMeals: otherMeals,
       );
@@ -158,6 +164,7 @@ class MealPlanGenerationService {
         research: research,
         sources: sources,
         dietaryNotes: dietaryNotes,
+        request: request,
         otherMeals: otherMeals,
         model: effectiveModel,
       );
@@ -179,6 +186,7 @@ class MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     required String dietaryNotes,
+    required String request,
     required List<String> groundingModels,
     required List<OtherWeekMeal> otherMeals,
   }) async {
@@ -190,6 +198,7 @@ class MealPlanGenerationService {
           slots: slots,
           items: items,
           dietaryNotes: dietaryNotes,
+          request: request,
           model: groundingModel,
           otherMeals: otherMeals,
         );
@@ -211,6 +220,7 @@ class MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     required String dietaryNotes,
+    required String request,
     required String model,
     required List<OtherWeekMeal> otherMeals,
   }) async {
@@ -224,7 +234,7 @@ class MealPlanGenerationService {
         {
           'role': 'user',
           'parts': [
-            {'text': _slotsUserText(slots, items, dietaryNotes, otherMeals)},
+            {'text': _slotsUserText(slots, items, dietaryNotes, otherMeals, request)},
           ],
         },
       ],
@@ -315,6 +325,7 @@ class MealPlanGenerationService {
     required String research,
     required List<_GroundingSource> sources,
     required String dietaryNotes,
+    required String request,
     required List<OtherWeekMeal> otherMeals,
     required String model,
   }) async {
@@ -324,7 +335,7 @@ class MealPlanGenerationService {
     // replacement, and that replacement must not repeat another meal's
     // side (see _extractionSystemPrompt).
     final userText =
-        '${_slotsUserText(slots, items, dietaryNotes, otherMeals)}\n\n'
+        '${_slotsUserText(slots, items, dietaryNotes, otherMeals, request)}\n\n'
         'Research notes from the search step, for context on which recipe fits which slot:\n$research\n\n'
         'Verified search sources, numbered - the ONLY sources you may ever cite for type "link". These are '
         'the actual links Google Search returned, not the research notes\' prose. To use one, match it to '
@@ -463,6 +474,7 @@ class MealPlanGenerationService {
     List<DealItem> items,
     String dietaryNotes,
     List<OtherWeekMeal> otherMeals,
+    String request,
   ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
     final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
@@ -484,6 +496,7 @@ class MealPlanGenerationService {
         '${otherMeals.isEmpty ? '' : 'Other meals already planned for this week, not part of this call - see the '
               'system instructions for how to use these:\n${_otherMealsText(otherMeals)}\n\n'}'
         '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - follow these across every slot:\n${dietaryNotes.trim()}\n\n'}'
+        '${request.trim().isEmpty ? '' : 'The user\'s own request for this recipe - follow it (e.g. a cooking method, cuisine, flavour or time limit), even over recipe-style preferences above, but never drop a confirmed anchor item, use an excluded item or break a standing planning instruction:\n${request.trim()}\n\n'}'
         'Priority deal items (prefer these for carb/vegetable when a good fit exists):\n${_itemsText(priority)}\n\n'
         'Excluded deal items (never use these):\n${_itemsText(excluded)}\n\n'
         'All other available deal items:\n${_itemsText(available)}';

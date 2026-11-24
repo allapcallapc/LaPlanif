@@ -9,18 +9,27 @@ Future<String?> showSuggestionRequestDialog(
   BuildContext context, {
   required String title,
   List<String> examples = const [],
+  String actionLabel = 'Suggest',
 }) {
   return showDialog<String>(
     context: context,
-    builder: (_) => SuggestionRequestDialog(title: title, examples: examples),
+    builder: (_) => SuggestionRequestDialog(title: title, examples: examples, actionLabel: actionLabel),
   );
 }
 
 class SuggestionRequestDialog extends StatefulWidget {
-  const SuggestionRequestDialog({super.key, required this.title, this.examples = const []});
+  const SuggestionRequestDialog({
+    super.key,
+    required this.title,
+    this.examples = const [],
+    this.actionLabel = 'Suggest',
+  });
 
   final String title;
   final List<String> examples;
+
+  /// The confirm button's label, e.g. "Generate" for a recipe.
+  final String actionLabel;
 
   @override
   State<SuggestionRequestDialog> createState() => _SuggestionRequestDialogState();
@@ -51,10 +60,10 @@ class _SuggestionRequestDialogState extends State<SuggestionRequestDialog> {
               minLines: 1,
               maxLines: 3,
               textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Anything specific? (optional)',
-                hintText: 'e.g. from the pantry, a red vegetable',
-                border: OutlineInputBorder(),
+                hintText: 'e.g. ${widget.examples.isEmpty ? 'from the pantry' : widget.examples.first.toLowerCase()}',
+                border: const OutlineInputBorder(),
               ),
               onSubmitted: (_) => _submit(),
             ),
@@ -84,7 +93,7 @@ class _SuggestionRequestDialogState extends State<SuggestionRequestDialog> {
         FilledButton.icon(
           onPressed: _submit,
           icon: const Icon(Icons.auto_awesome, size: 18),
-          label: const Text('Suggest'),
+          label: Text(widget.actionLabel),
         ),
       ],
     );

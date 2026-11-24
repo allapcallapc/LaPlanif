@@ -564,7 +564,21 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // Doubles as both "generate" and "regenerate" for a slot - it's the same
   // call either way - so there's only one code path to keep in sync with
   // the card's anchors, unlike a separate preview/full-plan split.
-  Future<void> _generateSlotRecipe(int index) async {
+  // The recipe buttons' path: asks for an optional request first (e.g.
+  // "something spicy"), then generates. "Generate all" skips the dialog.
+  Future<void> _askAndGenerateRecipe(int index) async {
+    if (_busy) return;
+    final request = await showSuggestionRequestDialog(
+      context,
+      title: _slotRecipes[index] == null ? 'Generate the recipe' : 'Regenerate the recipe',
+      examples: const ['Something spicy', 'Slow cooker', 'Under 30 minutes', 'Simple sides'],
+      actionLabel: 'Generate',
+    );
+    if (request == null || !mounted) return;
+    await _generateSlotRecipe(index, request: request);
+  }
+
+  Future<void> _generateSlotRecipe(int index, {String request = ''}) async {
     final apiKey = widget.apiKey;
     if (apiKey == null ||
         _isPreviewLoading ||
@@ -608,6 +622,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           slots: [_preview.slots[index]],
           items: widget.items,
           dietaryNotes: widget.config.dietaryNotes,
+          request: request,
           model: model,
           groundingModels: widget.groundingModels,
           otherMeals: otherMeals,
@@ -1246,7 +1261,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       recipeBody = Align(
         alignment: Alignment.centerLeft,
         child: FilledButton.icon(
-          onPressed: _busy ? null : () => _generateSlotRecipe(index),
+          onPressed: _busy ? null : () => _askAndGenerateRecipe(index),
           icon: const Icon(Icons.auto_awesome),
           label: const Text('Generate recipe'),
         ),
@@ -1285,7 +1300,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
                 ),
                 if (recipe != null)
                   TextButton.icon(
-                    onPressed: _busy ? null : () => _generateSlotRecipe(index),
+                    onPressed: _busy ? null : () => _askAndGenerateRecipe(index),
                     icon: isGenerating
                         ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.refresh, size: 18),

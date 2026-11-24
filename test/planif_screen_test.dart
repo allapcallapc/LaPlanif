@@ -280,6 +280,9 @@ class _FakeGenerationService extends MealPlanGenerationService {
   /// their own recipes) actually reached the generation call.
   final List<List<OtherWeekMeal>> otherMealsCalls = [];
 
+  /// The user's request sent with every generateMealPlan call, in order.
+  final List<String> requests = [];
+
   @override
   Future<MealPlanFull> generateMealPlan({
     required String apiKey,
@@ -293,6 +296,7 @@ class _FakeGenerationService extends MealPlanGenerationService {
     void Function(String phase)? onPhase,
   }) {
     otherMealsCalls.add(otherMeals);
+    requests.add(request);
     return _handler(slots, items);
   }
 }
@@ -403,14 +407,15 @@ Future<void> _confirmIngredients(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-/// Confirms the "Anything specific?" dialog every suggestion button opens,
+/// Confirms the "Anything specific?" dialog every suggestion or recipe button opens,
 /// optionally typing [request] first. Leaves the suggestion call itself
 /// un-pumped, so a test can still look at its pending state.
 Future<void> _confirmSuggestion(WidgetTester tester, [String request = '']) async {
   await tester.pumpAndSettle();
   final dialog = find.byType(SuggestionRequestDialog);
   if (request.isNotEmpty) await tester.enterText(find.descendant(of: dialog, matching: find.byType(TextField)), request);
-  await tester.tap(find.descendant(of: dialog, matching: find.text('Suggest')));
+  // The confirm button: "Suggest", or "Generate" for a recipe.
+  await tester.tap(find.descendant(of: dialog, matching: find.byWidgetPredicate((widget) => widget is FilledButton)));
 }
 
 /// A viewport tall enough for every meal's ingredients card to be built.
@@ -2158,13 +2163,25 @@ void main() {
     expect(find.text('Ground pork · IGA'), findsOneWidget);
     expect(find.byType(InputChip), findsNothing);
 
+    // The recipe button asks for an optional request first; Cancel generates nothing.
     await tester.tap(find.text('Generate recipe'));
+    await tester.pumpAndSettle();
+    expect(find.text('Generate the recipe'), findsOneWidget);
+    expect(find.text('Something spicy'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Slow-roasted pulled pork'), findsNothing);
+
+    await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester, 'Something spicy');
     await tester.pumpAndSettle();
 
     // The recipe renders on the card under the confirmed items, and this is
     // the only slot, so the bar now offers to save.
     expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
     expect(find.text('https://example.com/pulled-pork'), findsOneWidget);
+    // What was typed went with the recipe request.
+    expect(generationService.requests, ['Something spicy']);
     expect(find.text("This week's deal"), findsOneWidget);
     // Once on the card's deal items, once on the recipe's own badge.
     expect(find.text('Ground pork · IGA'), findsNWidgets(2));
@@ -2304,6 +2321,7 @@ void main() {
     await tester.pumpAndSettle();
     await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Save this week\'s plan'), findsOneWidget);
@@ -2425,6 +2443,7 @@ void main() {
     await tester.pumpAndSettle();
     await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Extract ingredient list'));
@@ -2515,6 +2534,7 @@ void main() {
 
     await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate this recipe: AI API HTTP 500'), findsOneWidget);
@@ -2632,6 +2652,7 @@ void main() {
       await tester.pumpAndSettle();
       await _confirmIngredients(tester);
       await tester.tap(find.text('Generate recipe'));
+      await _confirmSuggestion(tester);
       await tester.pumpAndSettle();
 
       expect(promptCalls, 1);
@@ -2740,6 +2761,7 @@ void main() {
     await tester.pumpAndSettle();
     await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('https://example.com/pulled-pork'));
@@ -2844,6 +2866,7 @@ void main() {
     await tester.pumpAndSettle();
     await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('AI recipe'), findsOneWidget);
@@ -3010,6 +3033,7 @@ void main() {
     expect(find.text('Lunch · meat'), findsOneWidget);
     await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     // Shows on the card; the picker tile shows the anchor kept on the protein.
@@ -3035,6 +3059,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Supper · tofu'), findsOneWidget);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Original supper recipe'), findsOneWidget);
@@ -3057,6 +3082,7 @@ void main() {
     expect(find.text('Original lunch recipe'), findsOneWidget);
 
     await tester.tap(find.text('Regenerate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(lunchCalls.length, 2);
@@ -3184,11 +3210,13 @@ void main() {
     await tester.pumpAndSettle();
     await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Original recipe'), findsOneWidget);
 
     await tester.tap(find.text('Regenerate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate this recipe: AI API HTTP 500'), findsOneWidget);
@@ -3311,6 +3339,7 @@ void main() {
       await tester.pumpAndSettle();
       await _confirmIngredients(tester);
       await tester.tap(find.text('Generate recipe'));
+      await _confirmSuggestion(tester);
       await tester.pumpAndSettle();
 
       // Generating the initial recipe already used up one rate-limit
@@ -3320,6 +3349,7 @@ void main() {
       expect(find.text('Roast chicken thighs'), findsOneWidget);
 
       await tester.tap(find.text('Regenerate recipe'));
+      await _confirmSuggestion(tester);
       await tester.pumpAndSettle();
 
       // Regenerating this slot falls back through model-a -> model-b again,
@@ -4094,6 +4124,7 @@ void main() {
     await _confirmIngredients(tester);
     expect(find.text('Generate recipe'), findsOneWidget);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pump();
     await tester.pump();
 
@@ -6019,6 +6050,7 @@ void main() {
 
     await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     // Generating the slot's recipe checkpoints it too.

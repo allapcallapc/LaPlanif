@@ -1056,4 +1056,34 @@ void main() {
 
     expect(callCount, 2);
   });
+
+  test('sends the user\'s own request for the recipe to both calls, and leaves it out when empty', () async {
+    final bodies = <String>[];
+    final client = MockClient((request) async {
+      bodies.add(request.body);
+      if (bodies.length.isOdd) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Spicy chicken stir-fry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli'),
+          },
+        ],
+      );
+    });
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+    await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items, request: ' Something spicy ');
+    await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+    expect(bodies, hasLength(4));
+    for (final body in bodies.take(2)) {
+      expect(body, contains("The user's own request for this recipe"));
+      expect(body, contains('Something spicy'));
+    }
+    for (final body in bodies.skip(2)) {
+      expect(body, isNot(contains("The user's own request")));
+    }
+  });
 }

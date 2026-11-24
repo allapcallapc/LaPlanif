@@ -6690,4 +6690,118 @@ void main() {
     expect(previewService.replacementCalls, isEmpty);
     expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
   });
+
+  testWidgets('warns when two meals use the same kind of ingredient, e.g. two rices or two chicken cuts', (tester) async {
+    _useTallView(tester);
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 2,
+        diversityWindowDays: 28,
+        mealSlots: [
+          MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 3),
+          MealSlot(id: 'supper-meat', mealType: MealType.supper, protein: 'meat', count: 2),
+        ],
+      ),
+    );
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(name: 'Hauts de cuisse de poulet', price: '3.99\$', unit: 'lb', category: DealCategory.protein, storeName: 'IGA', pageIndex: 1),
+        DealItem(name: 'Poitrines de poulet', price: '5.99\$', unit: 'lb', category: DealCategory.protein, storeName: 'IGA', pageIndex: 1),
+        DealItem(name: 'Riz Jasmin Dainty', price: '6.99\$', unit: '', category: DealCategory.carbs, storeName: 'IGA', pageIndex: 2),
+        DealItem(name: 'Brocoli', price: '2.49\$', unit: '', category: DealCategory.vegetables, storeName: 'IGA', pageIndex: 3),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 3,
+            portionsPerMeal: 2,
+            anchorItems: [
+              AnchorItem(name: 'Hauts de cuisse de poulet', store: 'IGA', role: AnchorRole.protein),
+              AnchorItem(name: 'Riz Jasmin Dainty', store: 'IGA', role: AnchorRole.carb),
+            ],
+            note: 'Chicken and rice.',
+          ),
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'meat',
+            count: 2,
+            portionsPerMeal: 2,
+            anchorItems: [
+              AnchorItem(name: 'Poitrines de poulet', store: 'IGA', role: AnchorRole.protein),
+              AnchorItem.pantry('Basmati rice'),
+              AnchorItem(name: 'Brocoli', store: 'IGA', role: AnchorRole.vegetable),
+            ],
+            note: 'Chicken breast and rice.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    Finder repeat(int slot, String name) => find.byKey(ValueKey('repeat-$slot-$name'));
+    Finder tileRepeatIcon(int slot) =>
+        find.descendant(of: find.byKey(ValueKey('review-step-$slot')), matching: find.byIcon(Icons.repeat));
+
+    // Lunch: both its chicken and its rice repeat in supper, under other names.
+    expect(find.descendant(of: repeat(0, 'Hauts de cuisse de poulet'), matching: find.text('Also in Supper · meat')), findsOneWidget);
+    expect(find.descendant(of: repeat(0, 'Riz Jasmin Dainty'), matching: find.text('Also in Supper · meat')), findsOneWidget);
+    expect(tileRepeatIcon(0), findsOneWidget);
+    expect(tileRepeatIcon(1), findsOneWidget);
+
+    // Supper too - but not its broccoli, which only it uses.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: repeat(1, 'Basmati rice'), matching: find.text('Also in Lunch · meat')), findsOneWidget);
+    expect(repeat(1, 'Poitrines de poulet'), findsOneWidget);
+    expect(repeat(1, 'Brocoli'), findsNothing);
+
+    // Changing supper's carb to quinoa clears the rice warning on both meals.
+    await tester.tap(find.descendant(of: _anchor(1, 'Basmati rice'), matching: find.text('Basmati rice')));
+    await tester.pumpAndSettle();
+    // Every rice is marked as already used, not just the same name.
+    expect(
+      find.descendant(of: find.widgetWithText(ActionChip, 'Jasmine rice'), matching: find.byIcon(Icons.repeat)),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(ActionChip, 'Quinoa'));
+    await tester.pumpAndSettle();
+    expect(repeat(1, 'Quinoa'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('review-step-0')));
+    await tester.pumpAndSettle();
+    expect(repeat(0, 'Riz Jasmin Dainty'), findsNothing);
+    // The chicken still repeats.
+    expect(repeat(0, 'Hauts de cuisse de poulet'), findsOneWidget);
+    expect(tileRepeatIcon(0), findsOneWidget);
+  });
 }

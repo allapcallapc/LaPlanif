@@ -1023,7 +1023,11 @@ void main() {
       expect(request.body, contains('Chicken breast (not a deal item, protein)'));
       expect(request.body, contains("Kale (not a deal item, the meal's vegetable)"));
       expect(request.body, contains('Parmesan (not a deal item, extra ingredient)'));
-      if (callCount == 1) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+      if (callCount == 1) {
+        // Another variety of the same carb is a repeat across the week.
+        expect(request.body, contains('basmati and jasmine rice are both rice'));
+        return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+      }
       expect(request.body, contains('never list it in dealItems'));
       return _extractionResponse(
         slots: [

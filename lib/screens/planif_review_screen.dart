@@ -9,6 +9,7 @@ import '../services/meal_plan_draft_repository.dart';
 import '../services/meal_plan_generation_service.dart';
 import '../services/model_fallback_controller.dart';
 import '../utils/error_formatting.dart';
+import '../utils/ingredient_kind.dart';
 import '../utils/iso_week.dart';
 import '../utils/recipe_deal_items.dart';
 import '../widgets/anchor_picker_dialog.dart';
@@ -1035,8 +1036,28 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // The full flyer name (up to two lines - they're often long), with the
   // store and price underneath. Tapping it opens the picker (a deal, or an
   // ingredient typed in); ✨ asks the AI for another; × removes it.
+  // The other meals using the same ingredient as [anchor] in this meal -
+  // the same name, or the same kind (any rice is rice, chicken thighs and
+  // breasts are both chicken; see ingredientKind). A warning only: repeating
+  // on purpose is allowed.
+  List<String> _repeatsFor(int slotIndex, AnchorItem anchor) {
+    final key = _anchorNameKey(anchor.name);
+    final kind = ingredientKind(anchor.name);
+    bool same(AnchorItem other) =>
+        _anchorNameKey(other.name) == key || (kind != null && ingredientKind(other.name) == kind);
+    return [
+      for (var i = 0; i < _preview.slots.length; i++)
+        if (i != slotIndex && _preview.slots[i].anchorItems.any(same))
+          '${_capitalize(_preview.slots[i].mealType.name)} · ${_preview.slots[i].protein}',
+    ];
+  }
+
+  bool _slotHasRepeat(int slotIndex) =>
+      _preview.slots[slotIndex].anchorItems.any((anchor) => _repeatsFor(slotIndex, anchor).isNotEmpty);
+
   Widget _buildAnchorTile(int slotIndex, AnchorItem anchor, {required bool disabled}) {
     final textTheme = Theme.of(context).textTheme;
+    final repeats = _repeatsFor(slotIndex, anchor);
     final deal = _dealFor(anchor);
     final isSuggesting = _suggestingAnchors.contains(anchor);
     disabled = disabled || isSuggesting;
@@ -1062,6 +1083,20 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
                     details,
                     style: textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
+                  if (repeats.isNotEmpty)
+                    Row(
+                      key: ValueKey('repeat-$slotIndex-${anchor.name}'),
+                      children: [
+                        Icon(Icons.repeat, size: 14, color: Theme.of(context).colorScheme.tertiary),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'Also in ${repeats.join(', ')}',
+                            style: textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.tertiary),
+                          ),
+                        ),
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -1188,6 +1223,8 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
                 ),
                 if (!_ingredientsConfirmed && !_hasCarb(slot))
                   Icon(Icons.error_outline, size: 13, color: colorScheme.error)
+                else if (!_ingredientsConfirmed && _slotHasRepeat(index))
+                  Icon(Icons.repeat, size: 13, color: colorScheme.tertiary)
                 else if (recipe != null)
                   Icon(Icons.check_circle, size: 13, color: Colors.green.shade700),
               ],

@@ -610,6 +610,9 @@ void main() {
       expect(request.body, contains('"pantry"'));
       expect(request.body, contains('"role"'));
       expect(request.body, contains('a protein such as tofu'));
+      // Carbs, vegetables and proteins are compared by kind, not exact listing.
+      expect(request.body, contains('different KIND of carb'));
+      expect(request.body, contains('chicken thighs and chicken breasts, are a repeat'));
       return _successResponse(
         slots: [
           {
@@ -762,6 +765,7 @@ void main() {
       // The meal's other ingredient is given as context, not as the one to replace.
       expect(body, contains('- Basmati rice (Pantry)'));
       expect(body, contains('already used by other meals'));
+      expect(body, contains('judged by kind'));
       expect(body, contains('Firm tofu (IGA)'));
       expect(body, contains('No pork.'));
       final log = (await logRepository.loadAll()).single;

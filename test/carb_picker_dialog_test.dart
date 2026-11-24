@@ -58,7 +58,9 @@ void main() {
     expect(find.widgetWithText(ListTile, 'Spaghetti'), findsOneWidget);
     expect(find.text('IGA'), findsOneWidget);
     expect(find.text('Metro · in another meal'), findsOneWidget);
-    expect(find.byTooltip('Already in another meal'), findsOneWidget);
+    // Quinoa by name, and the pantry Naan as the same kind (bread) as the
+    // naan bread another meal uses.
+    expect(find.byTooltip('Already in another meal'), findsNWidgets(2));
 
     await tester.tap(find.text('Spaghetti'));
     await tester.pumpAndSettle();
@@ -107,5 +109,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(closed, isTrue);
     expect(picked, isNull);
+  });
+
+  testWidgets('flags every carb of a kind another meal already uses, e.g. any rice', (tester) async {
+    await pumpAndOpen(tester, deals: const [], used: {'riz jasmin dainty'});
+
+    for (final rice in ['Basmati rice', 'Jasmine rice', 'Brown rice']) {
+      expect(
+        find.descendant(of: find.widgetWithText(ActionChip, rice), matching: find.byIcon(Icons.repeat)),
+        findsOneWidget,
+        reason: rice,
+      );
+    }
+    expect(
+      find.descendant(of: find.widgetWithText(ActionChip, 'Quinoa'), matching: find.byIcon(Icons.repeat)),
+      findsNothing,
+    );
   });
 }

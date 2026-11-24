@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/deal_item.dart';
 import '../models/meal_plan_preview.dart';
+import '../utils/ingredient_kind.dart';
 
 /// Common carbs most kitchens keep on hand - offered for every meal whether
 /// or not anything starchy is on sale this week.
@@ -25,7 +26,8 @@ const pantryCarbs = [
 
 /// Lets the user pick a meal's carb: a pantry staple, anything else typed
 /// in (also treated as a pantry item), or one of this week's carb [deals].
-/// [usedElsewhere] holds lower-cased names other meals already use - still
+/// [usedElsewhere] holds lower-cased names other meals already use (a carb of
+/// the same kind - e.g. any rice - is flagged too) - still
 /// selectable (the same carb twice is allowed), just flagged. Resolves to
 /// the chosen carb, or null on cancel.
 Future<AnchorItem?> showCarbPickerDialog(
@@ -58,7 +60,14 @@ class _CarbPickerDialogState extends State<CarbPickerDialog> {
     super.dispose();
   }
 
-  bool _isUsed(String name) => widget.usedElsewhere.contains(name.trim().toLowerCase());
+  // The same name, or the same kind of carb (any rice is rice).
+  late final Set<String> _usedKinds = {...widget.usedElsewhere.map(ingredientKind).nonNulls};
+
+  bool _isUsed(String name) {
+    if (widget.usedElsewhere.contains(name.trim().toLowerCase())) return true;
+    final kind = ingredientKind(name);
+    return kind != null && _usedKinds.contains(kind);
+  }
 
   void _submitCustom() {
     final name = _customController.text.trim();

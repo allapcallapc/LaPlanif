@@ -69,6 +69,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // slot, anchor edits invalidating just their own slot) stay simple.
   late List<MealSlotFull?> _slotRecipes;
   int _reviewIndex = 0;
+  // Drives the swipeable meal cards below the picker strip. Rebuilt (at the
+  // current meal) whenever a new PageView takes over - switching steps, or
+  // a regenerate that can change the number of meals.
+  late PageController _pager;
+  // One per picker tile, so swiping to a meal can scroll its tile into view.
+  final List<GlobalKey> _tileKeys = [];
   // False on the ingredients step, true on the recipes step.
   late bool _ingredientsConfirmed;
   bool _isGeneratingAll = false;
@@ -101,12 +107,56 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       _suggestingAnchors.isNotEmpty;
 
   @override
+  void dispose() {
+    _pager.dispose();
+    super.dispose();
+  }
+
+  // Swaps in a fresh controller starting at the current meal, for the
+  // PageView about to be built; the old one is disposed once it's detached.
+  void _resetPager() {
+    final old = _pager;
+    _pager = PageController(initialPage: _reviewIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+  }
+
+  // Shows meal [index]: slides the cards there and keeps its tile in view.
+  void _showMeal(int index) {
+    setState(() => _reviewIndex = index);
+    if (_pager.hasClients && (_pager.page?.round() ?? _reviewIndex) != index) {
+      _pager.animateToPage(index, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+    _scrollTileIntoView(index);
+  }
+
+  void _onPageChanged(int index) {
+    if (index == _reviewIndex) return;
+    setState(() => _reviewIndex = index);
+    _scrollTileIntoView(index);
+  }
+
+  void _scrollTileIntoView(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (index >= _tileKeys.length) return;
+      final tileContext = _tileKeys[index].currentContext;
+      if (tileContext == null) return;
+      Scrollable.ensureVisible(
+        tileContext,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 200),
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+    });
+  }
+
+  @override
   void initState() {
     super.initState();
     _preview = widget.initialPreview;
     _slotRecipes = List.of(widget.initialSlotRecipes);
     _ingredientsConfirmed = widget.initialIngredientsConfirmed;
     if (_ingredientsConfirmed) _reviewIndex = _firstMissingRecipeIndex();
+    _pager = PageController(initialPage: _reviewIndex);
     // Persisted immediately so a crash, refresh, or reclaimed tab right
     // after arriving here still has something to resume from Home (see
     // issue #35) - every further mutation below re-saves the same way.
@@ -177,6 +227,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         _preview = preview;
         _isPreviewLoading = false;
         _reviewIndex = 0;
+        _resetPager();
         // A freshly (re)generated preview can have entirely different
         // anchors, and possibly a different number of slots - any per-slot
         // recipes already generated were built against the old ones, so
@@ -439,7 +490,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     await _saveDraft();
   }
 
-  void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
+  void _jumpToMeal(int index) => _showMeal(index);
 
   // Set explicitly by the AI's suggestion or the picker it came from. Only
   // items saved before roles existed fall back to the flyer's category -
@@ -608,7 +659,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     for (var i = 0; i < _slotRecipes.length; i++) {
       if (!mounted) return;
       if (_slotRecipes[i] != null) continue;
-      setState(() => _reviewIndex = i);
+      _showMeal(i);
       await _generateSlotRecipe(i);
       if (!mounted) return;
       if (_slotRecipes[i] == null) break;
@@ -624,7 +675,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         if (!_hasCarb(slot)) '${_capitalize(slot.mealType.name)} · ${slot.protein}',
     ];
     if (missingCarb.isNotEmpty) {
-      setState(() => _reviewIndex = _preview.slots.indexWhere((slot) => !_hasCarb(slot)));
+      _showMeal(_preview.slots.indexWhere((slot) => !_hasCarb(slot)));
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Choose a carb for: ${missingCarb.join(', ')}')));
       return;
@@ -632,12 +683,16 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     setState(() {
       _ingredientsConfirmed = true;
       _reviewIndex = _firstMissingRecipeIndex();
+      _resetPager();
     });
     await _saveDraft();
   }
 
   Future<void> _backToIngredients() async {
-    setState(() => _ingredientsConfirmed = false);
+    setState(() {
+      _ingredientsConfirmed = false;
+      _resetPager();
+    });
     await _saveDraft();
   }
 
@@ -744,15 +799,14 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           _buildReviewPicker(_preview.slots),
           const Divider(height: 1),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              children: [
-                _buildIngredientCard(_reviewIndex, _preview.slots[_reviewIndex]),
+            child: _buildMealPages(
+              (index) => [
+                _buildIngredientCard(index, _preview.slots[index]),
                 const SizedBox(height: 12),
                 Text(
                   'Every meal needs a carb. Tap an ingredient to pick another deal or type your own, or tap ✨ to '
-                  'have one suggested. Recipes keep every ingredient you confirm here - they may add another deal '
-                  'item, but never drop one.',
+                  'have one suggested. Swipe left or right for the other meals. Recipes keep every ingredient you '
+                  'confirm here - they may add another deal item, but never drop one.',
                   style: textTheme.bodySmall,
                 ),
               ],
@@ -1037,14 +1091,27 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           _buildReviewPicker(_preview.slots),
           const Divider(height: 1),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              children: [_buildRecipeCard(_reviewIndex, _preview.slots[_reviewIndex], _slotRecipes[_reviewIndex])],
-            ),
+            child: _buildMealPages((index) => [_buildRecipeCard(index, _preview.slots[index], _slotRecipes[index])]),
           ),
         ],
       ),
       bottomNavigationBar: _buildRecipesBar(),
+    );
+  }
+
+  // One page per meal under the picker strip, swiped left/right to move
+  // between meals - the same order as the tiles, kept in sync with them.
+  Widget _buildMealPages(List<Widget> Function(int index) pageChildren) {
+    return PageView.builder(
+      key: ValueKey(_ingredientsConfirmed ? 'recipe-pages' : 'ingredient-pages'),
+      controller: _pager,
+      itemCount: _preview.slots.length,
+      onPageChanged: _onPageChanged,
+      itemBuilder: (context, index) => ListView(
+        key: ValueKey('meal-page-$index'),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        children: pageChildren(index),
+      ),
     );
   }
 
@@ -1059,11 +1126,18 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         children: [
           for (var i = 0; i < slots.length; i++) ...[
             if (i > 0) const SizedBox(width: 8),
-            _buildReviewTile(i, slots[i]),
+            KeyedSubtree(key: _tileKey(i), child: _buildReviewTile(i, slots[i])),
           ],
         ],
       ),
     );
+  }
+
+  GlobalKey _tileKey(int index) {
+    while (_tileKeys.length <= index) {
+      _tileKeys.add(GlobalKey());
+    }
+    return _tileKeys[index];
   }
 
   Widget _buildReviewTile(int index, MealSlotPreview slot) {

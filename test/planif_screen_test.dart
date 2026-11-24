@@ -6146,6 +6146,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('ingredients-slot-1')), findsOneWidget);
 
+    // Swiping moves between meals too: right goes back to lunch, left to supper.
+    await tester.fling(find.byType(PageView), const Offset(400, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('ingredients-slot-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('ingredients-slot-1')), findsNothing);
+    await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('ingredients-slot-1')), findsOneWidget);
+
     // Neither meal has a carb yet: both tiles are flagged, and confirming
     // names them and jumps back to the first one.
     expect(
@@ -6170,10 +6179,15 @@ void main() {
     expect(generationService.otherMealsCalls[1].single.recipeNames, isNotEmpty);
     expect(find.text("Save this week's plan"), findsOneWidget);
 
-    // Generating all ends on the last meal; back to lunch.
-    await tester.tap(find.byKey(const ValueKey('review-step-0')));
+    // Generating all ends on the last meal; swipe back to lunch.
+    await tester.fling(find.byType(PageView), const Offset(400, 0), 1000);
     await tester.pumpAndSettle();
     expect(find.text('Chicken roast'), findsOneWidget);
+    // The lunch tile is the highlighted one again.
+    final lunchTile = tester.widget<Container>(
+      find.descendant(of: find.byKey(const ValueKey('review-step-0')), matching: find.byType(Container)).first,
+    );
+    expect((lunchTile.decoration! as BoxDecoration).color, isNotNull);
     // Brocoli was confirmed, so it stays on the meal even though the
     // recipe left it out; Carottes shows as added by the recipe.
     expect(find.text('Brocoli · IGA'), findsWidgets);

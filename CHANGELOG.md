@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/allapcallapc/LaPlanif/compare/v0.5.0...v0.6.0) (2026-11-24)
+
+
+### Features
+
+* add Super C as a default store for the deals ([#58](https://github.com/allapcallapc/LaPlanif/issues/58)) ([00a8306](https://github.com/allapcallapc/LaPlanif/commit/00a830661f198a437af219af517d1903eefa5fd8))
+* confirm ingredients (with a carb for every meal) before generating recipes ([#60](https://github.com/allapcallapc/LaPlanif/issues/60)) ([6f47232](https://github.com/allapcallapc/LaPlanif/commit/6f47232e2c64f1991a117d4c5ff3388367bcf9bb))
+
 ## [0.5.0](https://github.com/allapcallapc/LaPlanif/compare/v0.4.0...v0.5.0) (2026-11-22)
 
 

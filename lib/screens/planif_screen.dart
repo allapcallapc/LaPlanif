@@ -461,6 +461,7 @@ class _PlanifScreenState extends State<PlanifScreen> {
             config: draft.config,
             initialPreview: draft.preview,
             initialSlotRecipes: draft.slotRecipes,
+            initialIngredientsConfirmed: draft.ingredientsConfirmed,
           ),
         ),
       );
@@ -543,9 +544,11 @@ class _PlanifScreenState extends State<PlanifScreen> {
     final draft = _draft;
     final total = draft?.slotRecipes.length ?? 0;
     final generated = draft?.slotRecipes.where((s) => s != null).length ?? 0;
-    final subtitle = draft != null
-        ? '$generated of $total meal${total == 1 ? '' : 's'} ready to review'
-        : '${_items.length} deal item${_items.length == 1 ? '' : 's'} ready to plan';
+    final subtitle = draft == null
+        ? '${_items.length} deal item${_items.length == 1 ? '' : 's'} ready to plan'
+        : !draft.ingredientsConfirmed
+        ? 'Ingredients to confirm for $total meal${total == 1 ? '' : 's'}'
+        : '$generated of $total recipe${total == 1 ? '' : 's'} ready';
     final freshnessNote = _buildFreshnessNote();
     return Center(
       child: SingleChildScrollView(

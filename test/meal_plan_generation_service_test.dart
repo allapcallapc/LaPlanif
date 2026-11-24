@@ -1013,4 +1013,81 @@ void main() {
 
     expect(callCount, 2);
   });
+
+  test('tells both calls a pantry carb anchor is the carb, but not a deal item', () async {
+    var callCount = 0;
+    final client = MockClient((request) async {
+      callCount++;
+      expect(request.body, contains("Quinoa (not a deal item, the meal's carb)"));
+      expect(request.body, contains("Spaghetti (IGA, the meal's carb)"));
+      expect(request.body, contains('Chicken breast (not a deal item, protein)'));
+      expect(request.body, contains("Kale (not a deal item, the meal's vegetable)"));
+      expect(request.body, contains('Parmesan (not a deal item, extra ingredient)'));
+      if (callCount == 1) {
+        // Another variety of the same carb is a repeat across the week.
+        expect(request.body, contains('basmati and jasmine rice are both rice'));
+        return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+      }
+      expect(request.body, contains('never list it in dealItems'));
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Chicken stir-fry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Quinoa'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli'),
+          },
+        ],
+      );
+    });
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+    await service.generateMealPlan(
+      apiKey: 'test-key',
+      slots: [
+        slots.single.copyWith(
+          anchorItems: const [
+            AnchorItem(name: 'Chicken thighs', store: 'IGA'),
+            AnchorItem.pantry('Quinoa'),
+            AnchorItem(name: 'Spaghetti', store: 'IGA', role: AnchorRole.carb),
+            AnchorItem.pantry('Chicken breast', role: AnchorRole.protein),
+            AnchorItem.pantry('Kale', role: AnchorRole.vegetable),
+            AnchorItem.pantry('Parmesan', role: AnchorRole.other),
+          ],
+        ),
+      ],
+      items: items,
+    );
+
+    expect(callCount, 2);
+  });
+
+  test('sends the user\'s own request for the recipe to both calls, and leaves it out when empty', () async {
+    final bodies = <String>[];
+    final client = MockClient((request) async {
+      bodies.add(request.body);
+      if (bodies.length.isOdd) return _researchResponse(text: 'Slot 1 protein: no verified link found.');
+      return _extractionResponse(
+        slots: [
+          {
+            'protein': _rawComponent(type: 'ai_recipe', name: 'Spicy chicken stir-fry'),
+            'carb': _rawComponent(type: 'simple_side', name: 'Rice'),
+            'vegetable': _rawComponent(type: 'simple_side', name: 'Broccoli'),
+          },
+        ],
+      );
+    });
+    final service = MealPlanGenerationService(client: client, logRepository: AiCallLogRepository());
+
+    await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items, request: ' Something spicy ');
+    await service.generateMealPlan(apiKey: 'test-key', slots: slots, items: items);
+
+    expect(bodies, hasLength(4));
+    for (final body in bodies.take(2)) {
+      expect(body, contains("The user's own request for this recipe"));
+      expect(body, contains('Something spicy'));
+    }
+    for (final body in bodies.skip(2)) {
+      expect(body, isNot(contains("The user's own request")));
+    }
+  });
 }

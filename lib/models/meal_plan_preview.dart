@@ -1,17 +1,62 @@
 import 'meal_plan_config.dart';
 
-/// One candidate deal item anchoring a slot's batch-cooked recipe - the main
-/// protein or a key supporting ingredient.
+/// Which part of the meal an [AnchorItem] is.
+enum AnchorRole {
+  protein,
+  carb,
+  vegetable,
+
+  /// Anything else the meal is built around (e.g. a sauce or cheese deal).
+  other;
+
+  static AnchorRole? fromName(String? name) => AnchorRole.values.where((role) => role.name == name).firstOrNull;
+}
+
+/// One ingredient a slot's batch-cooked recipe is built around: a deal item,
+/// or something that isn't on sale - a pantry staple such as rice, quinoa
+/// or couscous, or any ingredient the user typed in ([isPantry], with
+/// [store] set to [pantryStore]).
+///
+/// Its part of the meal ([role]) is stated explicitly - set by the AI's
+/// suggestion or by the picker the user chose it from - rather than inferred
+/// from the flyer's category, which the deal extraction can get wrong (e.g.
+/// tofu filed under Carbs). Null only for items saved before roles existed.
 class AnchorItem {
-  const AnchorItem({required this.name, required this.store});
+  const AnchorItem({required this.name, required this.store, this.isPantry = false, AnchorRole? role})
+    : role = role ?? (isPantry ? AnchorRole.carb : null);
+
+  /// An ingredient that isn't a deal item (a carb unless [role] says
+  /// otherwise), so it never appears among a recipe's deal items or the
+  /// shopping list's deals.
+  const AnchorItem.pantry(this.name, {AnchorRole this.role = AnchorRole.carb}) : store = pantryStore, isPantry = true;
+
+  static const pantryStore = 'Pantry';
 
   final String name;
   final String store;
+  final bool isPantry;
+  final AnchorRole? role;
 
-  Map<String, dynamic> toJson() => {'name': name, 'store': store};
+  /// Whether this is the meal's carb. Always true for a pantry item.
+  bool get isCarb => role == AnchorRole.carb;
 
-  factory AnchorItem.fromJson(Map<String, dynamic> json) =>
-      AnchorItem(name: json['name'] as String, store: json['store'] as String);
+  // `pantry`/`role` are only written when set, so plain deal-item JSON (e.g.
+  // in saved history) is unchanged.
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'store': store,
+    if (isPantry) 'pantry': true,
+    // A non-deal item is a carb unless it says otherwise.
+    if (role != null && !(isPantry && role == AnchorRole.carb)) 'role': role!.name,
+  };
+
+  factory AnchorItem.fromJson(Map<String, dynamic> json) => AnchorItem(
+    name: json['name'] as String,
+    store: json['store'] as String,
+    isPantry: json['pantry'] as bool? ?? false,
+    // `carb: true` is how a carb was saved before roles replaced it.
+    role: AnchorRole.fromName(json['role'] as String?) ?? (json['carb'] == true ? AnchorRole.carb : null),
+  );
 }
 
 /// The AI's proposed direction for one [MealSlot]'s batch-cooked recipe: a

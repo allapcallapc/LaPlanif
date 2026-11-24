@@ -1,24 +1,64 @@
 import 'package:flutter/material.dart';
 
 import '../models/deal_item.dart';
+import '../models/meal_plan_preview.dart';
 import 'deal_grouping.dart';
 
 /// Lets the user pick one of [items] as a meal's anchor. Laid out like the
 /// deals list - grouped by category, filterable by store and category - plus
 /// a name search, since a full week of flyers is far too long to scan as one
-/// flat list. Resolves to the picked item, or null on cancel.
-Future<DealItem?> showAnchorPickerDialog(BuildContext context, {required List<DealItem> items, required String title}) {
+/// flat list. [initialCategory] preselects a category filter (still
+/// changeable, since the flyer's categories aren't always right). Resolves
+/// to the picked item, or null on cancel.
+Future<DealItem?> showAnchorPickerDialog(
+  BuildContext context, {
+  required List<DealItem> items,
+  required String title,
+  DealCategory? initialCategory,
+}) {
   return showDialog<DealItem>(
     context: context,
-    builder: (_) => AnchorPickerDialog(items: items, title: title),
+    builder: (_) => AnchorPickerDialog(items: items, title: title, initialCategory: initialCategory),
   );
 }
 
+/// The same picker for one part of a meal ([role]), which also lets the
+/// user type in an ingredient that isn't on sale. Resolves to the chosen
+/// deal or typed ingredient as that part of the meal, or null on cancel.
+Future<AnchorItem?> showIngredientPickerDialog(
+  BuildContext context, {
+  required List<DealItem> items,
+  required String title,
+  required AnchorRole role,
+  DealCategory? initialCategory,
+}) async {
+  final picked = await showDialog<Object>(
+    context: context,
+    builder: (_) => AnchorPickerDialog(items: items, title: title, initialCategory: initialCategory, allowCustom: true),
+  );
+  return switch (picked) {
+    DealItem deal => AnchorItem(name: deal.name, store: deal.storeName, role: role),
+    String name => AnchorItem.pantry(name, role: role),
+    _ => null,
+  };
+}
+
 class AnchorPickerDialog extends StatefulWidget {
-  const AnchorPickerDialog({super.key, required this.items, required this.title});
+  const AnchorPickerDialog({
+    super.key,
+    required this.items,
+    required this.title,
+    this.initialCategory,
+    this.allowCustom = false,
+  });
 
   final List<DealItem> items;
   final String title;
+  final DealCategory? initialCategory;
+
+  /// Adds a field for typing an ingredient that isn't on sale; the dialog
+  /// then closes with that name (a String) instead of a [DealItem].
+  final bool allowCustom;
 
   @override
   State<AnchorPickerDialog> createState() => _AnchorPickerDialogState();
@@ -26,8 +66,21 @@ class AnchorPickerDialog extends StatefulWidget {
 
 class _AnchorPickerDialogState extends State<AnchorPickerDialog> {
   String? _storeFilter;
-  DealCategory? _categoryFilter;
+  late DealCategory? _categoryFilter = widget.initialCategory;
   String _query = '';
+  final _customController = TextEditingController();
+
+  @override
+  void dispose() {
+    _customController.dispose();
+    super.dispose();
+  }
+
+  void _submitCustom() {
+    final name = _customController.text.trim();
+    if (name.isEmpty) return;
+    Navigator.of(context).pop(name);
+  }
 
   List<String> get _storeNames => widget.items.map((item) => item.storeName).toSet().toList()..sort();
 
@@ -113,6 +166,27 @@ class _AnchorPickerDialogState extends State<AnchorPickerDialog> {
                     : ListView(children: rows),
               ),
               const Divider(height: 1),
+              if (widget.allowCustom)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _customController,
+                          decoration: const InputDecoration(
+                            hintText: 'Not on sale? Type an ingredient',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          onSubmitted: (_) => _submitCustom(),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonal(onPressed: _submitCustom, child: const Text('Use')),
+                    ],
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                 child: Align(

@@ -122,6 +122,10 @@ class MealPlanGenerationService {
   /// [AiConfigRepository.loadGroundingModels]).
   final List<String> groundingModels;
 
+  /// [request] is the user's own wording for this recipe (e.g. "something
+  /// spicy"), sent to both calls; it never overrides a confirmed anchor, an
+  /// excluded item or a standing instruction.
+  ///
   /// [onPhase] is called with `'research'` right before the grounded search
   /// call and `'extraction'` right before the structured-output call, so a
   /// caller (e.g. the review screen) can show which of the two long-running
@@ -132,6 +136,7 @@ class MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     String dietaryNotes = '',
+    String request = '',
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
@@ -147,6 +152,7 @@ class MealPlanGenerationService {
         slots: slots,
         items: items,
         dietaryNotes: dietaryNotes,
+        request: request,
         groundingModels: effectiveGroundingModels,
         otherMeals: otherMeals,
       );
@@ -158,6 +164,7 @@ class MealPlanGenerationService {
         research: research,
         sources: sources,
         dietaryNotes: dietaryNotes,
+        request: request,
         otherMeals: otherMeals,
         model: effectiveModel,
       );
@@ -179,6 +186,7 @@ class MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     required String dietaryNotes,
+    required String request,
     required List<String> groundingModels,
     required List<OtherWeekMeal> otherMeals,
   }) async {
@@ -190,6 +198,7 @@ class MealPlanGenerationService {
           slots: slots,
           items: items,
           dietaryNotes: dietaryNotes,
+          request: request,
           model: groundingModel,
           otherMeals: otherMeals,
         );
@@ -211,6 +220,7 @@ class MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     required String dietaryNotes,
+    required String request,
     required String model,
     required List<OtherWeekMeal> otherMeals,
   }) async {
@@ -224,7 +234,7 @@ class MealPlanGenerationService {
         {
           'role': 'user',
           'parts': [
-            {'text': _slotsUserText(slots, items, dietaryNotes, otherMeals)},
+            {'text': _slotsUserText(slots, items, dietaryNotes, otherMeals, request)},
           ],
         },
       ],
@@ -315,6 +325,7 @@ class MealPlanGenerationService {
     required String research,
     required List<_GroundingSource> sources,
     required String dietaryNotes,
+    required String request,
     required List<OtherWeekMeal> otherMeals,
     required String model,
   }) async {
@@ -324,7 +335,7 @@ class MealPlanGenerationService {
     // replacement, and that replacement must not repeat another meal's
     // side (see _extractionSystemPrompt).
     final userText =
-        '${_slotsUserText(slots, items, dietaryNotes, otherMeals)}\n\n'
+        '${_slotsUserText(slots, items, dietaryNotes, otherMeals, request)}\n\n'
         'Research notes from the search step, for context on which recipe fits which slot:\n$research\n\n'
         'Verified search sources, numbered - the ONLY sources you may ever cite for type "link". These are '
         'the actual links Google Search returned, not the research notes\' prose. To use one, match it to '
@@ -463,6 +474,7 @@ class MealPlanGenerationService {
     List<DealItem> items,
     String dietaryNotes,
     List<OtherWeekMeal> otherMeals,
+    String request,
   ) {
     final priority = items.where((i) => i.preference == DealPreference.priority).toList();
     final excluded = items.where((i) => i.preference == DealPreference.excluded).toList();
@@ -473,7 +485,7 @@ class MealPlanGenerationService {
         .entries
         .map((entry) {
           final slot = entry.value;
-          final anchors = slot.anchorItems.map((a) => '${a.name} (${a.store})').join(', ');
+          final anchors = slot.anchorItems.map(_anchorText).join(', ');
           return 'Slot ${entry.key + 1}: mealType=${slot.mealType.name}, protein=${slot.protein}, '
               'count=${slot.count} meal-instances, portionsPerMeal=${slot.portionsPerMeal}, '
               'totalPortionsNeeded=${slot.totalPortionsNeeded}, confirmed anchor items: $anchors';
@@ -484,15 +496,30 @@ class MealPlanGenerationService {
         '${otherMeals.isEmpty ? '' : 'Other meals already planned for this week, not part of this call - see the '
               'system instructions for how to use these:\n${_otherMealsText(otherMeals)}\n\n'}'
         '${dietaryNotes.trim().isEmpty ? '' : 'Standing planning instructions - follow these across every slot:\n${dietaryNotes.trim()}\n\n'}'
+        '${request.trim().isEmpty ? '' : 'The user\'s own request for this recipe - follow it (e.g. a cooking method, cuisine, flavour or time limit), even over recipe-style preferences above, but never drop a confirmed anchor item, use an excluded item or break a standing planning instruction:\n${request.trim()}\n\n'}'
         'Priority deal items (prefer these for carb/vegetable when a good fit exists):\n${_itemsText(priority)}\n\n'
         'Excluded deal items (never use these):\n${_itemsText(excluded)}\n\n'
         'All other available deal items:\n${_itemsText(available)}';
   }
 
+  String _anchorText(AnchorItem anchor) => anchor.isPantry
+      ? '${anchor.name} (not a deal item, ${switch (anchor.role) {
+          AnchorRole.protein => 'protein',
+          AnchorRole.vegetable => 'the meal\'s vegetable',
+          AnchorRole.other => 'extra ingredient',
+          _ => 'the meal\'s carb',
+        }})'
+      : switch (anchor.role) {
+          AnchorRole.carb => '${anchor.name} (${anchor.store}, the meal\'s carb)',
+          AnchorRole.protein => '${anchor.name} (${anchor.store}, protein)',
+          AnchorRole.vegetable => '${anchor.name} (${anchor.store}, the meal\'s vegetable)',
+          _ => '${anchor.name} (${anchor.store})',
+        };
+
   String _otherMealsText(List<OtherWeekMeal> otherMeals) {
     return otherMeals
         .map((meal) {
-          final anchors = meal.anchorItems.map((a) => '${a.name} (${a.store})').join(', ');
+          final anchors = meal.anchorItems.map(_anchorText).join(', ');
           final recipe = meal.recipeNames.isEmpty ? 'not generated yet' : _labelledRecipeNames(meal.recipeNames);
           return '${meal.mealType.name} (${meal.protein}, ${meal.count} days): anchors $anchors - recipe: $recipe';
         })
@@ -650,7 +677,9 @@ You are researching the recipes needed to turn confirmed meal-plan slots into fu
 
 Every meal (slot) is composed of exactly 3 components: protein, carb, vegetable.
 
-For the protein: it is built from the slot's confirmed anchor item(s), scaled to totalPortionsNeeded. Use your search tool to find and verify a real recipe URL for it. A real, verified recipe link is REQUIRED unless none can be found - this is a hard requirement, not a soft preference. Falling back to an AI-authored recipe when a real link was actually available is the single biggest failure to avoid. Do not settle after one search: if your first query doesn't turn up a solid text/article recipe match, try at least one or two more searches with different phrasing (different site, different wording of the dish, add "recipe") before concluding none exists. Never report a URL you have not actually looked up and confirmed exists.
+CONFIRMED ANCHOR ITEMS ARE FIXED: the user has already validated each slot's anchor items on a separate ingredients step. Every one of them must be used in that slot's meal - never drop, swap or replace one, even to add variety or to follow a rule below. A protein anchor is the protein. A vegetable anchor is the vegetable component (or is cooked as part of the protein recipe); a carb anchor is the carb component (or is part of the protein recipe). Only a vegetable (or carb) with no confirmed anchor of its own is yours to choose. An anchor marked "not a deal item" (e.g. quinoa, rice or couscous from the pantry, or an ingredient the user typed in) is the user's choice for the part of the meal it names: use exactly that ingredient, even though it is not on sale. You MAY additionally use other non-excluded deal items from the lists below (e.g. a vegetable on sale that fits the recipe) - adding deal items is welcome, removing confirmed ones is not.
+
+For the protein: it is built from the slot's confirmed protein anchor item(s), scaled to totalPortionsNeeded. Use your search tool to find and verify a real recipe URL for it. A real, verified recipe link is REQUIRED unless none can be found - this is a hard requirement, not a soft preference. Falling back to an AI-authored recipe when a real link was actually available is the single biggest failure to avoid. Do not settle after one search: if your first query doesn't turn up a solid text/article recipe match, try at least one or two more searches with different phrasing (different site, different wording of the dish, add "recipe") before concluding none exists. Never report a URL you have not actually looked up and confirmed exists.
 
 MULTI-COMPONENT CHECK: once you have a candidate protein recipe, check whether it already explicitly includes a carb and/or a vegetable as an actual ingredient - meaning the item appears in the ingredient list and is prepared/cooked as part of the recipe steps, not just mentioned in a closing "serve with X" suggestion. Report clearly, per component, whether it is covered this way.
 
@@ -666,7 +695,7 @@ Excluded deal items must never be used in any component.
 
 STANDING PLANNING INSTRUCTIONS: the user message may list standing planning instructions. These are hard constraints from the user and override every preference in this prompt (deal items, priority items, cover deals, an otherwise-best recipe). They apply to every component - protein, carb AND vegetable - and to every ingredient of a recipe you pick, not just its headline item. They apply across languages and to every variety of what they name: deal items are often listed in French while instructions may be in English, so "no squash" also rules out "courge musquée", "courge spaghetti", butternut, etc.; translate each item before checking it. If the best recipe you found contains a forbidden ingredient (e.g. a sheet-pan roast with squash), pick another recipe. A slot's count is the number of days that recipe is eaten, so a frequency limit ("no more than 2 days of fish") is about slot counts. Before writing your findings, check each instruction against each component and say in your notes how it is respected.
 
-VARIETY ACROSS THE WEEK: the week's meals must not all share the same sides. If the user message lists other meals already planned for this week, do not reuse a carb or vegetable ingredient that another meal already uses (e.g. if another meal already has broccoli, pick a different vegetable; if another already has basmati rice, pick a different carb such as potatoes, pasta, couscous, quinoa or a different grain) - the same ingredient under a different preparation still counts as a repeat. This takes priority over preferring a deal or priority item for the carb/vegetable: a deal vegetable that another meal already uses is not a "good fit" here. The only exception is a carb/vegetable that the protein recipe itself already includes (covered by the protein) when no well-supported alternative recipe exists.
+VARIETY ACROSS THE WEEK: the week's meals must not all share the same sides. If the user message lists other meals already planned for this week, do not reuse a carb or vegetable ingredient that another meal already uses (e.g. if another meal already has broccoli, pick a different vegetable; if another already has basmati rice, pick a different carb such as potatoes, pasta, couscous, quinoa or a different grain) - the same ingredient under a different preparation, variety, brand or format still counts as a repeat (basmati and jasmine rice are both rice; any pasta shape is pasta). This takes priority over preferring a deal or priority item for the carb/vegetable: a deal vegetable that another meal already uses is not a "good fit" here. The exceptions are a confirmed anchor item of this slot (always used, see above) and a carb/vegetable that the protein recipe itself already includes (covered by the protein) when no well-supported alternative recipe exists.
 
 A component "uses a deal item" only when that component's own ingredient is itself one of the named deal items below - never because it happens to be cooked on the same pan/tray or in the same recipe as a protein that is a deal item. E.g. a one-pan "roasted sausages and green beans" recipe where only the sausages are a deal item means the vegetable does NOT use a deal item, even though it shares the recipe with one that does. Report each component's deal-item status independently and explicitly say "no" when it doesn't match a named deal item, rather than leaving it implied.
 
@@ -682,8 +711,10 @@ You are converting research notes into a structured meal plan. You are given con
 
 Every meal (slot) is composed of exactly 3 components: protein, carb, vegetable. For each slot, in the same order given, record:
 
-- protein: scaled to totalPortionsNeeded, built from the slot's confirmed anchor item(s).
+- protein: scaled to totalPortionsNeeded, built from the slot's confirmed protein anchor item(s).
 - carb and vegetable: each either covered_by_protein (when the research notes say the protein recipe already explicitly includes it), or its own component.
+
+Every confirmed anchor item of a slot must be used by that slot's meal, and listed in the dealItems of the component that uses it (a vegetable anchor on the vegetable component, a carb anchor on the carb component, or on the protein component when the protein recipe cooks it). Never drop or replace a confirmed anchor item. An anchor marked "not a deal item" must be used for the part of the meal it names (the carb, protein or vegetable, or as part of the protein recipe), but never list it in dealItems and set usesWeeklyDeal from the other items only. Other non-excluded deal items the research notes use may be listed too.
 
 For every component, choose exactly one type: "link" (a real recipe found via search - see sourceIndex below), "ai_recipe" (full ingredients + instructions, used only when there is no matching verified source), "simple_side" (a short prep note, no full recipe - valid for carb/vegetable, not for protein), or "covered_by_protein" (carb/vegetable only).
 
@@ -697,7 +728,7 @@ For type "link", still record its full ingredients list, scaled to totalPortions
 
 If standing planning instructions are given, they are hard constraints from the user (they apply across languages - e.g. "no squash" also rules out "courge musquée"). If the research notes picked a component whose recipe breaks one - including a linked recipe that contains a forbidden ingredient anywhere in it - do not record that recipe at all: never keep the link while just leaving the forbidden ingredient out of the ingredient list, since the shopping list would then no longer match the linked page. Instead replace the component: a protein must become type "ai_recipe" (full ingredients + instructions, built from the slot's anchor items), never simple_side or covered_by_protein; a carb or vegetable may become "ai_recipe" or "simple_side". A carb/vegetable covered by a non-compliant protein recipe is replaced along with it.
 
-When you replace a carb or vegetable this way, pick an ingredient that none of the other meals listed in the user message already uses for its carb or vegetable (e.g. not broccoli if another meal already has broccoli), even if that means not using a deal item. Other meals are listed only for this purpose - don't change components the research notes picked compliantly.
+When you replace a carb or vegetable this way, keep any confirmed anchor item it was built on (only the recipe changes, not the anchor), and otherwise pick an ingredient that none of the other meals listed in the user message already uses for its carb or vegetable (e.g. not broccoli if another meal already has broccoli), even if that means not using a deal item. Other meals are listed only for this purpose - don't change components the research notes picked compliantly.
 
 Record exactly one entry per meal slot, in the same order the slots were given, by calling record_meal_components.
 ''';

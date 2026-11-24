@@ -25,6 +25,7 @@ import 'package:laplanif/services/meal_plan_generation_service.dart';
 import 'package:laplanif/services/meal_plan_preview_service.dart';
 import 'package:laplanif/services/model_fallback_controller.dart';
 import 'package:laplanif/services/store_config_repository.dart';
+import 'package:laplanif/widgets/suggestion_request_dialog.dart';
 
 class _FakePagesScraper extends FlyerScraperService {
   _FakePagesScraper(this._pages);
@@ -121,7 +122,39 @@ class _FakeMultiStoreChunkAwareExtractionService extends AiDealExtractionService
 /// Preview-service fake: the caller decides what preview comes back for a
 /// given set of slots/portions/items, independent of the real AI call.
 class _FakePreviewService extends MealPlanPreviewService {
-  _FakePreviewService(this._handler);
+  _FakePreviewService(this._handler, {this.replacementHandler});
+
+  /// Answers suggestReplacement - given the ingredient being replaced and
+  /// its role. Unset, the call fails.
+  final Future<AnchorItem> Function(AnchorItem? replacing, AnchorRole role, List<AnchorItem> alreadyUsed)?
+  replacementHandler;
+
+  /// Every ingredient suggestReplacement was asked to replace (null when
+  /// filling an empty row), in order.
+  final List<AnchorItem?> replacementCalls = [];
+
+  /// The user's request passed with every previewMealPlan / suggestReplacement call, in order.
+  final List<String> previewRequests = [];
+  final List<String> replacementRequests = [];
+
+  @override
+  Future<AnchorItem> suggestReplacement({
+    required String apiKey,
+    required MealSlotPreview slot,
+    AnchorItem? replacing,
+    required AnchorRole role,
+    required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
+    String request = '',
+    String? model,
+  }) {
+    replacementCalls.add(replacing);
+    replacementRequests.add(request);
+    final handler = replacementHandler;
+    if (handler == null) throw Exception('no replacement handler');
+    return handler(replacing, role, alreadyUsedAnchors);
+  }
 
   final Future<MealPlanPreview> Function(List<MealSlot> mealSlots, int portionsPerMeal, List<DealItem> items) _handler;
 
@@ -154,6 +187,7 @@ class _FakePreviewService extends MealPlanPreviewService {
     List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) {
     calls.add(mealSlots);
@@ -161,6 +195,7 @@ class _FakePreviewService extends MealPlanPreviewService {
     usedAnchorsCalls.add(alreadyUsedAnchors);
     portionsPerMealCalls.add(portionsPerMeal);
     dietaryNotesCalls.add(dietaryNotes);
+    previewRequests.add(request);
     return _handler(mealSlots, portionsPerMeal, items);
   }
 }
@@ -182,6 +217,7 @@ class _FakeDeferredPreviewService extends MealPlanPreviewService {
     List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) {
     final completer = Completer<MealPlanPreview>();
@@ -207,9 +243,27 @@ class _FakeModelAwarePreviewService extends MealPlanPreviewService {
     List<MealSlotPreview> otherSlots = const [],
     List<RecentHistoryItem> recentlyUsed = const [],
     String dietaryNotes = '',
+    String request = '',
     String? model,
   }) {
     return _byModel(model!);
+  }
+
+  /// Rate-limited on model-a like the other calls here, then swaps in Ground pork.
+  @override
+  Future<AnchorItem> suggestReplacement({
+    required String apiKey,
+    required MealSlotPreview slot,
+    AnchorItem? replacing,
+    required AnchorRole role,
+    required List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors = const [],
+    String dietaryNotes = '',
+    String request = '',
+    String? model,
+  }) async {
+    if (model == 'model-a') throw RateLimitedException(model!);
+    return AnchorItem(name: 'Ground pork', store: 'IGA', role: role);
   }
 }
 
@@ -226,18 +280,23 @@ class _FakeGenerationService extends MealPlanGenerationService {
   /// their own recipes) actually reached the generation call.
   final List<List<OtherWeekMeal>> otherMealsCalls = [];
 
+  /// The user's request sent with every generateMealPlan call, in order.
+  final List<String> requests = [];
+
   @override
   Future<MealPlanFull> generateMealPlan({
     required String apiKey,
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     String dietaryNotes = '',
+    String request = '',
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
     void Function(String phase)? onPhase,
   }) {
     otherMealsCalls.add(otherMeals);
+    requests.add(request);
     return _handler(slots, items);
   }
 }
@@ -256,6 +315,7 @@ class _FakeModelAwareGenerationService extends MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     String dietaryNotes = '',
+    String request = '',
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
@@ -285,6 +345,7 @@ class _FakeDeferredGenerationService extends MealPlanGenerationService {
     required List<MealSlotPreview> slots,
     required List<DealItem> items,
     String dietaryNotes = '',
+    String request = '',
     String? model,
     List<String>? groundingModels,
     List<OtherWeekMeal> otherMeals = const [],
@@ -318,7 +379,67 @@ class _FailingSaveMealPlanConfigRepository extends MealPlanConfigRepository {
   }
 }
 
-const _discardWarning = 'Changing these items will discard the current recipe. You\'ll generate a new one.';
+/// Moves from the ingredients step to the recipes step, first choosing a
+/// pantry carb (Quinoa) for any meal that doesn't have one yet - every meal
+/// needs a carb before the ingredients can be confirmed.
+Future<void> _confirmIngredients(WidgetTester tester) async {
+  // Tall enough for a whole ingredients card.
+  tester.view.physicalSize = const Size(800, 4000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.pumpAndSettle();
+  // One meal is shown at a time: step to each through its picker tile.
+  for (var i = 0; ; i++) {
+    final tile = find.byKey(ValueKey('review-step-$i'));
+    if (tile.evaluate().isEmpty) break;
+    final chooseCarb = find.byKey(ValueKey('choose-carb-$i'));
+    if (chooseCarb.evaluate().isEmpty) {
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+    }
+    if (chooseCarb.evaluate().isEmpty) continue;
+    await _tapVisible(tester, chooseCarb);
+    await tester.tap(find.widgetWithText(ActionChip, 'Quinoa'));
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(find.text('Confirm ingredients'));
+  await tester.pumpAndSettle();
+}
+
+/// Confirms the "Anything specific?" dialog every suggestion or recipe button opens,
+/// optionally typing [request] first. Leaves the suggestion call itself
+/// un-pumped, so a test can still look at its pending state.
+Future<void> _confirmSuggestion(WidgetTester tester, [String request = '']) async {
+  await tester.pumpAndSettle();
+  final dialog = find.byType(SuggestionRequestDialog);
+  if (request.isNotEmpty) await tester.enterText(find.descendant(of: dialog, matching: find.byType(TextField)), request);
+  // The confirm button: "Suggest", or "Generate" for a recipe.
+  await tester.tap(find.descendant(of: dialog, matching: find.byWidgetPredicate((widget) => widget is FilledButton)));
+}
+
+/// A viewport tall enough for every meal's ingredients card to be built.
+void _useTallView(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 4000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
+/// The ingredients step's row for the item named [name] in slot [index].
+Finder _anchor(int index, String name) => find.byKey(ValueKey('anchor-$index-$name'));
+
+/// Taps [finder] after scrolling it into view - the ingredient cards are tall.
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+/// Finds [finder] inside the ingredients step's card for slot [index].
+Finder _inIngredientCard(int index, Finder finder) =>
+    find.descendant(of: find.byKey(ValueKey('ingredients-slot-$index')), matching: finder);
 
 void main() {
   setUp(() {
@@ -2014,63 +2135,68 @@ void main() {
 
     expect(find.text('Lunch · meat'), findsOneWidget);
     expect(find.text('15 portions'), findsOneWidget);
-    // Exact chip text (name + store), not a loose substring match - the
-    // picker tile above now also shows the bare anchor name on its own
-    // before a recipe exists, so "contains" would be ambiguous between the
-    // tile and the chip.
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+    // The ingredients step comes first, on its own: no recipe action yet.
+    expect(find.text('Ingredients'), findsOneWidget);
+    // The chicken sits on the Protein row, with its store and price below.
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('role-0-protein')), matching: _anchor(0, 'Chicken thighs')),
+      findsOneWidget,
+    );
+    expect(find.text('IGA · 3.99\$/lb'), findsOneWidget);
     expect(find.text('Big-batch chicken thigh stir-fry.'), findsOneWidget);
-    expect(find.text('Generate recipe'), findsOneWidget);
+    expect(find.text('Generate recipe'), findsNothing);
 
-    // Swap the anchor item for another available deal item.
-    await tester.tap(find.text('Chicken thighs · IGA'));
+    // Swap the protein for another available deal item.
+    await tester.tap(_anchor(0, 'Chicken thighs'));
     await tester.pumpAndSettle();
-    expect(find.text('Swap anchor item'), findsOneWidget);
+    expect(find.text('Swap the protein'), findsOneWidget);
 
     await tester.tap(find.text('Ground pork'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Ground pork'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
+    await _confirmIngredients(tester);
+    expect(find.text('Recipes'), findsOneWidget);
+    // The confirmed items are shown read-only above the recipe.
+    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    expect(find.byType(InputChip), findsNothing);
+
+    // The recipe button asks for an optional request first; Cancel generates nothing.
     await tester.tap(find.text('Generate recipe'));
     await tester.pumpAndSettle();
+    expect(find.text('Generate the recipe'), findsOneWidget);
+    expect(find.text('Something spicy'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Slow-roasted pulled pork'), findsNothing);
 
-    // The recipe renders right on the same card as the anchors, and this
-    // is the only (and therefore last) slot, so the bar's now offering to
-    // save instead of moving to a next meal. The picker tile above the
-    // card summarizes protein/carb/veg by their bare deal-item name (e.g.
-    // "Ground pork"), not the recipe's own dish name, so the dish name
-    // itself still shows just once, on the card.
+    await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester, 'Something spicy');
+    await tester.pumpAndSettle();
+
+    // The recipe renders on the card under the confirmed items, and this is
+    // the only slot, so the bar now offers to save.
     expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
     expect(find.text('https://example.com/pulled-pork'), findsOneWidget);
+    // What was typed went with the recipe request.
+    expect(generationService.requests, ['Something spicy']);
     expect(find.text("This week's deal"), findsOneWidget);
-    // Once the recipe exists, the "Pick the deal items" step collapses to a
-    // bare-name summary, so the store-qualified label only shows on the
-    // recipe's own deal-item badge - the picker tile shows the bare name
-    // without the store too.
-    expect(find.text('Ground pork · IGA'), findsOneWidget);
-    expect(find.text('Edit'), findsOneWidget);
-    expect(find.text(_discardWarning), findsNothing);
-
-    // Edit reopens the step - chips back, with a warning that changing them
-    // discards the recipe - and Done collapses it again, recipe untouched.
-    await tester.tap(find.text('Edit'));
-    await tester.pumpAndSettle();
-    expect(find.text(_discardWarning), findsOneWidget);
+    // Once on the card's deal items, once on the recipe's own badge.
     expect(find.text('Ground pork · IGA'), findsNWidgets(2));
-    expect(find.text('Will be replaced if you change the items above.'), findsOneWidget);
-    await tester.tap(find.text('Done'));
-    await tester.pumpAndSettle();
-    expect(find.text(_discardWarning), findsNothing);
-    expect(find.text('Ground pork · IGA'), findsOneWidget);
-    expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
     expect(find.text('This recipe already includes the carb — see above.'), findsOneWidget);
     // The vegetable side has no deal item of its own, so the tile falls
     // back to the same name the card shows - hence twice here.
     expect(find.text('Steamed green beans'), findsNWidgets(2));
     expect(find.text('Steam 5 min, toss with butter.'), findsOneWidget);
     expect(find.text("Save this week's plan"), findsOneWidget);
+
+    // Back from recipes returns to the ingredients step, recipe kept.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('Ingredients'), findsOneWidget);
+    expect(find.text('Recipe ready - changing these items discards it.'), findsOneWidget);
 
     // Backing all the way out (the platform back gesture, same as tapping
     // the app bar's own arrow) through Structure and Deals to Home doesn't
@@ -2087,8 +2213,13 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
 
+    // It was left on the ingredients step, so it resumes there, with the
+    // recipe still there one step on.
+    expect(find.text('Ingredients to confirm for 1 meal'), findsOneWidget);
     await tester.tap(find.text('Continue planning'));
     await tester.pumpAndSettle();
+    expect(find.text('Recipe ready - changing these items discards it.'), findsOneWidget);
+    await _confirmIngredients(tester);
     expect(find.text('Slow-roasted pulled pork'), findsOneWidget);
   });
 
@@ -2188,7 +2319,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
+    await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Save this week\'s plan'), findsOneWidget);
@@ -2200,6 +2333,13 @@ void main() {
     expect(saved.length, 1);
     expect(saved.single.slots.single.recipeName, 'General Tao Chicken');
 
+    // Changing the plan after saving it makes it a draft again.
+    expect(await MealPlanDraftRepository().load(), isNull);
+    await tester.tap(find.text('Regenerate recipe'));
+    await _confirmSuggestion(tester);
+    await tester.pumpAndSettle();
+    expect(await MealPlanDraftRepository().load(), isNotNull);
+
     // Saving again for the same week overwrites rather than adding a second
     // entry - simulated here by writing directly with the same weekId a
     // regenerated plan would also resolve to (isoWeekId of "now").
@@ -2208,6 +2348,14 @@ void main() {
 
     final savedAgain = await mealHistoryRepository.loadAll();
     expect(savedAgain.length, 1);
+
+    // The plan is done: back leaves the screen (to the structure step)
+    // instead of stepping back to the ingredients and saving the finished
+    // plan as a draft again, so Home won't offer to continue it.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('What to plan'), findsOneWidget);
+    expect(await MealPlanDraftRepository().load(), isNull);
   });
 
   testWidgets('extracts and shows the ingredient list from the full plan', (tester) async {
@@ -2308,7 +2456,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
+    await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Extract ingredient list'));
@@ -2397,7 +2547,9 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
+    await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate this recipe: AI API HTTP 500'), findsOneWidget);
@@ -2513,7 +2665,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Looks good, generate preview'));
       await tester.pumpAndSettle();
+      await _confirmIngredients(tester);
       await tester.tap(find.text('Generate recipe'));
+      await _confirmSuggestion(tester);
       await tester.pumpAndSettle();
 
       expect(promptCalls, 1);
@@ -2620,7 +2774,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
+    await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('https://example.com/pulled-pork'));
@@ -2723,7 +2879,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
+    await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('AI recipe'), findsOneWidget);
@@ -2888,11 +3046,13 @@ void main() {
 
     // Lunch is the first meal on the review step.
     expect(find.text('Lunch · meat'), findsOneWidget);
+    await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
-    // Shows once in the picker tile's ingredient summary, once in the card.
-    expect(find.text('Original lunch recipe'), findsNWidgets(2));
+    // Shows on the card; the picker tile shows the anchor kept on the protein.
+    expect(find.text('Original lunch recipe'), findsOneWidget);
     expect(lunchCalls.length, 1);
     expect(supperCalls, isEmpty);
 
@@ -2904,7 +3064,8 @@ void main() {
     expect(lunchOtherMeals.single.mealType, MealType.supper);
     expect(lunchOtherMeals.single.protein, 'tofu');
     expect(lunchOtherMeals.single.count, greaterThan(0));
-    expect(lunchOtherMeals.single.anchorItems.single.name, 'Tofu');
+    // Tofu, plus the pantry carb chosen on the ingredients step.
+    expect(lunchOtherMeals.single.anchorItems.map((a) => a.name), ['Tofu', 'Quinoa']);
     expect(lunchOtherMeals.single.recipeNames, isEmpty);
 
     // Move on to the supper meal (via its picker tile) and generate its
@@ -2913,9 +3074,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Supper · tofu'), findsOneWidget);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
-    expect(find.text('Original supper recipe'), findsNWidgets(2));
+    expect(find.text('Original supper recipe'), findsOneWidget);
     expect(supperCalls.length, 1);
 
     // Now that lunch has a recipe, generating supper is told its actual
@@ -2932,14 +3094,15 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('review-step-0')));
     await tester.pumpAndSettle();
     expect(find.text('Lunch · meat'), findsOneWidget);
-    expect(find.text('Original lunch recipe'), findsNWidgets(2));
+    expect(find.text('Original lunch recipe'), findsOneWidget);
 
     await tester.tap(find.text('Regenerate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(lunchCalls.length, 2);
     expect(lunchCalls[1].single.mealType, MealType.lunch);
-    expect(find.text('Regenerated lunch recipe'), findsNWidgets(2));
+    expect(find.text('Regenerated lunch recipe'), findsOneWidget);
     expect(find.text('Original lunch recipe'), findsNothing);
     expect(supperCalls.length, 1);
 
@@ -2953,7 +3116,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
-    expect(find.text('Original supper recipe'), findsNWidgets(2));
+    expect(find.text('Original supper recipe'), findsOneWidget);
   });
 
   testWidgets('shows an error snackbar and re-enables the button when a full-plan slot regeneration fails', (
@@ -3060,19 +3223,22 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
+    await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
-    expect(find.text('Original recipe'), findsNWidgets(2));
+    expect(find.text('Original recipe'), findsOneWidget);
 
     await tester.tap(find.text('Regenerate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate this recipe: AI API HTTP 500'), findsOneWidget);
     // The failed regeneration left the existing recipe in place, and the
     // button is re-enabled rather than stuck showing its spinner. Shows
     // once in the picker tile's summary, once in the card.
-    expect(find.text('Original recipe'), findsNWidgets(2));
+    expect(find.text('Original recipe'), findsOneWidget);
     expect(
       tester
           .widget<TextButton>(
@@ -3186,22 +3352,25 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Looks good, generate preview'));
       await tester.pumpAndSettle();
+      await _confirmIngredients(tester);
       await tester.tap(find.text('Generate recipe'));
+      await _confirmSuggestion(tester);
       await tester.pumpAndSettle();
 
       // Generating the initial recipe already used up one rate-limit
       // fallback (model-a -> model-b). Shows once in the picker tile's
       // summary, once in the card.
       expect(promptCalls, 1);
-      expect(find.text('Roast chicken thighs'), findsNWidgets(2));
+      expect(find.text('Roast chicken thighs'), findsOneWidget);
 
       await tester.tap(find.text('Regenerate recipe'));
+      await _confirmSuggestion(tester);
       await tester.pumpAndSettle();
 
       // Regenerating this slot falls back through model-a -> model-b again,
       // independently of the initial generation call.
       expect(promptCalls, 2);
-      expect(find.text('Roast chicken thighs'), findsNWidgets(2));
+      expect(find.text('Roast chicken thighs'), findsOneWidget);
     },
   );
 
@@ -3347,14 +3516,14 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Chicken thighs · IGA'));
+    await tester.tap(_anchor(0, 'Chicken thighs'));
     await tester.pumpAndSettle();
-    expect(find.text('Swap anchor item'), findsOneWidget);
+    expect(find.text('Swap the protein'), findsOneWidget);
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
   });
 
   testWidgets('prompts for the next model when the preview call is still rate limited, and continues with it', (
@@ -3447,6 +3616,7 @@ void main() {
   });
 
   testWidgets('regenerates a single slot without affecting the other slots', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -3556,19 +3726,26 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    // Only the current meal (lunch, first on the review step) is on screen
-    // at a time - the supper slot's state still exists, it's just on a
-    // different step.
+    // One meal at a time: lunch first, supper behind its picker tile.
     expect(find.text('Original lunch note.'), findsOneWidget);
     expect(find.text('Original supper note.'), findsNothing);
     expect(previewService.calls.length, 1);
 
-    await tester.tap(find.text('Suggest others'));
+    // Cancelling the dialog suggests nothing.
+    await tester.tap(_inIngredientCard(0, find.text('Suggest others')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(previewService.calls.length, 1);
+
+    await tester.tap(_inIngredientCard(0, find.text('Suggest others')));
+    await _confirmSuggestion(tester, 'Make it vegetarian');
     await tester.pumpAndSettle();
 
     expect(previewService.calls.length, 2);
     expect(previewService.calls[1].length, 1);
     expect(previewService.calls[1].single.mealType, MealType.lunch);
+    expect(previewService.previewRequests[1], 'Make it vegetarian');
     // The regenerate call is told the supper slot's current anchor, so the
     // AI doesn't reuse an ingredient another slot is already using.
     expect(previewService.usedAnchorsCalls[1].map((a) => a.name), ['Tofu']);
@@ -3577,21 +3754,16 @@ void main() {
     expect(previewService.otherSlotsCalls[1].single.mealType, MealType.supper);
     expect(previewService.otherSlotsCalls[1].single.count, greaterThan(0));
 
-    // The regenerated slot changed... The picker tile above now also
-    // guesses at a protein/carb/veg breakdown from the anchors, so the new
-    // anchor's bare name shows up there too, alongside the chip.
+    // The regenerated slot changed...
     expect(find.text('Regenerated lunch note.'), findsOneWidget);
-    expect(find.text('Ground pork · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Ground pork'), findsOneWidget);
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
-    // ...and stepping to the supper meal shows it's untouched. Its tile
-    // has been showing "Tofu" (its protein-category anchor) the whole
-    // time, independently of which meal's card is on screen; the chip
-    // shows up alongside it once its card is selected.
+    // ...and the supper meal is untouched.
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
     expect(find.text('Original supper note.'), findsOneWidget);
-    expect(find.text('Tofu · IGA'), findsOneWidget);
+    expect(_anchor(1, 'Tofu'), findsOneWidget);
   });
 
   testWidgets('adds an anchor item to a slot via the Add item chip', (tester) async {
@@ -3672,9 +3844,8 @@ void main() {
 
     expect(find.textContaining('Ground pork'), findsNothing);
 
-    await tester.tap(find.text('Add item'));
-    await tester.pumpAndSettle();
-    expect(find.text('Add anchor item'), findsOneWidget);
+    await _tapVisible(tester, find.text('Add item'));
+    expect(find.text('Add an item'), findsOneWidget);
     // Chicken thighs is already an anchor, so it should not be offered again.
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing);
 
@@ -3684,8 +3855,20 @@ void main() {
     // The picker tile's protein-summary row keeps showing Chicken thighs
     // (the first protein-category anchor), so its chip is checked by exact
     // text to avoid also matching the tile.
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
-    expect(find.textContaining('Ground pork'), findsOneWidget);
+    // The added item goes on the "Also" row, next to the protein.
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('role-0-other')), matching: _anchor(0, 'Ground pork')),
+      findsOneWidget,
+    );
+
+    // ✨ on an extra item asks for another ingredient; cancelling changes nothing.
+    await _tapVisible(tester, find.descendant(of: _anchor(0, 'Ground pork'), matching: find.byTooltip('Suggest another')));
+    expect(find.text('Suggest another ingredient'), findsOneWidget);
+    expect(find.text('From the pantry'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(_anchor(0, 'Ground pork'), findsOneWidget);
   });
 
   testWidgets('removes an anchor item from a slot via its chip delete icon', (tester) async {
@@ -3756,20 +3939,23 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    // Exact chip text - the picker tile above shows the same anchor's bare
-    // name in its own protein-summary row.
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
 
-    final chip = find.widgetWithText(InputChip, 'Chicken thighs · IGA');
-    final deleteIcon = find.descendant(of: chip, matching: find.byIcon(Icons.close));
+    final deleteIcon = find.descendant(of: _anchor(0, 'Chicken thighs'), matching: find.byTooltip('Remove'));
     await tester.tap(deleteIcon);
     await tester.pumpAndSettle();
 
+    // Removing the only protein leaves the row offering to choose one.
     expect(find.textContaining('Chicken thighs'), findsNothing);
-    expect(find.text('Add item'), findsOneWidget);
+    expect(find.text('Choose a protein'), findsOneWidget);
+
+    // On the recipes step, the meal's tile falls back to its protein type.
+    await _confirmIngredients(tester);
+    expect(find.descendant(of: find.byKey(const ValueKey('review-step-0')), matching: find.text('meat')), findsOneWidget);
   });
 
   testWidgets('shows a spinner on the card while a slot regenerate call is pending', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -3851,6 +4037,7 @@ void main() {
     final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
     final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
     await tester.tap(regenerateButton);
+    await _confirmSuggestion(tester);
     await tester.pump();
     await tester.pump();
     await tester.pump();
@@ -3949,20 +4136,17 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    // Before generating, the recipe step just says where the recipe will appear.
-    expect(find.text('Appears here once generated.'), findsOneWidget);
-
+    await _confirmIngredients(tester);
+    expect(find.text('Generate recipe'), findsOneWidget);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pump();
     await tester.pump();
 
-    // While pending: the recipe step's hint is replaced by a spinner
-    // (there's no recipe yet to show), labeled with the in-flight phase
-    // reported via onPhase, and step 1's Generate button shows a second,
-    // independent spinner labeled "Generating…".
-    expect(find.text('Appears here once generated.'), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsNWidgets(2));
-    expect(find.text('Generating…'), findsOneWidget);
+    // While pending: the Generate button is replaced by a spinner, labeled
+    // with the in-flight phase reported via onPhase.
+    expect(find.text('Generate recipe'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.text('Searching for real recipe links…'), findsOneWidget);
 
     // Moving to the second (extraction) phase swaps the card's label, same
@@ -3998,12 +4182,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Once in the picker tile's ingredient summary, once in the card.
-    expect(find.text('Chicken stir-fry'), findsNWidgets(2));
+    // On the card; the picker tile shows the anchor kept on the protein.
+    expect(find.text('Chicken stir-fry'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
   testWidgets('shows an error snackbar when a slot regenerate call fails', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4077,6 +4262,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Suggest others'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Could not regenerate these suggestions: boom'), findsOneWidget);
@@ -4168,22 +4354,22 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Add item'));
-    await tester.pumpAndSettle();
-    expect(find.text('Add anchor item'), findsOneWidget);
+    await _tapVisible(tester, find.text('Add item'));
+    expect(find.text('Add an item'), findsOneWidget);
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
     // Exact chip text - the picker tile above shows the same anchor's bare
     // name in its own protein-summary row.
-    expect(find.text('Chicken thighs · IGA'), findsOneWidget);
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
     expect(find.textContaining('Ground pork'), findsNothing);
   });
 
   testWidgets('prompts for the next model when a slot regenerate call is still rate limited, and continues with it', (
     tester,
   ) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4272,6 +4458,7 @@ void main() {
     final lunchCard = find.ancestor(of: find.text('Lunch · meat'), matching: find.byType(Card));
     final regenerateButton = find.descendant(of: lunchCard, matching: find.byIcon(Icons.refresh));
     await tester.tap(regenerateButton);
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(promptCalls, 2, reason: 'the regenerate call goes through its own rate-limit retry flow');
@@ -4281,9 +4468,17 @@ void main() {
     // "Regenerate all suggestions" (the app bar action, not the per-card
     // one) is its own call site too, with its own rate-limit retry flow.
     await tester.tap(find.byTooltip('Regenerate all suggestions'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(promptCalls, 3, reason: 'regenerating every suggestion goes through its own rate-limit retry flow too');
+
+    await tester.tap(find.descendant(of: _anchor(0, 'Chicken thighs'), matching: find.byTooltip('Suggest another')));
+    await _confirmSuggestion(tester);
+    await tester.pumpAndSettle();
+
+    expect(promptCalls, 4, reason: 'suggesting another ingredient goes through its own rate-limit retry flow too');
+    expect(_anchor(0, 'Ground pork'), findsOneWidget);
   });
 
   testWidgets("shows an error snackbar and re-enables the button when review's own regenerate-all call fails", (
@@ -4363,6 +4558,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Regenerate all suggestions'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Could not generate preview: boom'), findsOneWidget);
@@ -4424,6 +4620,7 @@ void main() {
   );
 
   testWidgets('does not offer an anchor already used by another slot in the swap or add picker', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4518,32 +4715,33 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    // Step to the supper slot and swap its Tofu anchor: Chicken thighs is
-    // already used by the lunch slot, so only Ground pork should be offered.
+    // Swap the supper slot's Tofu anchor: Chicken thighs is already used by
+    // the lunch slot, so only Ground pork should be offered.
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Tofu · IGA'));
-    await tester.pumpAndSettle();
-    expect(find.text('Swap anchor item'), findsOneWidget);
+    await _tapVisible(tester, _anchor(1, 'Tofu'));
+    expect(find.text('Swap the protein'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing);
     expect(find.widgetWithText(ListTile, 'Ground pork'), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    // Step back to the lunch slot and add an anchor there: Tofu is already
-    // used by the supper slot, so only Ground pork should be offered there
-    // too.
+    // Add an anchor to the lunch slot: Tofu is already used by the supper
+    // slot, so only Ground pork should be offered there too.
     await tester.tap(find.byKey(const ValueKey('review-step-0')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add item'));
+    await tester.ensureVisible(_inIngredientCard(0, find.text('Add item')));
     await tester.pumpAndSettle();
-    expect(find.text('Add anchor item'), findsOneWidget);
+    await tester.tap(_inIngredientCard(0, find.text('Add item')));
+    await tester.pumpAndSettle();
+    expect(find.text('Add an item'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Tofu'), findsNothing);
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing, reason: 'already an anchor on this slot');
     expect(find.widgetWithText(ListTile, 'Ground pork'), findsOneWidget);
   });
 
   testWidgets('treats the same produce name at a different store as already used too', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [
       StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga'),
@@ -4649,14 +4847,16 @@ void main() {
 
     // The lunch slot is anchored on IGA's Brocoli - Metro's Brocoli is the
     // same produce under a different store, so the add picker on the
-    // supper slot (stepped to below) must not offer it either.
+    // supper slot must not offer it either.
     await tester.tap(find.byKey(const ValueKey('review-step-1')));
     await tester.pumpAndSettle();
     expect(find.text('Supper · meat'), findsOneWidget);
-    await tester.tap(find.text('Add item'));
+    await tester.ensureVisible(_inIngredientCard(1, find.text('Add item')));
+    await tester.pumpAndSettle();
+    await tester.tap(_inIngredientCard(1, find.text('Add item')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Add anchor item'), findsOneWidget);
+    expect(find.text('Add an item'), findsOneWidget);
     // Both listings of Brocoli (IGA and Metro) are excluded, since the lunch
     // slot already claims the ingredient regardless of which store it's
     // from - but unrelated items are still offered, proving the dialog
@@ -5638,6 +5838,7 @@ void main() {
             ),
           ),
         ],
+        ingredientsConfirmed: true,
       ),
     );
 
@@ -5649,9 +5850,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // Home offers to continue instead of the bare "Fetch deals" prompt,
-    // since there's a draft to resume.
+    // since there's a draft to resume - left on the recipes step.
     expect(find.text('Fetch deals'), findsNothing);
     expect(find.text('Continue planning'), findsOneWidget);
+    expect(find.text('1 of 1 recipe ready'), findsOneWidget);
 
     await tester.tap(find.text('Continue planning'));
     await tester.pumpAndSettle();
@@ -5739,6 +5941,7 @@ void main() {
       await tester.tap(find.text('Continue planning'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Regenerate all suggestions'));
+      await _confirmSuggestion(tester);
       await tester.pumpAndSettle();
 
       // A missing API key would have shown a snackbar instead of calling the
@@ -5860,7 +6063,9 @@ void main() {
     expect(afterPreview!.preview.slots.single.note, 'Big-batch chicken thigh stir-fry.');
     expect(afterPreview.slotRecipes, [null]);
 
+    await _confirmIngredients(tester);
     await tester.tap(find.text('Generate recipe'));
+    await _confirmSuggestion(tester);
     await tester.pumpAndSettle();
 
     // Generating the slot's recipe checkpoints it too.
@@ -5873,5 +6078,819 @@ void main() {
     // The plan is committed to history now - the draft has served its
     // purpose and is cleared so reopening won't resurface it.
     expect(await draftRepository.load(), isNull);
+  });
+
+  testWidgets('recipes keep every confirmed ingredient, may add a deal item, and can all be generated in one go', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 2,
+        diversityWindowDays: 28,
+        mealSlots: [
+          MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 3),
+          MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 2),
+        ],
+      ),
+    );
+
+    DealItem deal(String name, DealCategory category) =>
+        DealItem(name: name, price: '1.99\$', unit: '', category: category, storeName: 'IGA', pageIndex: 2);
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => [
+        deal('Chicken thighs', DealCategory.protein),
+        deal('Tofu', DealCategory.protein),
+        deal('Brocoli', DealCategory.vegetables),
+        deal('Carottes', DealCategory.vegetables),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 3,
+            portionsPerMeal: 2,
+            anchorItems: [
+              AnchorItem(name: 'Chicken thighs', store: 'IGA'),
+              AnchorItem(name: 'Brocoli', store: 'IGA'),
+            ],
+            note: 'Chicken and broccoli.',
+          ),
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'tofu',
+            count: 2,
+            portionsPerMeal: 2,
+            anchorItems: [AnchorItem(name: 'Tofu', store: 'IGA')],
+            note: 'Tofu bowl.',
+          ),
+        ],
+      ),
+    );
+    MealComponent side(String name, [List<AnchorItem> dealItems = const []]) => MealComponent(
+      type: MealComponentType.simpleSide,
+      name: name,
+      usesWeeklyDeal: dealItems.isNotEmpty,
+      dealItems: dealItems,
+    );
+    final generationService = _FakeGenerationService((slots, items) async {
+      final slot = slots.single;
+      final isLunch = slot.mealType == MealType.lunch;
+      return MealPlanFull(
+        slots: [
+          MealSlotFull(
+            mealType: slot.mealType,
+            protein: slot.protein,
+            count: slot.count,
+            portionsPerMeal: slot.portionsPerMeal,
+            // Lunch's recipe forgets the confirmed Brocoli and picks up
+            // Carottes from the deals instead.
+            proteinComponent: side(isLunch ? 'Chicken roast' : 'Tofu bowl', [slot.anchorItems.first]),
+            carbComponent: side('Rice'),
+            vegetableComponent: isLunch
+                ? side('Glazed carrots', const [AnchorItem(name: 'Carottes', store: 'IGA')])
+                : side('Green salad'),
+          ),
+        ],
+      );
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+          generationService: generationService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    // One meal at a time, through the same picker strip as the recipes step.
+    expect(find.byKey(const ValueKey('ingredients-slot-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('ingredients-slot-1')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('ingredients-slot-1')), findsOneWidget);
+
+    // Swiping moves between meals too: right goes back to lunch, left to supper.
+    await tester.fling(find.byType(PageView), const Offset(400, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('ingredients-slot-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('ingredients-slot-1')), findsNothing);
+    await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('ingredients-slot-1')), findsOneWidget);
+
+    // Neither meal has a carb yet: both tiles are flagged, and confirming
+    // names them and jumps back to the first one.
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('review-step-0')), matching: find.byIcon(Icons.error_outline)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('review-step-1')), matching: find.byIcon(Icons.error_outline)),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Confirm ingredients'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose a carb for: Lunch · meat, Supper · tofu'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ingredients-slot-0')), findsOneWidget);
+    expect(find.text('Recipes'), findsNothing);
+    await _confirmIngredients(tester);
+
+    await tester.tap(find.text('Generate all remaining recipes (2)'));
+    await tester.pumpAndSettle();
+    expect(generationService.otherMealsCalls.length, 2);
+    // Supper was generated knowing lunch's recipe.
+    expect(generationService.otherMealsCalls[1].single.recipeNames, isNotEmpty);
+    expect(find.text("Save this week's plan"), findsOneWidget);
+
+    // Generating all ends on the last meal; swipe back to lunch.
+    await tester.fling(find.byType(PageView), const Offset(400, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.text('Chicken roast'), findsOneWidget);
+    // The lunch tile is the highlighted one again.
+    final lunchTile = tester.widget<Container>(
+      find.descendant(of: find.byKey(const ValueKey('review-step-0')), matching: find.byType(Container)).first,
+    );
+    expect((lunchTile.decoration! as BoxDecoration).color, isNotNull);
+    // Brocoli was confirmed, so it stays on the meal even though the
+    // recipe left it out; Carottes shows as added by the recipe.
+    expect(find.text('Brocoli · IGA'), findsWidgets);
+    expect(find.byKey(const ValueKey('added-deal-Carottes')), findsOneWidget);
+    // A pantry carb has no store to show on its chip.
+    expect(find.text('Quinoa'), findsWidgets);
+    expect(find.text('Quinoa · Pantry'), findsNothing);
+    expect(find.text("+ added by the recipe, from this week's deals"), findsOneWidget);
+
+    // ...and the ingredient list's deals include both.
+    await tester.tap(find.byTooltip('Extract ingredient list'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Brocoli'), findsWidgets);
+    expect(find.textContaining('Carottes'), findsWidgets);
+  });
+
+  testWidgets('every meal needs a carb, from the pantry or the deals, before ingredients can be confirmed', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 2,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 3)],
+      ),
+    );
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(
+          name: 'Chicken thighs',
+          price: '3.99\$',
+          unit: 'lb',
+          category: DealCategory.protein,
+          storeName: 'IGA',
+          pageIndex: 1,
+        ),
+        DealItem(name: 'Spaghetti', price: '1.49\$', unit: '', category: DealCategory.carbs, storeName: 'IGA', pageIndex: 2),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 3,
+            portionsPerMeal: 2,
+            anchorItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA')],
+            note: 'Chicken.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    // No carb yet, so confirming is refused, naming the meal.
+    expect(find.text('Choose a carb'), findsOneWidget);
+    await tester.tap(find.text('Confirm ingredients'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose a carb for: Lunch · meat'), findsOneWidget);
+    expect(find.text('Recipes'), findsNothing);
+
+    // Something typed in counts as a pantry carb.
+    await tester.tap(find.text('Choose a carb'));
+    await tester.pumpAndSettle();
+    expect(find.text('On sale this week'), findsOneWidget);
+    expect(find.text('Spaghetti'), findsOneWidget);
+    expect(find.text('Couscous'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Polenta');
+    await tester.ensureVisible(find.text('Use'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use'));
+    await tester.pumpAndSettle();
+    expect(_anchor(0, 'Polenta'), findsOneWidget);
+    expect(find.text('Pantry staple'), findsOneWidget);
+    expect(find.text('Choose a carb'), findsNothing);
+
+    // Tapping the carb reopens the carb picker; a deal carb replaces it.
+    await tester.tap(_anchor(0, 'Polenta'));
+    await tester.pumpAndSettle();
+    expect(find.text('From the pantry'), findsOneWidget);
+    await tester.tap(find.text('Spaghetti'));
+    await tester.pumpAndSettle();
+    expect(_anchor(0, 'Spaghetti'), findsOneWidget);
+    expect(find.text('IGA · 1.49\$'), findsOneWidget);
+    expect(find.textContaining('Polenta'), findsNothing);
+
+    await _confirmIngredients(tester);
+    expect(find.text('Recipes'), findsOneWidget);
+    expect(find.text('Spaghetti · IGA'), findsOneWidget);
+  });
+
+  testWidgets('the carb row only holds the item marked as the carb, not whatever the flyer filed under Carbs', (
+    tester,
+  ) async {
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      ),
+    );
+    final scraper = _FakePagesScraper({
+      'maxi': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'Maxi': () async => const [
+        // Misfiled by the flyer extraction: tofu is a protein, not a carb.
+        DealItem(name: 'Tofu Unisoya', price: '4.99\$', unit: '', category: DealCategory.carbs, storeName: 'Maxi', pageIndex: 2),
+        DealItem(name: 'Riz jasmin', price: '6.99\$', unit: '', category: DealCategory.carbs, storeName: 'Maxi', pageIndex: 3),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'tofu',
+            count: 4,
+            portionsPerMeal: 3,
+            anchorItems: [
+              AnchorItem(name: 'Tofu Unisoya', store: 'Maxi'),
+              AnchorItem(name: 'Riz jasmin', store: 'Maxi', role: AnchorRole.carb),
+            ],
+            note: 'Tofu stir-fry with jasmine rice.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    Finder inRow(String role, String name) =>
+        find.descendant(of: find.byKey(ValueKey('role-0-$role')), matching: _anchor(0, name));
+
+    expect(find.text('Choose a carb'), findsNothing);
+    // Rice is on the Carb row; the misfiled tofu isn't.
+    expect(inRow('carb', 'Riz jasmin'), findsOneWidget);
+    expect(inRow('carb', 'Tofu Unisoya'), findsNothing);
+    expect(_anchor(0, 'Tofu Unisoya'), findsOneWidget);
+  });
+
+  testWidgets('each item sits on the row for its part of the meal, and an empty row offers to choose one', (
+    tester,
+  ) async {
+    _useTallView(tester);
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'maxi', name: 'Maxi', flyerUrl: 'https://example.com/maxi')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 3,
+        diversityWindowDays: 28,
+        mealSlots: [MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 4)],
+      ),
+    );
+    final scraper = _FakePagesScraper({
+      'maxi': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'Maxi': () async => const [
+        // Misfiled by the flyer extraction: tofu is a protein, not a carb.
+        DealItem(name: 'Tofu Unisoya', price: '4.99\$', unit: '', category: DealCategory.carbs, storeName: 'Maxi', pageIndex: 2),
+        DealItem(name: 'Riz jasmin', price: '6.99\$', unit: '', category: DealCategory.carbs, storeName: 'Maxi', pageIndex: 3),
+        DealItem(name: 'Brocoli', price: '2.49\$', unit: '', category: DealCategory.vegetables, storeName: 'Maxi', pageIndex: 4),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'tofu',
+            count: 4,
+            portionsPerMeal: 3,
+            anchorItems: [
+              AnchorItem(name: 'Tofu Unisoya', store: 'Maxi', role: AnchorRole.protein),
+              AnchorItem(name: 'Riz jasmin', store: 'Maxi', role: AnchorRole.carb),
+            ],
+            note: 'Tofu stir-fry with jasmine rice.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    Finder inRow(String role, String name) =>
+        find.descendant(of: find.byKey(ValueKey('role-0-$role')), matching: _anchor(0, name));
+
+    expect(inRow('protein', 'Tofu Unisoya'), findsOneWidget);
+    expect(inRow('carb', 'Riz jasmin'), findsOneWidget);
+    expect(find.text('Maxi · 6.99\$'), findsOneWidget);
+
+    // No vegetable yet: its row offers one, opening the picker on vegetables.
+    await _tapVisible(tester, find.text('Choose a vegetable'));
+    expect(find.text('Choose a vegetable'), findsNWidgets(2));
+    expect(find.widgetWithText(ListTile, 'Tofu Unisoya'), findsNothing);
+    await tester.tap(find.widgetWithText(ListTile, 'Brocoli'));
+    await tester.pumpAndSettle();
+    expect(inRow('vegetable', 'Brocoli'), findsOneWidget);
+    expect(find.text('Choose a vegetable'), findsNothing);
+
+    // Tapping it opens the picker for a vegetable again.
+    await tester.tap(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.text('Brocoli')));
+    await tester.pumpAndSettle();
+    expect(find.text('Swap the vegetable'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(inRow('vegetable', 'Brocoli'), findsOneWidget);
+  });
+
+  testWidgets('one ingredient can be replaced by an AI suggestion or by an ingredient typed in, for any part of the meal', (
+    tester,
+  ) async {
+    _useTallView(tester);
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 2,
+        diversityWindowDays: 28,
+        mealSlots: [
+          MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 3),
+          MealSlot(id: 'supper-tofu', mealType: MealType.supper, protein: 'tofu', count: 2),
+        ],
+      ),
+    );
+    DealItem deal(String name, DealCategory category) =>
+        DealItem(name: name, price: '2.99\$', unit: '', category: category, storeName: 'IGA', pageIndex: 2);
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => [
+        deal('Chicken thighs', DealCategory.protein),
+        deal('Brocoli', DealCategory.vegetables),
+        deal('Asperges', DealCategory.vegetables),
+        deal('Tofu', DealCategory.protein),
+      ],
+    });
+    var failNext = false;
+    final suggestion = Completer<AnchorItem>();
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 3,
+            portionsPerMeal: 2,
+            anchorItems: [
+              AnchorItem(name: 'Chicken thighs', store: 'IGA', role: AnchorRole.protein),
+              AnchorItem.pantry('Basmati rice'),
+              AnchorItem(name: 'Brocoli', store: 'IGA', role: AnchorRole.vegetable),
+            ],
+            note: 'Chicken and broccoli.',
+          ),
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'tofu',
+            count: 2,
+            portionsPerMeal: 2,
+            anchorItems: [AnchorItem(name: 'Tofu', store: 'IGA', role: AnchorRole.protein), AnchorItem.pantry('Quinoa')],
+            note: 'Tofu bowl.',
+          ),
+        ],
+      ),
+      replacementHandler: (replacing, role, alreadyUsed) {
+        if (failNext) throw Exception('AI API HTTP 500');
+        // Filling an empty row.
+        if (replacing == null) return Future.value(AnchorItem.pantry('Kale', role: role));
+        return suggestion.future;
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    Finder inRow(int slot, String role, String name) =>
+        find.descendant(of: find.byKey(ValueKey('role-$slot-$role')), matching: _anchor(slot, name));
+    Finder suggestButton(int slot, String name) =>
+        find.descendant(of: _anchor(slot, name), matching: find.byTooltip('Suggest another'));
+
+    // ✨ on the vegetable asks for another vegetable, told what other meals use.
+    await tester.tap(suggestButton(0, 'Brocoli'));
+    await tester.pumpAndSettle();
+    expect(find.text('Suggest another vegetable'), findsOneWidget);
+    await _confirmSuggestion(tester, 'A green vegetable');
+    await tester.pump();
+    expect(previewService.replacementCalls.single?.name, 'Brocoli');
+    // What was typed in the dialog goes with the request.
+    expect(previewService.replacementRequests.single, 'A green vegetable');
+    expect(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.byType(CircularProgressIndicator)), findsOneWidget);
+    // While it runs, nothing else on the ingredients can change, so the
+    // answer can't land on a row filled meanwhile or repeat a fresh edit.
+    expect(
+      tester.widget<IconButton>(find.ancestor(of: suggestButton(0, 'Chicken thighs'), matching: find.byType(IconButton))).onPressed,
+      isNull,
+    );
+    expect(tester.widget<InkWell>(_anchor(0, 'Chicken thighs')).onTap, isNull);
+    expect(
+      tester.widget<TextButton>(find.ancestor(of: find.text('Suggest others'), matching: find.bySubtype<TextButton>())).onPressed,
+      isNull,
+    );
+    expect(
+      tester.widget<TextButton>(find.ancestor(of: find.text('Add item'), matching: find.bySubtype<TextButton>())).onPressed,
+      isNull,
+    );
+    suggestion.complete(const AnchorItem(name: 'Asperges', store: 'IGA', role: AnchorRole.vegetable));
+    await tester.pumpAndSettle();
+    expect(inRow(0, 'vegetable', 'Asperges'), findsOneWidget);
+    expect(_anchor(0, 'Brocoli'), findsNothing);
+    // Only that ingredient changed.
+    expect(inRow(0, 'protein', 'Chicken thighs'), findsOneWidget);
+    expect(inRow(0, 'carb', 'Basmati rice'), findsOneWidget);
+
+    // A failed suggestion says so and leaves the ingredient as it was.
+    failNext = true;
+    await tester.tap(suggestButton(0, 'Chicken thighs'));
+    await _confirmSuggestion(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('Could not suggest another: AI API HTTP 500'), findsOneWidget);
+    expect(inRow(0, 'protein', 'Chicken thighs'), findsOneWidget);
+
+    // Tapping the protein lets you type your own, not-on-sale protein.
+    await tester.tap(find.descendant(of: _anchor(0, 'Chicken thighs'), matching: find.text('Chicken thighs')));
+    await tester.pumpAndSettle();
+    expect(find.text('Swap the protein'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Not on sale? Type an ingredient'), 'Chicken breast');
+    await tester.tap(find.text('Use'));
+    await tester.pumpAndSettle();
+    expect(inRow(0, 'protein', 'Chicken breast'), findsOneWidget);
+    expect(find.descendant(of: _anchor(0, 'Chicken breast'), matching: find.text('Not on sale')), findsOneWidget);
+    expect(find.descendant(of: _anchor(0, 'Basmati rice'), matching: find.text('Pantry staple')), findsOneWidget);
+
+    // The tofu meal has no vegetable: ✨ on its empty row suggests one and adds it.
+    failNext = false;
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byKey(const ValueKey('role-1-vegetable')), matching: find.text('Choose a vegetable')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('suggest-1-vegetable')));
+    await _confirmSuggestion(tester);
+    await tester.pumpAndSettle();
+    expect(previewService.replacementCalls.last, isNull);
+    expect(inRow(1, 'vegetable', 'Kale'), findsOneWidget);
+    expect(find.byKey(const ValueKey('suggest-1-vegetable')), findsNothing);
+    expect(inRow(1, 'protein', 'Tofu'), findsOneWidget);
+  });
+
+  testWidgets('suggesting another ingredient without an API key asks for one instead of calling the AI', (tester) async {
+    final draftRepository = MealPlanDraftRepository();
+    await draftRepository.save(
+      const MealPlanDraft(
+        config: MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+        preview: MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: MealType.lunch,
+              protein: 'meat',
+              count: 5,
+              portionsPerMeal: 3,
+              anchorItems: [AnchorItem(name: 'Chicken thighs', store: 'IGA', role: AnchorRole.protein)],
+              note: 'Chicken.',
+            ),
+          ],
+        ),
+        slotRecipes: [null],
+      ),
+    );
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => throw Exception('not called'),
+      replacementHandler: (replacing, role, alreadyUsed) async => throw Exception('not called'),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: StoreConfigRepository(),
+          mealPlanDraftRepository: draftRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue planning'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Suggest another'));
+    await tester.pumpAndSettle();
+    expect(find.text('Set your Google AI API key in Config first.'), findsOneWidget);
+    expect(previewService.replacementCalls, isEmpty);
+    expect(_anchor(0, 'Chicken thighs'), findsOneWidget);
+  });
+
+  testWidgets('warns when two meals use the same kind of ingredient, e.g. two rices or two chicken cuts', (tester) async {
+    _useTallView(tester);
+    final repository = StoreConfigRepository();
+    await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
+    final aiConfigRepo = AiConfigRepository();
+    await aiConfigRepo.saveApiKey('sk-test');
+    final mealPlanConfigRepository = MealPlanConfigRepository();
+    await mealPlanConfigRepository.save(
+      const MealPlanConfig(
+        portionsPerMeal: 2,
+        diversityWindowDays: 28,
+        mealSlots: [
+          MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 3),
+          MealSlot(id: 'supper-meat', mealType: MealType.supper, protein: 'meat', count: 2),
+        ],
+      ),
+    );
+    final scraper = _FakePagesScraper({
+      'iga': const [FlyerPage(pageNumber: 1, altText: 'x')],
+    });
+    final extraction = _FakeExtractionService({
+      'IGA': () async => const [
+        DealItem(name: 'Hauts de cuisse de poulet', price: '3.99\$', unit: 'lb', category: DealCategory.protein, storeName: 'IGA', pageIndex: 1),
+        DealItem(name: 'Poitrines de poulet', price: '5.99\$', unit: 'lb', category: DealCategory.protein, storeName: 'IGA', pageIndex: 1),
+        DealItem(name: 'Riz Jasmin Dainty', price: '6.99\$', unit: '', category: DealCategory.carbs, storeName: 'IGA', pageIndex: 2),
+        DealItem(name: 'Brocoli', price: '2.49\$', unit: '', category: DealCategory.vegetables, storeName: 'IGA', pageIndex: 3),
+      ],
+    });
+    final previewService = _FakePreviewService(
+      (mealSlots, portionsPerMeal, items) async => const MealPlanPreview(
+        slots: [
+          MealSlotPreview(
+            mealType: MealType.lunch,
+            protein: 'meat',
+            count: 3,
+            portionsPerMeal: 2,
+            anchorItems: [
+              AnchorItem(name: 'Hauts de cuisse de poulet', store: 'IGA', role: AnchorRole.protein),
+              AnchorItem(name: 'Riz Jasmin Dainty', store: 'IGA', role: AnchorRole.carb),
+            ],
+            note: 'Chicken and rice.',
+          ),
+          MealSlotPreview(
+            mealType: MealType.supper,
+            protein: 'meat',
+            count: 2,
+            portionsPerMeal: 2,
+            anchorItems: [
+              AnchorItem(name: 'Poitrines de poulet', store: 'IGA', role: AnchorRole.protein),
+              AnchorItem.pantry('Basmati rice'),
+              AnchorItem(name: 'Brocoli', store: 'IGA', role: AnchorRole.vegetable),
+            ],
+            note: 'Chicken breast and rice.',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(
+          repository: repository,
+          scraperService: scraper,
+          extractionService: extraction,
+          aiConfigRepository: aiConfigRepo,
+          mealPlanConfigRepository: mealPlanConfigRepository,
+          previewService: previewService,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch deals'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preview meal plan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Looks good, generate preview'));
+    await tester.pumpAndSettle();
+
+    Finder repeat(int slot, String name) => find.byKey(ValueKey('repeat-$slot-$name'));
+    Finder tileRepeatIcon(int slot) =>
+        find.descendant(of: find.byKey(ValueKey('review-step-$slot')), matching: find.byIcon(Icons.repeat));
+
+    // Lunch: both its chicken and its rice repeat in supper, under other names.
+    expect(find.descendant(of: repeat(0, 'Hauts de cuisse de poulet'), matching: find.text('Also in Supper · meat')), findsOneWidget);
+    expect(find.descendant(of: repeat(0, 'Riz Jasmin Dainty'), matching: find.text('Also in Supper · meat')), findsOneWidget);
+    expect(tileRepeatIcon(0), findsOneWidget);
+    expect(tileRepeatIcon(1), findsOneWidget);
+
+    // Supper too - but not its broccoli, which only it uses.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: repeat(1, 'Basmati rice'), matching: find.text('Also in Lunch · meat')), findsOneWidget);
+    expect(repeat(1, 'Poitrines de poulet'), findsOneWidget);
+    expect(repeat(1, 'Brocoli'), findsNothing);
+
+    // Changing supper's carb to quinoa clears the rice warning on both meals.
+    await tester.tap(find.descendant(of: _anchor(1, 'Basmati rice'), matching: find.text('Basmati rice')));
+    await tester.pumpAndSettle();
+    // Every rice is marked as already used, not just the same name.
+    expect(
+      find.descendant(of: find.widgetWithText(ActionChip, 'Jasmine rice'), matching: find.byIcon(Icons.repeat)),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(ActionChip, 'Quinoa'));
+    await tester.pumpAndSettle();
+    expect(repeat(1, 'Quinoa'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('review-step-0')));
+    await tester.pumpAndSettle();
+    expect(repeat(0, 'Riz Jasmin Dainty'), findsNothing);
+    // The chicken still repeats.
+    expect(repeat(0, 'Hauts de cuisse de poulet'), findsOneWidget);
+    expect(tileRepeatIcon(0), findsOneWidget);
+  });
+
+  testWidgets('a meal never ends up with the same ingredient twice, and copes with one that already has', (tester) async {
+    _useTallView(tester);
+    final draftRepository = MealPlanDraftRepository();
+    await draftRepository.save(
+      const MealPlanDraft(
+        config: MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+        preview: MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: MealType.lunch,
+              protein: 'meat',
+              count: 5,
+              portionsPerMeal: 3,
+              // Two items with the same name, as an older plan or the AI
+              // could have produced.
+              anchorItems: [
+                AnchorItem(name: 'Chicken thighs', store: 'IGA', role: AnchorRole.protein),
+                AnchorItem.pantry('Rice'),
+                AnchorItem.pantry('Parmesan', role: AnchorRole.other),
+                AnchorItem.pantry('Parmesan', role: AnchorRole.other),
+              ],
+              note: 'Chicken.',
+            ),
+          ],
+        ),
+        slotRecipes: [null],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(repository: StoreConfigRepository(), mealPlanDraftRepository: draftRepository),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue planning'));
+    await tester.pumpAndSettle();
+
+    // Both show, without a duplicate-key error.
+    expect(tester.takeException(), isNull);
+    expect(find.text('Parmesan'), findsNWidgets(2));
+
+    // Typing an ingredient the meal already has is refused.
+    await tester.tap(find.text('Add item'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Not on sale? Type an ingredient'), 'chicken thighs');
+    await tester.tap(find.text('Use'));
+    await tester.pumpAndSettle();
+    expect(find.text('chicken thighs is already in this meal.'), findsOneWidget);
+    expect(find.textContaining('hicken thighs'), findsNWidgets(3), reason: 'the row, the meal tile and the snackbar only');
   });
 }

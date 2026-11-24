@@ -9,20 +9,31 @@ import '../services/meal_plan_draft_repository.dart';
 import '../services/meal_plan_generation_service.dart';
 import '../services/model_fallback_controller.dart';
 import '../utils/error_formatting.dart';
+import '../utils/ingredient_kind.dart';
 import '../utils/iso_week.dart';
+import '../utils/recipe_deal_items.dart';
 import '../widgets/anchor_picker_dialog.dart';
+import '../widgets/carb_picker_dialog.dart';
 import '../widgets/ingredient_list_dialog.dart';
 import '../widgets/meal_slot_full_card.dart';
+import '../widgets/suggestion_request_dialog.dart';
 import 'planif_screen.dart';
 import 'planif_structure_screen.dart';
 
-/// Walks the confirmed slots one meal at a time - anchor items and that
-/// meal's full recipe live on the same card, so there's no separate
-/// preview/full-plan screen pair to keep in sync by hand. Reached either
-/// fresh from [PlanifStructureScreen] (a preview was just generated) or
-/// directly from [PlanifScreen]'s "Continue planning" (a saved draft is
-/// being resumed) - either way this screen owns its own preview/recipes
-/// from here on, independent of wherever it came from.
+/// The planning flow's last two steps, in order:
+///
+/// 1. Ingredients - every meal's suggested deal items on one page, to swap,
+///    add, remove or re-suggest until the whole week looks right.
+/// 2. Recipes - once the ingredients are confirmed, one meal at a time: each
+///    recipe is built around that meal's confirmed items, never dropping
+///    one, and may add another deal item it uses (shown as "added by
+///    recipe").
+///
+/// Both steps share this screen's state, so going back from recipes to
+/// ingredients (the back button) keeps every recipe whose items aren't then
+/// changed. Reached either fresh from [PlanifStructureScreen] (a preview was
+/// just generated) or from [PlanifScreen]'s "Continue planning" (a saved
+/// draft is being resumed, on whichever step it was left).
 class PlanifReviewScreen extends StatefulWidget {
   const PlanifReviewScreen({
     super.key,
@@ -34,6 +45,7 @@ class PlanifReviewScreen extends StatefulWidget {
     required this.config,
     required this.initialPreview,
     required this.initialSlotRecipes,
+    this.initialIngredientsConfirmed = false,
   });
 
   final PlanifServices services;
@@ -44,6 +56,7 @@ class PlanifReviewScreen extends StatefulWidget {
   final MealPlanConfig config;
   final MealPlanPreview initialPreview;
   final List<MealSlotFull?> initialSlotRecipes;
+  final bool initialIngredientsConfirmed;
 
   @override
   State<PlanifReviewScreen> createState() => _PlanifReviewScreenState();
@@ -57,6 +70,15 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // slot, anchor edits invalidating just their own slot) stay simple.
   late List<MealSlotFull?> _slotRecipes;
   int _reviewIndex = 0;
+  // Drives the swipeable meal cards below the picker strip. Rebuilt (at the
+  // current meal) whenever a new PageView takes over - switching steps, or
+  // a regenerate that can change the number of meals.
+  late PageController _pager;
+  // One per picker tile, so swiping to a meal can scroll its tile into view.
+  final List<GlobalKey> _tileKeys = [];
+  // False on the ingredients step, true on the recipes step.
+  late bool _ingredientsConfirmed;
+  bool _isGeneratingAll = false;
   bool _isPreviewLoading = false;
   bool _isSavingWeek = false;
   final Set<int> _regeneratingSlots = {};
@@ -68,25 +90,80 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // two, so surfacing which one is running keeps the wait from reading as a
   // stuck spinner.
   final Map<int, String> _recipeGenerationPhase = {};
-  // Slots whose "Pick the deal items" step has been reopened via Edit after
-  // a recipe already exists. Once a recipe is generated, that step collapses
-  // to a one-line summary so the recipe gets the card - editing its items
-  // again (which discards the recipe) is an explicit opt-in, never a
-  // stray tap on a chip.
-  final Set<int> _editingAnchorSlots = {};
+  // Pending per-ingredient suggestion calls: the ingredient being replaced
+  // (by identity - AnchorItem has no value equality), or a `slot-role` key
+  // for an empty row being filled.
+  final Set<Object> _suggestingAnchors = {};
+  // Set once "Save this week's plan" has saved the plan to history (and
+  // cleared the draft): back then leaves the screen instead of stepping back
+  // to the ingredients, which would save the finished plan as a draft again.
+  // Any later change to the plan clears it, since the plan then differs from
+  // what was saved.
+  bool _savedToHistory = false;
 
   bool get _allSlotsGenerated => _slotRecipes.isNotEmpty && _slotRecipes.every((s) => s != null);
 
   List<MealSlotFull> get _generatedSlots => _slotRecipes.whereType<MealSlotFull>().toList();
 
   bool get _busy =>
-      _isPreviewLoading || _regeneratingSlots.isNotEmpty || _generatingRecipeSlots.isNotEmpty || _isSavingWeek;
+      _isPreviewLoading ||
+      _regeneratingSlots.isNotEmpty ||
+      _generatingRecipeSlots.isNotEmpty ||
+      _isSavingWeek ||
+      _isGeneratingAll ||
+      _suggestingAnchors.isNotEmpty;
+
+  @override
+  void dispose() {
+    _pager.dispose();
+    super.dispose();
+  }
+
+  // Swaps in a fresh controller starting at the current meal, for the
+  // PageView about to be built; the old one is disposed once it's detached.
+  void _resetPager() {
+    final old = _pager;
+    _pager = PageController(initialPage: _reviewIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+  }
+
+  // Shows meal [index]: slides the cards there and keeps its tile in view.
+  void _showMeal(int index) {
+    setState(() => _reviewIndex = index);
+    if (_pager.hasClients && (_pager.page?.round() ?? _reviewIndex) != index) {
+      _pager.animateToPage(index, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+    _scrollTileIntoView(index);
+  }
+
+  void _onPageChanged(int index) {
+    if (index == _reviewIndex) return;
+    setState(() => _reviewIndex = index);
+    _scrollTileIntoView(index);
+  }
+
+  void _scrollTileIntoView(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (index >= _tileKeys.length) return;
+      final tileContext = _tileKeys[index].currentContext;
+      if (tileContext == null) return;
+      Scrollable.ensureVisible(
+        tileContext,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 200),
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+      );
+    });
+  }
 
   @override
   void initState() {
     super.initState();
     _preview = widget.initialPreview;
     _slotRecipes = List.of(widget.initialSlotRecipes);
+    _ingredientsConfirmed = widget.initialIngredientsConfirmed;
+    if (_ingredientsConfirmed) _reviewIndex = _firstMissingRecipeIndex();
+    _pager = PageController(initialPage: _reviewIndex);
     // Persisted immediately so a crash, refresh, or reclaimed tab right
     // after arriving here still has something to resume from Home (see
     // issue #35) - every further mutation below re-saves the same way.
@@ -94,8 +171,16 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   }
 
   Future<void> _saveDraft() async {
+    if (_savedToHistory && mounted) setState(() => _savedToHistory = false);
     await widget.services.mealPlanDraftRepository
-        .save(MealPlanDraft(config: widget.config, preview: _preview, slotRecipes: _slotRecipes))
+        .save(
+          MealPlanDraft(
+            config: widget.config,
+            preview: _preview,
+            slotRecipes: _slotRecipes,
+            ingredientsConfirmed: _ingredientsConfirmed,
+          ),
+        )
         .catchError((_) {
           // Non-fatal - the in-progress work is still fully usable for this
           // session, just not recoverable if the tab is lost right after.
@@ -115,6 +200,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           .showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
       return;
     }
+    final request = await showSuggestionRequestDialog(
+      context,
+      title: 'Suggest new ingredients for every meal',
+      examples: const ['Use what\'s in the pantry', 'Make one meal vegetarian', 'Quick to cook'],
+    );
+    if (request == null || !mounted) return;
 
     final recentlyUsed = await widget.services.mealHistoryRepository.recentlyUsed(
       diversityWindowDays: widget.config.diversityWindowDays,
@@ -131,6 +222,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           items: widget.items,
           recentlyUsed: recentlyUsed,
           dietaryNotes: widget.config.dietaryNotes,
+          request: request,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
@@ -143,12 +235,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         _preview = preview;
         _isPreviewLoading = false;
         _reviewIndex = 0;
+        _resetPager();
         // A freshly (re)generated preview can have entirely different
         // anchors, and possibly a different number of slots - any per-slot
         // recipes already generated were built against the old ones, so
         // they're stale.
         _slotRecipes = List<MealSlotFull?>.filled(preview.slots.length, null);
-        _editingAnchorSlots.clear();
       });
       await _saveDraft();
     } catch (e) {
@@ -164,6 +256,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   Future<void> _regenerateSlot(int index) async {
     final apiKey = widget.apiKey;
     if (apiKey == null || _isPreviewLoading || _regeneratingSlots.contains(index)) return;
+    final request = await showSuggestionRequestDialog(
+      context,
+      title: 'Suggest other ingredients for this meal',
+      examples: const ['Use what\'s in the pantry', 'Make it vegetarian', 'Something lighter'],
+    );
+    if (request == null || !mounted) return;
 
     setState(() => _regeneratingSlots.add(index));
 
@@ -195,6 +293,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           ],
           recentlyUsed: recentlyUsed,
           dietaryNotes: widget.config.dietaryNotes,
+          request: request,
           model: model,
         ),
         onRateLimited: ({required currentModel, nextModel}) {
@@ -235,21 +334,47 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       for (final anchor in slot.anchorItems) _anchorNameKey(anchor.name),
   };
 
-  Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
+  List<DealItem> _availableDeals() {
     final usedKeys = _usedAnchorKeys();
-    final available = widget.items
+    return widget.items
         .where((item) => item.preference != DealPreference.excluded)
         .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
         .toList();
-    final selected = await showAnchorPickerDialog(context, items: available, title: 'Swap anchor item');
-    if (selected == null) return;
+  }
 
+  static DealCategory? _categoryForRole(AnchorRole role) => switch (role) {
+    AnchorRole.protein => DealCategory.protein,
+    AnchorRole.vegetable => DealCategory.vegetables,
+    _ => null,
+  };
+
+  Future<void> _swapAnchorItem(int slotIndex, AnchorItem current) async {
+    final role = _roleOf(current);
+    if (role == AnchorRole.carb) return _chooseCarb(slotIndex);
+    final selected = await showIngredientPickerDialog(
+      context,
+      items: _availableDeals(),
+      title: switch (role) {
+        AnchorRole.protein => 'Swap the protein',
+        AnchorRole.vegetable => 'Swap the vegetable',
+        _ => 'Swap this item',
+      },
+      role: role,
+      initialCategory: _categoryForRole(role),
+    );
+    if (selected == null) return;
+    await _replaceAnchor(slotIndex, current, selected);
+  }
+
+  // Puts [replacement] where [current] was in the slot (if it's still
+  // there) - the slot's recipe no longer matches, so it's dropped.
+  Future<void> _replaceAnchor(int slotIndex, AnchorItem current, AnchorItem replacement) async {
+    if (!mounted || !_preview.slots[slotIndex].anchorItems.any((a) => identical(a, current))) return;
+    if (_rejectDuplicate(slotIndex, replacement, except: current)) return;
     setState(() {
       final slots = [..._preview.slots];
       final slot = slots[slotIndex];
-      final anchors = slot.anchorItems
-          .map((a) => identical(a, current) ? AnchorItem(name: selected.name, store: selected.storeName) : a)
-          .toList();
+      final anchors = slot.anchorItems.map((a) => identical(a, current) ? replacement : a).toList();
       slots[slotIndex] = slot.copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
@@ -257,18 +382,117 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     await _saveDraft();
   }
 
-  Future<void> _addAnchorItem(int slotIndex) async {
-    final usedKeys = _usedAnchorKeys();
-    final available = widget.items
-        .where((item) => item.preference != DealPreference.excluded)
-        .where((item) => !usedKeys.contains(_anchorNameKey(item.name)))
-        .toList();
-    final selected = await showAnchorPickerDialog(context, items: available, title: 'Add anchor item');
+  static String _emptyRowKey(int slotIndex, AnchorRole role) => '$slotIndex-${role.name}';
+
+  // Asks the AI for another ingredient in place of just this one, playing
+  // the same part in the meal - the per-ingredient version of "Suggest
+  // others" on the whole meal. With no [current], suggests one for an empty
+  // row ([role]) and adds it.
+  Future<void> _suggestAnother(int slotIndex, AnchorItem? current, {AnchorRole? role}) async {
+    final effectiveRole = current == null ? role! : _roleOf(current);
+    final Object key = current ?? _emptyRowKey(slotIndex, effectiveRole);
+    final apiKey = widget.apiKey;
+    if (apiKey == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Set your Google AI API key in Config first.')));
+      return;
+    }
+    if (_suggestingAnchors.contains(key)) return;
+    final noun = switch (effectiveRole) {
+      AnchorRole.protein => 'protein',
+      AnchorRole.carb => 'carb',
+      AnchorRole.vegetable => 'vegetable',
+      AnchorRole.other => 'ingredient',
+    };
+    final request = await showSuggestionRequestDialog(
+      context,
+      title: current == null ? 'Suggest a $noun' : 'Suggest another $noun',
+      examples: [
+        'From the pantry',
+        ...switch (effectiveRole) {
+          AnchorRole.vegetable => const ['A red vegetable', 'A leafy green'],
+          AnchorRole.carb => const ['Something lighter', 'A whole grain'],
+          AnchorRole.protein => const ['Vegetarian', 'Fish'],
+          AnchorRole.other => const <String>[],
+        },
+        'Something cheaper',
+      ],
+    );
+    if (request == null || !mounted || _suggestingAnchors.contains(key)) return;
+    setState(() => _suggestingAnchors.add(key));
+    final otherAnchors = [
+      for (var i = 0; i < _preview.slots.length; i++)
+        if (i != slotIndex) ..._preview.slots[i].anchorItems,
+    ];
+    final controller = ModelFallbackController(models: widget.models, waitBeforeRetry: widget.services.rateLimitWait);
+    try {
+      final replacement = await controller.run(
+        attempt: (model) => widget.services.previewService.suggestReplacement(
+          apiKey: apiKey,
+          slot: _preview.slots[slotIndex],
+          replacing: current,
+          role: effectiveRole,
+          items: widget.items,
+          alreadyUsedAnchors: otherAnchors,
+          dietaryNotes: widget.config.dietaryNotes,
+          request: request,
+          model: model,
+        ),
+        onRateLimited: ({required currentModel, nextModel}) {
+          if (!context.mounted) return Future.value(RateLimitChoice.retrySame);
+          return widget.services.rateLimitPrompt(context, currentModel: currentModel, nextModel: nextModel);
+        },
+      );
+      if (!mounted) return;
+      setState(() => _suggestingAnchors.remove(key));
+      if (current != null) {
+        await _replaceAnchor(slotIndex, current, replacement);
+      } else {
+        await _appendAnchor(slotIndex, replacement);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _suggestingAnchors.remove(key));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not suggest another: ${stripExceptionPrefix(e)}')));
+    }
+  }
+
+  Future<void> _addAnchorItem(int slotIndex, {AnchorRole role = AnchorRole.other}) async {
+    final selected = await showIngredientPickerDialog(
+      context,
+      items: _availableDeals(),
+      title: switch (role) {
+        AnchorRole.protein => 'Choose a protein',
+        AnchorRole.vegetable => 'Choose a vegetable',
+        _ => 'Add an item',
+      },
+      role: role,
+      initialCategory: _categoryForRole(role),
+    );
     if (selected == null) return;
 
+    await _appendAnchor(slotIndex, selected);
+  }
+
+  // Whether [slotIndex] already has an item named like [anchor] (other than
+  // [except]) - told to the user instead of adding a duplicate.
+  bool _rejectDuplicate(int slotIndex, AnchorItem anchor, {AnchorItem? except}) {
+    final key = _anchorNameKey(anchor.name);
+    final duplicate = _preview.slots[slotIndex].anchorItems.any(
+      (a) => !identical(a, except) && _anchorNameKey(a.name) == key,
+    );
+    if (duplicate && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${anchor.name} is already in this meal.')));
+    }
+    return duplicate;
+  }
+
+  Future<void> _appendAnchor(int slotIndex, AnchorItem anchor) async {
+    if (!mounted || _rejectDuplicate(slotIndex, anchor)) return;
     setState(() {
       final slots = [..._preview.slots];
-      final anchors = [...slots[slotIndex].anchorItems, AnchorItem(name: selected.name, store: selected.storeName)];
+      final anchors = [...slots[slotIndex].anchorItems, anchor];
       slots[slotIndex] = slots[slotIndex].copyWith(anchorItems: anchors);
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
@@ -288,7 +512,72 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     await _saveDraft();
   }
 
-  void _jumpToMeal(int index) => setState(() => _reviewIndex = index);
+  void _jumpToMeal(int index) => _showMeal(index);
+
+  // Set explicitly by the AI's suggestion or the picker it came from. Only
+  // items saved before roles existed fall back to the flyer's category -
+  // never for the carb, since extraction can misfile e.g. tofu as a carb.
+  AnchorRole _roleOf(AnchorItem anchor) {
+    if (anchor.role != null) return anchor.role!;
+    final category = _dealFor(anchor)?.category;
+    return switch (category) {
+      DealCategory.protein => AnchorRole.protein,
+      DealCategory.vegetables => AnchorRole.vegetable,
+      _ => AnchorRole.other,
+    };
+  }
+
+  bool _isCarb(AnchorItem anchor) => anchor.isCarb;
+
+  // This week's deal matching [anchor] by name, preferring the same store -
+  // for its price and (for old items) its category.
+  DealItem? _dealFor(AnchorItem anchor) {
+    if (anchor.isPantry) return null;
+    final key = _anchorNameKey(anchor.name);
+    final matches = widget.items.where((item) => _anchorNameKey(item.name) == key).toList();
+    if (matches.isEmpty) return null;
+    return matches.firstWhere((item) => item.storeName == anchor.store, orElse: () => matches.first);
+  }
+
+  bool _hasCarb(MealSlotPreview slot) => slot.anchorItems.any(_isCarb);
+
+  // Picks (or replaces) a meal's one carb. Deal carbs another meal already
+  // anchors on aren't offered, same as the other pickers; pantry staples
+  // other meals use are still offered, just flagged.
+  Future<void> _chooseCarb(int slotIndex) async {
+    final otherAnchors = [
+      for (var i = 0; i < _preview.slots.length; i++)
+        if (i != slotIndex) ..._preview.slots[i].anchorItems,
+    ];
+    final otherKeys = {for (final anchor in otherAnchors) _anchorNameKey(anchor.name)};
+    final deals = widget.items
+        .where((item) => item.category == DealCategory.carbs && item.preference != DealPreference.excluded)
+        .where((item) => !otherKeys.contains(_anchorNameKey(item.name)))
+        .toList();
+    final selected = await showCarbPickerDialog(
+      context,
+      deals: deals,
+      usedElsewhere: {
+        for (final anchor in otherAnchors)
+          if (_isCarb(anchor)) _anchorNameKey(anchor.name),
+      },
+    );
+    if (selected == null || !mounted) return;
+
+    setState(() {
+      final slots = [..._preview.slots];
+      final slot = slots[slotIndex];
+      slots[slotIndex] = slot.copyWith(
+        anchorItems: [
+          ...slot.anchorItems.where((a) => !_isCarb(a) && _anchorNameKey(a.name) != _anchorNameKey(selected.name)),
+          selected,
+        ],
+      );
+      _preview = MealPlanPreview(slots: slots);
+      _slotRecipes[slotIndex] = null;
+    });
+    await _saveDraft();
+  }
 
   // A side covered by the protein recipe is part of that dish rather than
   // a standalone side, so flag it - otherwise the AI can't tell it apart
@@ -302,10 +591,25 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // Doubles as both "generate" and "regenerate" for a slot - it's the same
   // call either way - so there's only one code path to keep in sync with
   // the card's anchors, unlike a separate preview/full-plan split.
-  Future<void> _generateSlotRecipe(int index) async {
+  // The recipe buttons' path: asks for an optional request first (e.g.
+  // "something spicy"), then generates. "Generate all" skips the dialog.
+  Future<void> _askAndGenerateRecipe(int index) async {
+    if (_busy) return;
+    final request = await showSuggestionRequestDialog(
+      context,
+      title: _slotRecipes[index] == null ? 'Generate the recipe' : 'Regenerate the recipe',
+      examples: const ['Something spicy', 'Slow cooker', 'Under 30 minutes', 'Simple sides'],
+      actionLabel: 'Generate',
+    );
+    if (request == null || !mounted) return;
+    await _generateSlotRecipe(index, request: request);
+  }
+
+  Future<void> _generateSlotRecipe(int index, {String request = ''}) async {
     final apiKey = widget.apiKey;
     if (apiKey == null ||
         _isPreviewLoading ||
+        _isSavingWeek ||
         _regeneratingSlots.contains(index) ||
         _generatingRecipeSlots.contains(index)) {
       return;
@@ -345,6 +649,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           slots: [_preview.slots[index]],
           items: widget.items,
           dietaryNotes: widget.config.dietaryNotes,
+          request: request,
           model: model,
           groundingModels: widget.groundingModels,
           otherMeals: otherMeals,
@@ -360,8 +665,13 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       );
       if (!mounted) return;
       setState(() {
-        _slotRecipes[index] = result.slots.single;
-        _editingAnchorSlots.remove(index);
+        // The recipe may add deal items, never drop a confirmed one - see
+        // reconcileRecipeDealItems.
+        _slotRecipes[index] = reconcileRecipeDealItems(
+          recipe: result.slots.single,
+          anchors: _preview.slots[index].anchorItems,
+          deals: widget.items,
+        );
         _generatingRecipeSlots.remove(index);
         _recipeGenerationPhase.remove(index);
       });
@@ -375,6 +685,57 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Could not generate this recipe: ${stripExceptionPrefix(e)}')));
     }
+  }
+
+  int _firstMissingRecipeIndex() {
+    final index = _slotRecipes.indexWhere((recipe) => recipe == null);
+    return index == -1 ? 0 : index;
+  }
+
+  // Generates every meal still missing a recipe, one after the other (each
+  // one sees the recipes already made for the others, same as tapping them
+  // one by one). Stops at the first failure - its snackbar says which.
+  Future<void> _generateAllRecipes() async {
+    if (_busy) return;
+    setState(() => _isGeneratingAll = true);
+    for (var i = 0; i < _slotRecipes.length; i++) {
+      if (!mounted) return;
+      if (_slotRecipes[i] != null) continue;
+      _showMeal(i);
+      await _generateSlotRecipe(i);
+      if (!mounted) return;
+      if (_slotRecipes[i] == null) break;
+    }
+    if (!mounted) return;
+    setState(() => _isGeneratingAll = false);
+  }
+
+  Future<void> _confirmIngredients() async {
+    if (_busy) return;
+    final missingCarb = [
+      for (final slot in _preview.slots)
+        if (!_hasCarb(slot)) '${_capitalize(slot.mealType.name)} · ${slot.protein}',
+    ];
+    if (missingCarb.isNotEmpty) {
+      _showMeal(_preview.slots.indexWhere((slot) => !_hasCarb(slot)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Choose a carb for: ${missingCarb.join(', ')}')));
+      return;
+    }
+    setState(() {
+      _ingredientsConfirmed = true;
+      _reviewIndex = _firstMissingRecipeIndex();
+      _resetPager();
+    });
+    await _saveDraft();
+  }
+
+  Future<void> _backToIngredients() async {
+    setState(() {
+      _ingredientsConfirmed = false;
+      _resetPager();
+    });
+    await _saveDraft();
   }
 
   // Explicit action only - nothing is saved automatically on generation, so
@@ -394,7 +755,10 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       // Non-fatal - see comment above.
     });
     if (!mounted) return;
-    setState(() => _isSavingWeek = false);
+    setState(() {
+      _isSavingWeek = false;
+      _savedToHistory = true;
+    });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved this week\'s plan to history.')));
   }
 
@@ -438,53 +802,413 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // On the recipes step, back (app bar arrow or platform gesture) returns
+    // to the ingredients step rather than leaving the screen - unless the
+    // week was just saved, in which case the plan is done and back leaves.
+    return PopScope(
+      canPop: !_ingredientsConfirmed || _savedToHistory,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _busy) return;
+        _backToIngredients();
+      },
+      child: _ingredientsConfirmed ? _buildRecipesStep() : _buildIngredientsStep(),
+    );
+  }
+
+  // --- Step 1: ingredients ------------------------------------------------
+
+  Widget _buildIngredientsStep() {
+    final textTheme = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Review'), actions: _buildAppBarActions()),
+      appBar: AppBar(
+        title: const Text('Ingredients'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.tune),
+            tooltip: 'Edit meal plan structure',
+            onPressed: _busy ? null : _openEditStructure,
+          ),
+          IconButton(
+            icon: _isPreviewLoading
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.refresh),
+            tooltip: 'Regenerate all suggestions',
+            onPressed: _busy ? null : _regenerateAll,
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      // Same layout as the recipes step: the meal picker strip on top, the
+      // selected meal's card below.
       body: Column(
         children: [
           _buildReviewPicker(_preview.slots),
           const Divider(height: 1),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              children: [_buildReviewCard(_reviewIndex, _preview.slots[_reviewIndex], _slotRecipes[_reviewIndex])],
+            child: _buildMealPages(
+              (index) => [
+                _buildIngredientCard(index, _preview.slots[index]),
+                const SizedBox(height: 12),
+                Text(
+                  'Every meal needs a carb. Tap an ingredient to pick another deal or type your own, or tap ✨ to '
+                  'have one suggested. Swipe left or right for the other meals. Recipes keep every ingredient you '
+                  'confirm here - they may add another deal item, but never drop one.',
+                  style: textTheme.bodySmall,
+                ),
+              ],
             ),
           ),
         ],
       ),
-      bottomNavigationBar: _buildReviewBar(),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.all(12),
+        child: FilledButton.icon(
+          onPressed: _busy ? null : _confirmIngredients,
+          icon: const Icon(Icons.arrow_forward),
+          label: const Text('Confirm ingredients'),
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        ),
+      ),
     );
   }
 
-  List<Widget> _buildAppBarActions() {
-    return [
-      IconButton(
-        icon: const Icon(Icons.tune),
-        tooltip: 'Edit meal plan structure',
-        onPressed: _busy ? null : _openEditStructure,
-      ),
-      IconButton(
-        icon: _isPreviewLoading
-            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-            : const Icon(Icons.refresh),
-        tooltip: 'Regenerate all suggestions',
-        onPressed: _busy ? null : _regenerateAll,
-      ),
-      if (_allSlotsGenerated)
-        IconButton(
-          icon: const Icon(Icons.receipt_long_outlined),
-          tooltip: 'Extract ingredient list',
-          onPressed: () => showIngredientListDialog(context, _generatedSlots),
+  Widget _buildIngredientCard(int index, MealSlotPreview slot) {
+    final isRegenerating = _regeneratingSlots.contains(index);
+    // Read-only while any AI call that changes ingredients is running, so a
+    // suggestion can't land on a row filled meanwhile, or repeat something
+    // another meal was changed to meanwhile.
+    final disabled =
+        isRegenerating || _isPreviewLoading || _regeneratingSlots.isNotEmpty || _suggestingAnchors.isNotEmpty;
+    final hasRecipe = _slotRecipes[index] != null;
+    final textTheme = Theme.of(context).textTheme;
+    return Card(
+      key: ValueKey('ingredients-slot-$index'),
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSlotHeader(slot),
+            const SizedBox(height: 8),
+            for (final role in const [AnchorRole.protein, AnchorRole.carb, AnchorRole.vegetable, AnchorRole.other])
+              _buildRoleRow(index, slot, role, disabled: disabled),
+            const SizedBox(height: 8),
+            Text(slot.note, style: textTheme.bodyMedium?.copyWith(fontStyle: FontStyle.italic)),
+            Row(
+              children: [
+                if (hasRecipe) ...[
+                  Icon(Icons.check_circle, size: 14, color: Colors.green.shade700),
+                  const SizedBox(width: 4),
+                  Expanded(child: Text('Recipe ready - changing these items discards it.', style: textTheme.bodySmall)),
+                ] else
+                  const Spacer(),
+                TextButton.icon(
+                  onPressed: disabled ? null : () => _regenerateSlot(index),
+                  icon: isRegenerating
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.refresh, size: 18),
+                  label: const Text('Suggest others'),
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                ),
+              ],
+            ),
+          ],
         ),
-      const SizedBox(width: 4),
+      ),
+    );
+  }
+
+  Widget _buildSlotHeader(MealSlotPreview slot) {
+    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(slot.mealType == MealType.lunch ? Icons.wb_sunny_outlined : Icons.nightlight_outlined, size: 18),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                '${_capitalize(slot.mealType.name)} · ${slot.protein}',
+                style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+            Chip(
+              label: Text('${slot.totalPortionsNeeded} portions'),
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text('${slot.count} meals × ${slot.portionsPerMeal} portions', style: textTheme.bodySmall),
+      ],
+    );
+  }
+
+  static String _roleLabel(AnchorRole role) => switch (role) {
+    AnchorRole.protein => 'Protein',
+    AnchorRole.carb => 'Carb',
+    AnchorRole.vegetable => 'Veg',
+    AnchorRole.other => 'Also',
+  };
+
+  // The same icons as the recipe step's meal tiles and recipe card.
+  static IconData _roleIcon(AnchorRole role) => switch (role) {
+    AnchorRole.protein => Icons.set_meal_outlined,
+    AnchorRole.carb => Icons.grain,
+    AnchorRole.vegetable => Icons.eco_outlined,
+    AnchorRole.other => Icons.more_horiz,
+  };
+
+  // One line of the card per part of the meal: its item(s), each tappable to
+  // swap, or - when there's none - a button to choose one. The carb is
+  // required, so its button is red; "Also" holds any extra item and always
+  // offers to add one.
+  Widget _buildRoleRow(int index, MealSlotPreview slot, AnchorRole role, {required bool disabled}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final anchors = slot.anchorItems.where((anchor) => _roleOf(anchor) == role).toList();
+    final missingCarb = role == AnchorRole.carb && anchors.isEmpty;
+
+    Widget chooseButton(String label, VoidCallback onPressed, {Key? key, Color? color}) => Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        key: key,
+        onPressed: disabled ? null : onPressed,
+        icon: Icon(Icons.add, size: 18, color: color),
+        label: Text(label, style: TextStyle(color: color)),
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+        ),
+      ),
+    );
+
+    return Container(
+      key: ValueKey('role-$index-${role.name}'),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 56,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Column(
+                children: [
+                  Icon(_roleIcon(role), size: 22, color: missingCarb ? colorScheme.error : colorScheme.primary),
+                  const SizedBox(height: 2),
+                  Text(
+                    _roleLabel(role),
+                    style: textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: missingCarb ? colorScheme.error : colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Keyed by position: two items can share a name (e.g. from an
+                // older plan), and sibling keys must be unique.
+                for (final (position, anchor) in slot.anchorItems.indexed)
+                  if (_roleOf(anchor) == role)
+                    KeyedSubtree(
+                      key: ValueKey('tile-$index-$position'),
+                      child: _buildAnchorTile(index, anchor, disabled: disabled),
+                    ),
+                if (anchors.isEmpty && role != AnchorRole.other)
+                  Row(
+                    children: [
+                      Flexible(
+                        child: missingCarb
+                            ? chooseButton(
+                                'Choose a carb',
+                                () => _chooseCarb(index),
+                                key: ValueKey('choose-carb-$index'),
+                                color: colorScheme.error,
+                              )
+                            : chooseButton(
+                                role == AnchorRole.protein ? 'Choose a protein' : 'Choose a vegetable',
+                                () => _addAnchorItem(index, role: role),
+                              ),
+                      ),
+                      _buildSuggestEmptyButton(index, role, disabled: disabled),
+                    ],
+                  )
+                else if (role == AnchorRole.other)
+                  chooseButton('Add item', () => _addAnchorItem(index)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ✨ on an empty row: asks the AI for an ingredient for that part of the
+  // meal and adds it.
+  Widget _buildSuggestEmptyButton(int index, AnchorRole role, {required bool disabled}) {
+    final isSuggesting = _suggestingAnchors.contains(_emptyRowKey(index, role));
+    return TextButton.icon(
+      key: ValueKey('suggest-$index-${role.name}'),
+      onPressed: disabled || isSuggesting ? null : () => _suggestAnother(index, null, role: role),
+      icon: isSuggesting
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.auto_awesome, size: 18),
+      label: const Text('Suggest'),
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+    );
+  }
+
+  // The full flyer name (up to two lines - they're often long), with the
+  // store and price underneath. Tapping it opens the picker (a deal, or an
+  // ingredient typed in); ✨ asks the AI for another; × removes it.
+  // The other meals using the same ingredient as [anchor] in this meal -
+  // the same name, or the same kind (any rice is rice, chicken thighs and
+  // breasts are both chicken; see ingredientKind). A warning only: repeating
+  // on purpose is allowed.
+  List<String> _repeatsFor(int slotIndex, AnchorItem anchor) {
+    final key = _anchorNameKey(anchor.name);
+    final kind = ingredientKind(anchor.name);
+    bool same(AnchorItem other) =>
+        _anchorNameKey(other.name) == key || (kind != null && ingredientKind(other.name) == kind);
+    return [
+      for (var i = 0; i < _preview.slots.length; i++)
+        if (i != slotIndex && _preview.slots[i].anchorItems.any(same))
+          '${_capitalize(_preview.slots[i].mealType.name)} · ${_preview.slots[i].protein}',
     ];
   }
 
+  bool _slotHasRepeat(int slotIndex) =>
+      _preview.slots[slotIndex].anchorItems.any((anchor) => _repeatsFor(slotIndex, anchor).isNotEmpty);
+
+  Widget _buildAnchorTile(int slotIndex, AnchorItem anchor, {required bool disabled}) {
+    final textTheme = Theme.of(context).textTheme;
+    final repeats = _repeatsFor(slotIndex, anchor);
+    final deal = _dealFor(anchor);
+    final isSuggesting = _suggestingAnchors.contains(anchor);
+    disabled = disabled || isSuggesting;
+    final details = !anchor.isPantry
+        ? [anchor.store, ?deal?.priceText].join(' · ')
+        : anchor.isCarb
+        ? 'Pantry staple'
+        : 'Not on sale';
+    return InkWell(
+      key: ValueKey('anchor-$slotIndex-${anchor.name}'),
+      onTap: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(anchor.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: textTheme.bodyMedium),
+                  Text(
+                    details,
+                    style: textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                  if (repeats.isNotEmpty)
+                    Row(
+                      key: ValueKey('repeat-$slotIndex-${anchor.name}'),
+                      children: [
+                        Icon(Icons.repeat, size: 14, color: Theme.of(context).colorScheme.tertiary),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'Also in ${repeats.join(', ')}',
+                            style: textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.tertiary),
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: isSuggesting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.auto_awesome, size: 20),
+              tooltip: 'Suggest another',
+              visualDensity: VisualDensity.compact,
+              onPressed: disabled ? null : () => _suggestAnother(slotIndex, anchor),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 20),
+              tooltip: 'Remove',
+              visualDensity: VisualDensity.compact,
+              onPressed: disabled ? null : () => _removeAnchorItem(slotIndex, anchor),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- Step 2: recipes ----------------------------------------------------
+
+  Widget _buildRecipesStep() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Recipes'),
+        actions: [
+          if (_allSlotsGenerated)
+            IconButton(
+              icon: const Icon(Icons.receipt_long_outlined),
+              tooltip: 'Extract ingredient list',
+              onPressed: () => showIngredientListDialog(context, _generatedSlots),
+            ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: Column(
+        children: [
+          _buildReviewPicker(_preview.slots),
+          const Divider(height: 1),
+          Expanded(
+            child: _buildMealPages((index) => [_buildRecipeCard(index, _preview.slots[index], _slotRecipes[index])]),
+          ),
+        ],
+      ),
+      bottomNavigationBar: _buildRecipesBar(),
+    );
+  }
+
+  // One page per meal under the picker strip, swiped left/right to move
+  // between meals - the same order as the tiles, kept in sync with them.
+  Widget _buildMealPages(List<Widget> Function(int index) pageChildren) {
+    return PageView.builder(
+      key: ValueKey(_ingredientsConfirmed ? 'recipe-pages' : 'ingredient-pages'),
+      controller: _pager,
+      itemCount: _preview.slots.length,
+      onPageChanged: _onPageChanged,
+      itemBuilder: (context, index) => ListView(
+        key: ValueKey('meal-page-$index'),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        children: pageChildren(index),
+      ),
+    );
+  }
+
   // A picker strip of one tile per meal, pinned above the detail card and
-  // never hidden - unlike a stepper, every meal's name and status stays on
-  // screen at all times, and switching which one is being edited is a
-  // single tap on its tile rather than a forced Back/Next walk through the
-  // others.
+  // never hidden - every meal's name and status stays on screen at all
+  // times, and switching which one is shown is a single tap on its tile.
   Widget _buildReviewPicker(List<MealSlotPreview> slots) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -493,11 +1217,18 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         children: [
           for (var i = 0; i < slots.length; i++) ...[
             if (i > 0) const SizedBox(width: 8),
-            _buildReviewTile(i, slots[i]),
+            KeyedSubtree(key: _tileKey(i), child: _buildReviewTile(i, slots[i])),
           ],
         ],
       ),
     );
+  }
+
+  GlobalKey _tileKey(int index) {
+    while (_tileKeys.length <= index) {
+      _tileKeys.add(GlobalKey());
+    }
+    return _tileKeys[index];
   }
 
   Widget _buildReviewTile(int index, MealSlotPreview slot) {
@@ -531,17 +1262,29 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
-                if (recipe != null) Icon(Icons.check_circle, size: 13, color: Colors.green.shade700),
+                if (!_ingredientsConfirmed && !_hasCarb(slot))
+                  Icon(Icons.error_outline, size: 13, color: colorScheme.error)
+                else if (!_ingredientsConfirmed && _slotHasRepeat(index))
+                  Icon(Icons.repeat, size: 13, color: colorScheme.tertiary)
+                else if (recipe != null)
+                  Icon(Icons.check_circle, size: 13, color: Colors.green.shade700),
               ],
             ),
             const SizedBox(height: 3),
             if (recipe == null) ...[
               _buildReviewTileIngredient(
                 Icons.set_meal_outlined,
-                _anchorForCategory(slot, DealCategory.protein) ?? slot.protein,
+                slot.anchorItems.where((a) => _roleOf(a) == AnchorRole.protein).map((a) => a.name).firstOrNull ??
+                    slot.protein,
               ),
-              _buildReviewTileIngredient(Icons.grain, _anchorForCategory(slot, DealCategory.carbs) ?? '—'),
-              _buildReviewTileIngredient(Icons.eco_outlined, _anchorForCategory(slot, DealCategory.vegetables) ?? '—'),
+              _buildReviewTileIngredient(
+                Icons.grain,
+                slot.anchorItems.where(_isCarb).map((a) => a.name).firstOrNull ?? '—',
+              ),
+              _buildReviewTileIngredient(
+                Icons.eco_outlined,
+                slot.anchorItems.where((a) => _roleOf(a) == AnchorRole.vegetable).map((a) => a.name).firstOrNull ?? '—',
+              ),
             ] else ...[
               _buildReviewTileIngredient(Icons.set_meal_outlined, _tileIngredientLabel(recipe.proteinComponent)),
               _buildReviewTileIngredient(Icons.grain, _tileIngredientLabel(recipe.carbComponent)),
@@ -551,21 +1294,6 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         ),
       ),
     );
-  }
-
-  // The first of this slot's anchor items that's actually filed under
-  // [category] in the fetched deals, if any - lets the tile guess at a
-  // protein/carb/vegetable breakdown before a recipe (and its own confirmed
-  // components) exists yet.
-  String? _anchorForCategory(MealSlotPreview slot, DealCategory category) {
-    for (final anchor in slot.anchorItems) {
-      for (final item in widget.items) {
-        if (item.category == category && _anchorNameKey(item.name) == _anchorNameKey(anchor.name)) {
-          return anchor.name;
-        }
-      }
-    }
-    return null;
   }
 
   String _tileIngredientLabel(MealComponent component) {
@@ -588,122 +1316,33 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     );
   }
 
-  // The card is laid out as two numbered steps joined by a rail - pick the
-  // deal items, then the recipe built from them - so the AI's editable
-  // suggestion and the generated result never read as one blur of content.
-  // Once a recipe exists, step 1 collapses to a one-line summary and the
-  // recipe takes the card; reopening step 1 (Edit) warns that changing the
-  // items discards the recipe.
-  Widget _buildReviewCard(int index, MealSlotPreview slot, MealSlotFull? recipe) {
-    final isRegeneratingAnchors = _regeneratingSlots.contains(index);
-    final isGeneratingRecipe = _generatingRecipeSlots.contains(index);
-    final anchorsDisabled = isRegeneratingAnchors || isGeneratingRecipe;
-    final isEditingAnchors = recipe != null && _editingAnchorSlots.contains(index);
-    final anchorsCollapsed = recipe != null && !isEditingAnchors;
+  // One meal on the recipes step: its confirmed deal items (read-only -
+  // they're changed on the ingredients step), plus any the recipe added,
+  // then the recipe itself.
+  Widget _buildRecipeCard(int index, MealSlotPreview slot, MealSlotFull? recipe) {
+    final isGenerating = _generatingRecipeSlots.contains(index);
     final textTheme = Theme.of(context).textTheme;
+    final added = recipe == null ? const <AnchorItem>[] : addedDealItems(recipe, slot.anchorItems);
 
-    final suggestOthersButton = TextButton.icon(
-      onPressed: anchorsDisabled ? null : () => _regenerateSlot(index),
-      icon: isRegeneratingAnchors
-          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.refresh, size: 18),
-      label: const Text('Suggest others'),
-      style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-    );
-
-    final Widget anchorsTrailing;
-    if (anchorsCollapsed) {
-      anchorsTrailing = TextButton.icon(
-        onPressed: anchorsDisabled ? null : () => setState(() => _editingAnchorSlots.add(index)),
-        icon: const Icon(Icons.edit_outlined, size: 18),
-        label: const Text('Edit'),
-        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-      );
-    } else if (isEditingAnchors) {
-      anchorsTrailing = TextButton(
-        onPressed: () => setState(() => _editingAnchorSlots.remove(index)),
-        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-        child: const Text('Done'),
-      );
-    } else {
-      anchorsTrailing = suggestOthersButton;
-    }
-
-    final Widget anchorsBody;
-    if (anchorsCollapsed) {
-      anchorsBody = Text(
-        slot.anchorItems.isEmpty ? 'No deal items' : slot.anchorItems.map((a) => a.name).join(' · '),
-        style: textTheme.bodySmall,
-      );
-    } else {
-      anchorsBody = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (isEditingAnchors) ...[
-            _buildDiscardWarning(),
-            Align(alignment: Alignment.centerRight, child: suggestOthersButton),
-          ] else
-            Text('The recipe will be built around these. Tap one to swap it.', style: textTheme.bodySmall),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final anchor in slot.anchorItems) _buildAnchorChip(index, anchor, disabled: anchorsDisabled),
-              ActionChip(
-                avatar: const Icon(Icons.add, size: 16),
-                label: const Text('Add item'),
-                visualDensity: VisualDensity.compact,
-                onPressed: anchorsDisabled ? null : () => _addAnchorItem(index),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(slot.note, style: textTheme.bodyMedium?.copyWith(fontStyle: FontStyle.italic)),
-          if (recipe == null) ...[
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _busy ? null : () => _generateSlotRecipe(index),
-              icon: isGeneratingRecipe
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.auto_awesome),
-              label: Text(isGeneratingRecipe ? 'Generating…' : 'Generate recipe'),
-            ),
-          ],
-        ],
-      );
-    }
-
-    final recipeActive = isGeneratingRecipe || anchorsCollapsed;
     final Widget recipeBody;
-    if (recipe != null && isEditingAnchors) {
-      recipeBody = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Will be replaced if you change the items above.', style: textTheme.bodySmall),
-          const SizedBox(height: 8),
-          Opacity(
-            opacity: 0.45,
-            child: MealSlotFullCard(slot: recipe, onOpenRecipeLink: _openRecipeLink, showHeader: false),
-          ),
-        ],
-      );
-    } else if (recipe != null) {
+    if (recipe != null) {
       recipeBody = MealSlotFullCard(slot: recipe, onOpenRecipeLink: _openRecipeLink, showHeader: false);
-    } else if (isGeneratingRecipe) {
+    } else if (isGenerating) {
       recipeBody = Row(
         children: [
           const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
           const SizedBox(width: 8),
-          Expanded(
-            child: Text(_recipeGenerationPhaseLabel(_recipeGenerationPhase[index]), style: textTheme.bodySmall),
-          ),
+          Expanded(child: Text(_recipeGenerationPhaseLabel(_recipeGenerationPhase[index]), style: textTheme.bodySmall)),
         ],
       );
     } else {
-      recipeBody = Text(
-        'Appears here once generated.',
-        style: textTheme.bodySmall?.copyWith(color: Theme.of(context).disabledColor),
+      recipeBody = Align(
+        alignment: Alignment.centerLeft,
+        child: FilledButton.icon(
+          onPressed: _busy ? null : () => _askAndGenerateRecipe(index),
+          icon: const Icon(Icons.auto_awesome),
+          label: const Text('Generate recipe'),
+        ),
       );
     }
 
@@ -714,150 +1353,58 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            _buildSlotHeader(slot),
+            const SizedBox(height: 12),
+            Text('Built around', style: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
               children: [
-                Icon(slot.mealType == MealType.lunch ? Icons.wb_sunny_outlined : Icons.nightlight_outlined, size: 18),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '${_capitalize(slot.mealType.name)} · ${slot.protein}',
-                    style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                Chip(
-                  label: Text('${slot.totalPortionsNeeded} portions'),
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
+                if (slot.anchorItems.isEmpty && added.isEmpty) Text('No ingredients', style: textTheme.bodySmall),
+                for (final anchor in slot.anchorItems) _buildDealItemChip(anchor, added: false),
+                for (final item in added) _buildDealItemChip(item, added: true),
               ],
             ),
-            const SizedBox(height: 2),
-            Text('${slot.count} meals × ${slot.portionsPerMeal} portions', style: textTheme.bodySmall),
-            const SizedBox(height: 12),
-            _buildStep(
-              marker: anchorsCollapsed ? _StepMarker.done : _StepMarker.active,
-              number: 1,
-              title: 'Pick the deal items',
-              trailing: anchorsTrailing,
-              body: anchorsBody,
-              showRail: true,
-            ),
-            _buildStep(
-              marker: recipeActive ? _StepMarker.active : _StepMarker.upcoming,
-              number: 2,
-              title: 'Recipe',
-              trailing: anchorsCollapsed
-                  ? TextButton.icon(
-                      onPressed: anchorsDisabled ? null : () => _generateSlotRecipe(index),
-                      icon: isGeneratingRecipe
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.refresh, size: 18),
-                      label: const Text('Regenerate recipe'),
-                      style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                    )
-                  : null,
-              body: recipeBody,
-              showRail: false,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  static const double _stepMarkerSize = 22;
-
-  // One step of the card: a numbered (or checked) marker and title on one
-  // row, then the step's body indented under the title. [showRail] draws a
-  // line down from the marker, alongside the body, to the next step's
-  // marker.
-  Widget _buildStep({
-    required _StepMarker marker,
-    required int number,
-    required String title,
-    Widget? trailing,
-    required Widget body,
-    required bool showRail,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final (Color fill, Color border, Color foreground) = switch (marker) {
-      _StepMarker.done => (Colors.green.shade700, Colors.green.shade700, Colors.white),
-      _StepMarker.active => (colorScheme.primary, colorScheme.primary, colorScheme.onPrimary),
-      _StepMarker.upcoming => (Colors.transparent, colorScheme.outlineVariant, colorScheme.onSurfaceVariant),
-    };
-    const halfMarker = _stepMarkerSize / 2;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: _stepMarkerSize,
-              height: _stepMarkerSize,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(color: fill, shape: BoxShape.circle, border: Border.all(color: border, width: 1.5)),
-              child: marker == _StepMarker.done
-                  ? Icon(Icons.check, size: 14, color: foreground)
-                  : Text(
-                      '$number',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: foreground),
-                    ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                title,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: marker == _StepMarker.upcoming ? colorScheme.onSurfaceVariant : null,
+            if (added.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text('+ added by the recipe, from this week\'s deals', style: textTheme.bodySmall),
+            ],
+            const Divider(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Recipe', style: textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
                 ),
-              ),
+                if (recipe != null)
+                  TextButton.icon(
+                    onPressed: _busy ? null : () => _askAndGenerateRecipe(index),
+                    icon: isGenerating
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.refresh, size: 18),
+                    label: const Text('Regenerate recipe'),
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                  ),
+              ],
             ),
-            ?trailing,
+            const SizedBox(height: 4),
+            recipeBody,
           ],
         ),
-        Container(
-          margin: const EdgeInsets.only(left: halfMarker - 1),
-          padding: EdgeInsets.fromLTRB(halfMarker + 10 - 1, 4, 0, showRail ? 16 : 0),
-          decoration: showRail
-              ? BoxDecoration(border: Border(left: BorderSide(color: colorScheme.outlineVariant, width: 2)))
-              : null,
-          child: body,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDiscardWarning() {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(color: colorScheme.tertiaryContainer, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.warning_amber_rounded, size: 16, color: colorScheme.onTertiaryContainer),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              'Changing these items will discard the current recipe. You\'ll generate a new one.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colorScheme.onTertiaryContainer),
-            ),
-          ),
-        ],
       ),
     );
   }
 
-  Widget _buildAnchorChip(int slotIndex, AnchorItem anchor, {bool disabled = false}) {
-    return InputChip(
-      avatar: const Icon(Icons.swap_horiz, size: 16),
-      label: Text('${anchor.name} · ${anchor.store}'),
-      tooltip: 'Tap to swap, or use the × to remove',
-      onPressed: disabled ? null : () => _swapAnchorItem(slotIndex, anchor),
-      deleteIcon: const Icon(Icons.close, size: 16),
-      onDeleted: disabled ? null : () => _removeAnchorItem(slotIndex, anchor),
+  Widget _buildDealItemChip(AnchorItem item, {required bool added}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Chip(
+      key: added ? ValueKey('added-deal-${item.name}') : null,
+      avatar: Icon(added ? Icons.add_circle_outline : _roleIcon(_roleOf(item)), size: 16),
+      // A pantry item has no store to show.
+      label: Text(item.isPantry ? item.name : '${item.name} · ${item.store}'),
+      backgroundColor: added ? colorScheme.tertiaryContainer : null,
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
     );
   }
 
@@ -869,12 +1416,23 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     _ => 'Generating…',
   };
 
-  // The review step's single pinned CTA: saving the week, shown only once
-  // every meal has a recipe. Generating a meal's recipe lives inside its
-  // card (step 1's button), right above where the recipe will appear, so
-  // there's nothing for this bar to do until then.
-  Widget _buildReviewBar() {
-    if (!_allSlotsGenerated) return const SizedBox.shrink();
+  // Until every meal has a recipe, offers to generate the rest in one go;
+  // after that, saving the week.
+  Widget _buildRecipesBar() {
+    if (!_allSlotsGenerated) {
+      final remaining = _slotRecipes.where((recipe) => recipe == null).length;
+      return SafeArea(
+        minimum: const EdgeInsets.all(12),
+        child: OutlinedButton.icon(
+          onPressed: _busy ? null : _generateAllRecipes,
+          icon: _isGeneratingAll
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.auto_awesome),
+          label: Text(_isGeneratingAll ? 'Generating recipes…' : 'Generate all remaining recipes ($remaining)'),
+          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        ),
+      );
+    }
     return SafeArea(
       minimum: const EdgeInsets.all(12),
       child: FilledButton.icon(
@@ -888,5 +1446,3 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     );
   }
 }
-
-enum _StepMarker { active, done, upcoming }

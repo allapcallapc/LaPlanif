@@ -624,6 +624,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
         if (!_hasCarb(slot)) '${_capitalize(slot.mealType.name)} · ${slot.protein}',
     ];
     if (missingCarb.isNotEmpty) {
+      setState(() => _reviewIndex = _preview.slots.indexWhere((slot) => !_hasCarb(slot)));
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Choose a carb for: ${missingCarb.join(', ')}')));
       return;
@@ -736,20 +737,27 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
           const SizedBox(width: 4),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      // Same layout as the recipes step: the meal picker strip on top, the
+      // selected meal's card below.
+      body: Column(
         children: [
-          Text(
-            'Check what each meal is built around - every meal needs a carb. Tap an ingredient to pick another '
-            'deal or type your own, or tap ✨ to have one suggested. Recipes keep every ingredient you confirm '
-            'here - they may add another deal item, but never drop one.',
-            style: textTheme.bodySmall,
+          _buildReviewPicker(_preview.slots),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              children: [
+                _buildIngredientCard(_reviewIndex, _preview.slots[_reviewIndex]),
+                const SizedBox(height: 12),
+                Text(
+                  'Every meal needs a carb. Tap an ingredient to pick another deal or type your own, or tap ✨ to '
+                  'have one suggested. Recipes keep every ingredient you confirm here - they may add another deal '
+                  'item, but never drop one.',
+                  style: textTheme.bodySmall,
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          for (var i = 0; i < _preview.slots.length; i++) ...[
-            if (i > 0) const SizedBox(height: 12),
-            _buildIngredientCard(i, _preview.slots[i]),
-          ],
         ],
       ),
       bottomNavigationBar: SafeArea(
@@ -1089,7 +1097,10 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
-                if (recipe != null) Icon(Icons.check_circle, size: 13, color: Colors.green.shade700),
+                if (!_ingredientsConfirmed && !_hasCarb(slot))
+                  Icon(Icons.error_outline, size: 13, color: colorScheme.error)
+                else if (recipe != null)
+                  Icon(Icons.check_circle, size: 13, color: Colors.green.shade700),
               ],
             ),
             const SizedBox(height: 3),

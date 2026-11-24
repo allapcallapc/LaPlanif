@@ -379,16 +379,21 @@ class _FailingSaveMealPlanConfigRepository extends MealPlanConfigRepository {
 /// pantry carb (Quinoa) for any meal that doesn't have one yet - every meal
 /// needs a carb before the ingredients can be confirmed.
 Future<void> _confirmIngredients(WidgetTester tester) async {
-  // Tall enough for every meal's card to be built, not just the first.
+  // Tall enough for a whole ingredients card.
   tester.view.physicalSize = const Size(800, 4000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpAndSettle();
+  // One meal is shown at a time: step to each through its picker tile.
   for (var i = 0; ; i++) {
-    final card = find.byKey(ValueKey('ingredients-slot-$i'));
-    if (card.evaluate().isEmpty) break;
+    final tile = find.byKey(ValueKey('review-step-$i'));
+    if (tile.evaluate().isEmpty) break;
     final chooseCarb = find.byKey(ValueKey('choose-carb-$i'));
+    if (chooseCarb.evaluate().isEmpty) {
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+    }
     if (chooseCarb.evaluate().isEmpty) continue;
     await _tapVisible(tester, chooseCarb);
     await tester.tap(find.widgetWithText(ActionChip, 'Quinoa'));
@@ -3676,9 +3681,9 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    // Every meal's ingredients are on the one page.
+    // One meal at a time: lunch first, supper behind its picker tile.
     expect(find.text('Original lunch note.'), findsOneWidget);
-    expect(find.text('Original supper note.'), findsOneWidget);
+    expect(find.text('Original supper note.'), findsNothing);
     expect(previewService.calls.length, 1);
 
     // Cancelling the dialog suggests nothing.
@@ -3710,6 +3715,8 @@ void main() {
     expect(find.textContaining('Chicken thighs'), findsNothing);
 
     // ...and the supper meal is untouched.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
     expect(find.text('Original supper note.'), findsOneWidget);
     expect(_anchor(1, 'Tofu'), findsOneWidget);
   });
@@ -3903,6 +3910,7 @@ void main() {
   });
 
   testWidgets('shows a spinner on the card while a slot regenerate call is pending', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4134,6 +4142,7 @@ void main() {
   });
 
   testWidgets('shows an error snackbar when a slot regenerate call fails', (tester) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4314,6 +4323,7 @@ void main() {
   testWidgets('prompts for the next model when a slot regenerate call is still rate limited, and continues with it', (
     tester,
   ) async {
+    _useTallView(tester);
     final repository = StoreConfigRepository();
     await repository.save(const [StoreConfig(id: 'iga', name: 'IGA', flyerUrl: 'https://example.com/iga')]);
 
@@ -4661,6 +4671,8 @@ void main() {
 
     // Swap the supper slot's Tofu anchor: Chicken thighs is already used by
     // the lunch slot, so only Ground pork should be offered.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
     await _tapVisible(tester, _anchor(1, 'Tofu'));
     expect(find.text('Swap the protein'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Chicken thighs'), findsNothing);
@@ -4670,6 +4682,8 @@ void main() {
 
     // Add an anchor to the lunch slot: Tofu is already used by the supper
     // slot, so only Ground pork should be offered there too.
+    await tester.tap(find.byKey(const ValueKey('review-step-0')));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(_inIngredientCard(0, find.text('Add item')));
     await tester.pumpAndSettle();
     await tester.tap(_inIngredientCard(0, find.text('Add item')));
@@ -4788,6 +4802,8 @@ void main() {
     // The lunch slot is anchored on IGA's Brocoli - Metro's Brocoli is the
     // same produce under a different store, so the add picker on the
     // supper slot must not offer it either.
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
     expect(find.text('Supper · meat'), findsOneWidget);
     await tester.ensureVisible(_inIngredientCard(1, find.text('Add item')));
     await tester.pumpAndSettle();
@@ -6123,10 +6139,28 @@ void main() {
     await tester.tap(find.text('Looks good, generate preview'));
     await tester.pumpAndSettle();
 
-    // Both meals' ingredients on one page.
+    // One meal at a time, through the same picker strip as the recipes step.
     expect(find.byKey(const ValueKey('ingredients-slot-0')), findsOneWidget);
-    await tester.scrollUntilVisible(find.byKey(const ValueKey('ingredients-slot-1')), 300);
+    expect(find.byKey(const ValueKey('ingredients-slot-1')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('ingredients-slot-1')), findsOneWidget);
+
+    // Neither meal has a carb yet: both tiles are flagged, and confirming
+    // names them and jumps back to the first one.
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('review-step-0')), matching: find.byIcon(Icons.error_outline)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('review-step-1')), matching: find.byIcon(Icons.error_outline)),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Confirm ingredients'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose a carb for: Lunch · meat, Supper · tofu'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ingredients-slot-0')), findsOneWidget);
+    expect(find.text('Recipes'), findsNothing);
     await _confirmIngredients(tester);
 
     await tester.tap(find.text('Generate all remaining recipes (2)'));
@@ -6528,7 +6562,6 @@ void main() {
     // Only that ingredient changed.
     expect(inRow(0, 'protein', 'Chicken thighs'), findsOneWidget);
     expect(inRow(0, 'carb', 'Basmati rice'), findsOneWidget);
-    expect(inRow(1, 'protein', 'Tofu'), findsOneWidget);
 
     // A failed suggestion says so and leaves the ingredient as it was.
     failNext = true;
@@ -6551,6 +6584,8 @@ void main() {
 
     // The tofu meal has no vegetable: ✨ on its empty row suggests one and adds it.
     failNext = false;
+    await tester.tap(find.byKey(const ValueKey('review-step-1')));
+    await tester.pumpAndSettle();
     expect(find.descendant(of: find.byKey(const ValueKey('role-1-vegetable')), matching: find.text('Choose a vegetable')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('suggest-1-vegetable')));
     await _confirmSuggestion(tester);

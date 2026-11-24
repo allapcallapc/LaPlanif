@@ -130,4 +130,36 @@ void pantryTests() {
     expect(result.proteinComponent.dealItems.map((d) => d.name), ['Chicken thighs']);
     expect(addedDealItems(result, const [_chicken, quinoa]), isEmpty);
   });
+
+  test('keeps a deal the recipe names differently from the flyer, under the flyer\'s name', () {
+    final deals = [..._deals, _deal('Brocoli en couronne (Produit du Canada)', 'Metro')];
+    final result = reconcileRecipeDealItems(
+      recipe: _recipe(
+        protein: const [_chicken],
+        vegetable: const [AnchorItem(name: 'Brocoli en couronne', store: 'Metro')],
+      ),
+      anchors: const [_chicken],
+      deals: deals,
+    );
+
+    expect(result.vegetableComponent.usesWeeklyDeal, isTrue);
+    expect(result.vegetableComponent.dealItems.single.name, 'Brocoli en couronne (Produit du Canada)');
+  });
+
+  test('a reworded confirmed ingredient counts as that ingredient, not as a missing one', () {
+    const longBroccoli = AnchorItem(name: 'Brocoli en couronne (Produit du Canada)', store: 'Metro');
+    final deals = [..._deals, _deal('Brocoli en couronne (Produit du Canada)', 'Metro')];
+    final result = reconcileRecipeDealItems(
+      recipe: _recipe(
+        protein: const [_chicken],
+        vegetable: const [AnchorItem(name: 'brocoli en couronne', store: 'Metro')],
+      ),
+      anchors: const [_chicken, longBroccoli],
+      deals: deals,
+    );
+
+    expect(result.vegetableComponent.dealItems.single.name, longBroccoli.name);
+    // Not attached to the protein as if the recipe had dropped it.
+    expect(result.proteinComponent.dealItems.map((d) => d.name), ['Chicken thighs']);
+  });
 }

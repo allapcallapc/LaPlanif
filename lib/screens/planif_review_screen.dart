@@ -94,6 +94,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // (by identity - AnchorItem has no value equality), or a `slot-role` key
   // for an empty row being filled.
   final Set<Object> _suggestingAnchors = {};
+  // Set once "Save this week's plan" has saved the plan to history (and
+  // cleared the draft): back then leaves the screen instead of stepping back
+  // to the ingredients, which would save the finished plan as a draft again.
+  // Any later change to the plan clears it, since the plan then differs from
+  // what was saved.
+  bool _savedToHistory = false;
 
   bool get _allSlotsGenerated => _slotRecipes.isNotEmpty && _slotRecipes.every((s) => s != null);
 
@@ -165,6 +171,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   }
 
   Future<void> _saveDraft() async {
+    if (_savedToHistory && mounted) setState(() => _savedToHistory = false);
     await widget.services.mealPlanDraftRepository
         .save(
           MealPlanDraft(
@@ -363,6 +370,7 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   // there) - the slot's recipe no longer matches, so it's dropped.
   Future<void> _replaceAnchor(int slotIndex, AnchorItem current, AnchorItem replacement) async {
     if (!mounted || !_preview.slots[slotIndex].anchorItems.any((a) => identical(a, current))) return;
+    if (_rejectDuplicate(slotIndex, replacement, except: current)) return;
     setState(() {
       final slots = [..._preview.slots];
       final slot = slots[slotIndex];
@@ -467,8 +475,21 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     await _appendAnchor(slotIndex, selected);
   }
 
+  // Whether [slotIndex] already has an item named like [anchor] (other than
+  // [except]) - told to the user instead of adding a duplicate.
+  bool _rejectDuplicate(int slotIndex, AnchorItem anchor, {AnchorItem? except}) {
+    final key = _anchorNameKey(anchor.name);
+    final duplicate = _preview.slots[slotIndex].anchorItems.any(
+      (a) => !identical(a, except) && _anchorNameKey(a.name) == key,
+    );
+    if (duplicate && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${anchor.name} is already in this meal.')));
+    }
+    return duplicate;
+  }
+
   Future<void> _appendAnchor(int slotIndex, AnchorItem anchor) async {
-    if (!mounted) return;
+    if (!mounted || _rejectDuplicate(slotIndex, anchor)) return;
     setState(() {
       final slots = [..._preview.slots];
       final anchors = [...slots[slotIndex].anchorItems, anchor];
@@ -546,7 +567,12 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     setState(() {
       final slots = [..._preview.slots];
       final slot = slots[slotIndex];
-      slots[slotIndex] = slot.copyWith(anchorItems: [...slot.anchorItems.where((a) => !_isCarb(a)), selected]);
+      slots[slotIndex] = slot.copyWith(
+        anchorItems: [
+          ...slot.anchorItems.where((a) => !_isCarb(a) && _anchorNameKey(a.name) != _anchorNameKey(selected.name)),
+          selected,
+        ],
+      );
       _preview = MealPlanPreview(slots: slots);
       _slotRecipes[slotIndex] = null;
     });
@@ -729,7 +755,10 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
       // Non-fatal - see comment above.
     });
     if (!mounted) return;
-    setState(() => _isSavingWeek = false);
+    setState(() {
+      _isSavingWeek = false;
+      _savedToHistory = true;
+    });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved this week\'s plan to history.')));
   }
 
@@ -774,9 +803,10 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
   @override
   Widget build(BuildContext context) {
     // On the recipes step, back (app bar arrow or platform gesture) returns
-    // to the ingredients step rather than leaving the screen.
+    // to the ingredients step rather than leaving the screen - unless the
+    // week was just saved, in which case the plan is done and back leaves.
     return PopScope(
-      canPop: !_ingredientsConfirmed,
+      canPop: !_ingredientsConfirmed || _savedToHistory,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop || _busy) return;
         _backToIngredients();
@@ -844,7 +874,11 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
 
   Widget _buildIngredientCard(int index, MealSlotPreview slot) {
     final isRegenerating = _regeneratingSlots.contains(index);
-    final disabled = isRegenerating || _isPreviewLoading;
+    // Read-only while any AI call that changes ingredients is running, so a
+    // suggestion can't land on a row filled meanwhile, or repeat something
+    // another meal was changed to meanwhile.
+    final disabled =
+        isRegenerating || _isPreviewLoading || _regeneratingSlots.isNotEmpty || _suggestingAnchors.isNotEmpty;
     final hasRecipe = _slotRecipes[index] != null;
     final textTheme = Theme.of(context).textTheme;
     return Card(
@@ -985,7 +1019,14 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final anchor in anchors) _buildAnchorTile(index, anchor, disabled: disabled),
+                // Keyed by position: two items can share a name (e.g. from an
+                // older plan), and sibling keys must be unique.
+                for (final (position, anchor) in slot.anchorItems.indexed)
+                  if (_roleOf(anchor) == role)
+                    KeyedSubtree(
+                      key: ValueKey('tile-$index-$position'),
+                      child: _buildAnchorTile(index, anchor, disabled: disabled),
+                    ),
                 if (anchors.isEmpty && role != AnchorRole.other)
                   Row(
                     children: [
@@ -1359,7 +1400,8 @@ class _PlanifReviewScreenState extends State<PlanifReviewScreen> {
     return Chip(
       key: added ? ValueKey('added-deal-${item.name}') : null,
       avatar: Icon(added ? Icons.add_circle_outline : _roleIcon(_roleOf(item)), size: 16),
-      label: Text('${item.name} · ${item.store}'),
+      // A pantry item has no store to show.
+      label: Text(item.isPantry ? item.name : '${item.name} · ${item.store}'),
       backgroundColor: added ? colorScheme.tertiaryContainer : null,
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,

@@ -2333,6 +2333,13 @@ void main() {
     expect(saved.length, 1);
     expect(saved.single.slots.single.recipeName, 'General Tao Chicken');
 
+    // Changing the plan after saving it makes it a draft again.
+    expect(await MealPlanDraftRepository().load(), isNull);
+    await tester.tap(find.text('Regenerate recipe'));
+    await _confirmSuggestion(tester);
+    await tester.pumpAndSettle();
+    expect(await MealPlanDraftRepository().load(), isNotNull);
+
     // Saving again for the same week overwrites rather than adding a second
     // entry - simulated here by writing directly with the same weekId a
     // regenerated plan would also resolve to (isoWeekId of "now").
@@ -2341,6 +2348,14 @@ void main() {
 
     final savedAgain = await mealHistoryRepository.loadAll();
     expect(savedAgain.length, 1);
+
+    // The plan is done: back leaves the screen (to the structure step)
+    // instead of stepping back to the ingredients and saving the finished
+    // plan as a draft again, so Home won't offer to continue it.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('What to plan'), findsOneWidget);
+    expect(await MealPlanDraftRepository().load(), isNull);
   });
 
   testWidgets('extracts and shows the ingredient list from the full plan', (tester) async {
@@ -6224,6 +6239,9 @@ void main() {
     // recipe left it out; Carottes shows as added by the recipe.
     expect(find.text('Brocoli · IGA'), findsWidgets);
     expect(find.byKey(const ValueKey('added-deal-Carottes')), findsOneWidget);
+    // A pantry carb has no store to show on its chip.
+    expect(find.text('Quinoa'), findsWidgets);
+    expect(find.text('Quinoa · Pantry'), findsNothing);
     expect(find.text("+ added by the recipe, from this week's deals"), findsOneWidget);
 
     // ...and the ingredient list's deals include both.
@@ -6601,6 +6619,21 @@ void main() {
     // What was typed in the dialog goes with the request.
     expect(previewService.replacementRequests.single, 'A green vegetable');
     expect(find.descendant(of: _anchor(0, 'Brocoli'), matching: find.byType(CircularProgressIndicator)), findsOneWidget);
+    // While it runs, nothing else on the ingredients can change, so the
+    // answer can't land on a row filled meanwhile or repeat a fresh edit.
+    expect(
+      tester.widget<IconButton>(find.ancestor(of: suggestButton(0, 'Chicken thighs'), matching: find.byType(IconButton))).onPressed,
+      isNull,
+    );
+    expect(tester.widget<InkWell>(_anchor(0, 'Chicken thighs')).onTap, isNull);
+    expect(
+      tester.widget<TextButton>(find.ancestor(of: find.text('Suggest others'), matching: find.bySubtype<TextButton>())).onPressed,
+      isNull,
+    );
+    expect(
+      tester.widget<TextButton>(find.ancestor(of: find.text('Add item'), matching: find.bySubtype<TextButton>())).onPressed,
+      isNull,
+    );
     suggestion.complete(const AnchorItem(name: 'Asperges', store: 'IGA', role: AnchorRole.vegetable));
     await tester.pumpAndSettle();
     expect(inRow(0, 'vegetable', 'Asperges'), findsOneWidget);
@@ -6803,5 +6836,61 @@ void main() {
     // The chicken still repeats.
     expect(repeat(0, 'Hauts de cuisse de poulet'), findsOneWidget);
     expect(tileRepeatIcon(0), findsOneWidget);
+  });
+
+  testWidgets('a meal never ends up with the same ingredient twice, and copes with one that already has', (tester) async {
+    _useTallView(tester);
+    final draftRepository = MealPlanDraftRepository();
+    await draftRepository.save(
+      const MealPlanDraft(
+        config: MealPlanConfig(
+          portionsPerMeal: 3,
+          diversityWindowDays: 28,
+          mealSlots: [MealSlot(id: 'lunch-meat', mealType: MealType.lunch, protein: 'meat', count: 5)],
+        ),
+        preview: MealPlanPreview(
+          slots: [
+            MealSlotPreview(
+              mealType: MealType.lunch,
+              protein: 'meat',
+              count: 5,
+              portionsPerMeal: 3,
+              // Two items with the same name, as an older plan or the AI
+              // could have produced.
+              anchorItems: [
+                AnchorItem(name: 'Chicken thighs', store: 'IGA', role: AnchorRole.protein),
+                AnchorItem.pantry('Rice'),
+                AnchorItem.pantry('Parmesan', role: AnchorRole.other),
+                AnchorItem.pantry('Parmesan', role: AnchorRole.other),
+              ],
+              note: 'Chicken.',
+            ),
+          ],
+        ),
+        slotRecipes: [null],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PlanifScreen(repository: StoreConfigRepository(), mealPlanDraftRepository: draftRepository),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue planning'));
+    await tester.pumpAndSettle();
+
+    // Both show, without a duplicate-key error.
+    expect(tester.takeException(), isNull);
+    expect(find.text('Parmesan'), findsNWidgets(2));
+
+    // Typing an ingredient the meal already has is refused.
+    await tester.tap(find.text('Add item'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Not on sale? Type an ingredient'), 'chicken thighs');
+    await tester.tap(find.text('Use'));
+    await tester.pumpAndSettle();
+    expect(find.text('chicken thighs is already in this meal.'), findsOneWidget);
+    expect(find.textContaining('hicken thighs'), findsNWidgets(3), reason: 'the row, the meal tile and the snackbar only');
   });
 }

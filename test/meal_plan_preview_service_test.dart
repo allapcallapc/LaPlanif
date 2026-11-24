@@ -741,7 +741,8 @@ void main() {
       late String body;
       final client = MockClient((request) async {
         body = request.body;
-        return replacementResponse({'name': 'Ground beef', 'store': 'Metro', 'pantry': false});
+        // Reworded and with the wrong store: recorded as the flyer's own deal.
+        return replacementResponse({'name': 'firm tofu', 'store': 'Metro', 'pantry': false});
       });
       final logRepository = AiCallLogRepository();
       final service = MealPlanPreviewService(client: client, logRepository: logRepository);
@@ -752,12 +753,12 @@ void main() {
         replacing: slot.anchorItems.first,
         role: AnchorRole.protein,
         items: items,
-        alreadyUsedAnchors: const [AnchorItem(name: 'Firm tofu', store: 'IGA')],
+        alreadyUsedAnchors: const [AnchorItem(name: 'Salmon fillets', store: 'IGA')],
         dietaryNotes: 'No pork.',
       );
 
-      expect(replacement.name, 'Ground beef');
-      expect(replacement.store, 'Metro');
+      expect(replacement.name, 'Firm tofu');
+      expect(replacement.store, 'IGA');
       expect(replacement.role, AnchorRole.protein);
       expect(replacement.isPantry, isFalse);
       expect(body, contains('record_replacement'));
@@ -766,11 +767,60 @@ void main() {
       expect(body, contains('- Basmati rice (Pantry)'));
       expect(body, contains('already used by other meals'));
       expect(body, contains('judged by kind'));
-      expect(body, contains('Firm tofu (IGA)'));
+      expect(body, contains('Salmon fillets (IGA)'));
       expect(body, contains('No pork.'));
       final log = (await logRepository.loadAll()).single;
       expect(log.success, isTrue);
       expect(log.inputTokens, 40);
+    });
+
+    test('refuses an excluded item, the same ingredient, or one another meal uses, and logs it', () async {
+      final cases = {
+        {'name': 'Ground beef', 'store': 'Metro', 'pantry': false}: 'which you excluded',
+        {'name': 'Chicken thighs', 'store': 'IGA', 'pantry': false}: 'Chicken thighs again',
+        {'name': 'Firm tofu', 'store': 'IGA', 'pantry': false}: 'which another meal already uses',
+      };
+      for (final MapEntry(key: answer, value: reason) in cases.entries) {
+        final logRepository = AiCallLogRepository();
+        final service = MealPlanPreviewService(
+          client: MockClient((request) async => replacementResponse(answer)),
+          logRepository: logRepository,
+        );
+        await expectLater(
+          service.suggestReplacement(
+            apiKey: 'test-key',
+            slot: slot,
+            replacing: slot.anchorItems.first,
+            role: AnchorRole.protein,
+            items: items,
+            alreadyUsedAnchors: const [AnchorItem(name: 'Firm tofu', store: 'IGA')],
+          ),
+          throwsA(predicate((e) => e.toString().contains(reason))),
+          reason: reason,
+        );
+        expect((await logRepository.loadAll()).last.success, isFalse);
+      }
+    });
+
+    test('a "deal" that is not in this week\'s flyers is treated as not on sale', () async {
+      final service = MealPlanPreviewService(
+        client: MockClient(
+          (request) async => replacementResponse({'name': 'Wagyu striploin', 'store': 'IGA', 'pantry': false}),
+        ),
+        logRepository: AiCallLogRepository(),
+      );
+
+      final replacement = await service.suggestReplacement(
+        apiKey: 'test-key',
+        slot: slot,
+        replacing: slot.anchorItems.first,
+        role: AnchorRole.protein,
+        items: items,
+      );
+
+      expect(replacement.name, 'Wagyu striploin');
+      expect(replacement.isPantry, isTrue);
+      expect(replacement.role, AnchorRole.protein);
     });
 
     test('returns an ingredient not on sale as a pantry item with the asked role', () async {

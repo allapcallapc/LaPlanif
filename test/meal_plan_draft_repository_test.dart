@@ -81,14 +81,21 @@ void main() {
     expect((await repo.load())!.ingredientsConfirmed, isTrue);
   });
 
-  test('a draft saved before the ingredients step existed is on recipes once one was generated', () {
-    final withRecipe = const MealPlanDraft(config: config, preview: preview, slotRecipes: [fullSlot]).toJson()
-      ..remove('ingredientsConfirmed');
-    final withoutRecipe = const MealPlanDraft(config: config, preview: preview, slotRecipes: [null]).toJson()
-      ..remove('ingredientsConfirmed');
+  test('a draft saved before the ingredients step existed resumes on recipes only once safe to', () {
+    Map<String, dynamic> legacy(MealPlanPreview preview, List<MealSlotFull?> recipes) =>
+        MealPlanDraft(config: config, preview: preview, slotRecipes: recipes).toJson()..remove('ingredientsConfirmed');
+    final withCarb = MealPlanPreview(
+      slots: [preview.slots.single.copyWith(anchorItems: [...preview.slots.single.anchorItems, const AnchorItem.pantry('Riz')])],
+    );
 
-    expect(MealPlanDraft.fromJson(withRecipe).ingredientsConfirmed, isTrue);
-    expect(MealPlanDraft.fromJson(withoutRecipe).ingredientsConfirmed, isFalse);
+    // A recipe exists and every meal has its carb: on recipes.
+    expect(MealPlanDraft.fromJson(legacy(withCarb, const [fullSlot])).ingredientsConfirmed, isTrue);
+    // No recipe yet: on ingredients.
+    expect(MealPlanDraft.fromJson(legacy(withCarb, const [null])).ingredientsConfirmed, isFalse);
+    // A recipe exists, but the meal never had a carb marked (as in every
+    // draft from before carbs were tracked): back on ingredients, where a
+    // carb is required.
+    expect(MealPlanDraft.fromJson(legacy(preview, const [fullSlot])).ingredientsConfirmed, isFalse);
   });
 
   test('round-trips an already-generated slot recipe', () async {

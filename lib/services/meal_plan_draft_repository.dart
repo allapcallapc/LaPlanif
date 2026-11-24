@@ -38,13 +38,18 @@ class MealPlanDraft {
     final slotRecipes = (json['slotRecipes'] as List<dynamic>)
         .map((e) => e == null ? null : MealSlotFull.fromJson(e as Map<String, dynamic>))
         .toList();
+    final preview = MealPlanPreview.fromJson(json['preview'] as Map<String, dynamic>);
     return MealPlanDraft(
       config: MealPlanConfig.fromJson(json['config'] as Map<String, dynamic>),
-      preview: MealPlanPreview.fromJson(json['preview'] as Map<String, dynamic>),
+      preview: preview,
       slotRecipes: slotRecipes,
       // Drafts saved before the ingredients/recipes split have no flag - one
-      // with a recipe already generated was past the ingredients by then.
-      ingredientsConfirmed: json['ingredientsConfirmed'] as bool? ?? slotRecipes.any((r) => r != null),
+      // with a recipe already generated was past the ingredients by then,
+      // but only resumes there if every meal also has a carb marked, which
+      // the ingredients step requires (older drafts never marked one).
+      ingredientsConfirmed:
+          json['ingredientsConfirmed'] as bool? ??
+          (slotRecipes.any((r) => r != null) && preview.slots.every((slot) => slot.anchorItems.any((a) => a.isCarb))),
     );
   }
 }

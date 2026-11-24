@@ -42,4 +42,15 @@ void main() {
     expect(ingredientKind('Parmesan'), isNull);
     expect(ingredientKind(''), isNull);
   });
+
+  test('names the animal over a cut word, and the protein over a carb', () {
+    expect(ingredientKind('Hauts de cuisse de dinde'), 'turkey');
+    expect(ingredientKind('Pilons de dinde'), 'turkey');
+    expect(ingredientKind('Steak de saumon'), 'salmon');
+    expect(ingredientKind('Côtes levées de bœuf'), 'beef');
+    expect(ingredientKind('Steak de porc'), 'pork');
+    expect(ingredientKind('Poulet et riz'), 'chicken');
+    // ...but egg noodles are noodles, not eggs.
+    expect(ingredientKind('Egg noodles'), 'noodles');
+  });
 }

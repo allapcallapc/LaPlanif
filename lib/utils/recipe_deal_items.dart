@@ -1,6 +1,7 @@
 import '../models/deal_item.dart';
 import '../models/meal_plan_full.dart';
 import '../models/meal_plan_preview.dart';
+import 'deal_matching.dart';
 
 String _nameKey(String name) => name.trim().toLowerCase();
 
@@ -13,9 +14,9 @@ String _nameKey(String name) => name.trim().toLowerCase();
 ///   is built around), so it still lands in the shopping list's deals
 ///   section instead of silently vanishing.
 /// - Any other deal item the AI says a component uses is kept only when it
-///   names a real, non-excluded item from this week's [deals] (matched by
-///   name, with the store taken from the deal itself if the AI got it
-///   wrong) - a recipe can pick up a vegetable that happens to be on sale,
+///   names a real, non-excluded item from this week's [deals] (matched
+///   loosely by name - see findDeal - with the name and store taken from
+///   the deal itself) - a recipe can pick up a vegetable that happens to be on sale,
 ///   but can't invent a deal or bring back one the user excluded.
 /// - A pantry carb anchor isn't a deal item, so it's never listed among a
 ///   component's deal items (the recipe's own ingredients cover it).
@@ -26,21 +27,22 @@ MealSlotFull reconcileRecipeDealItems({
 }) {
   anchors = anchors.where((anchor) => !anchor.isPantry).toList();
   final anchorKeys = {for (final anchor in anchors) _nameKey(anchor.name)};
-  final dealsByKey = <String, List<DealItem>>{};
-  for (final deal in deals) {
-    if (deal.preference == DealPreference.excluded) continue;
-    dealsByKey.putIfAbsent(_nameKey(deal.name), () => []).add(deal);
-  }
+  final available = deals.where((deal) => deal.preference != DealPreference.excluded).toList();
 
+  // What a recipe's deal item refers to: one of the confirmed anchors, or a
+  // real, non-excluded deal - matched loosely (see findDeal), since the AI
+  // often shortens or rewords flyer names. Null drops it.
   AnchorItem? resolve(AnchorItem item) {
     final key = _nameKey(item.name);
     if (anchorKeys.contains(key)) {
       return anchors.firstWhere((anchor) => _nameKey(anchor.name) == key);
     }
-    final matches = dealsByKey[key];
-    if (matches == null) return null;
-    final sameStore = matches.where((deal) => _nameKey(deal.storeName) == _nameKey(item.store));
-    final deal = sameStore.isNotEmpty ? sameStore.first : matches.first;
+    final deal = findDeal(item.name, item.store, available);
+    if (deal == null) return null;
+    final dealKey = _nameKey(deal.name);
+    if (anchorKeys.contains(dealKey)) {
+      return anchors.firstWhere((anchor) => _nameKey(anchor.name) == dealKey);
+    }
     return AnchorItem(name: deal.name, store: deal.storeName);
   }
 

@@ -31,10 +31,33 @@ String _normalize(String name) {
 }
 
 // Checked in order, so the more specific kinds come first: "sweet potato"
-// before "potato", "rice noodles" before "rice", "ground pork" is pork.
+// before "potato", "rice noodles" before "rice", proteins before carbs.
 // Each stem must start a word ("riz" matches "riz basmati", not "ariz"); a
 // stem ending in a space must also end one ("rice " skips "ricotta").
 const List<(String, List<String>)> _kinds = [
+  // Proteins first, by animal (or plant protein) whatever the cut, so a
+  // product naming both ("Poulet et riz") counts as its protein. The animal
+  // words all come before any cut word, so "Hauts de cuisse de dinde" is
+  // turkey, "Steak de saumon" salmon and "Côtes levées de bœuf" beef.
+  ('turkey', ['turkey', 'dinde']),
+  ('salmon', ['salmon', 'saumon']),
+  ('tuna', ['tuna', 'thon']),
+  ('cod', ['cod ', 'morue', 'cabillaud']),
+  ('tilapia', ['tilapia']),
+  ('trout', ['trout', 'truite']),
+  ('shrimp', ['shrimp', 'crevette', 'prawn']),
+  ('veal', ['veal', 'veau']),
+  ('lamb', ['lamb', 'agneau']),
+  ('pork', ['pork', 'porc']),
+  ('beef', ['beef', 'boeuf']),
+  ('chicken', ['chicken', 'poulet', 'volaille']),
+  ('tofu', ['tofu']),
+  ('chickpeas', ['chickpea', 'pois chiche']),
+  ('lentils', ['lentil', 'lentille']),
+  // Cuts and products that name no animal, read as the usual one.
+  ('pork', ['jambon', 'ham ', 'bacon', 'lardon', 'cotes levees', 'cote levee']),
+  ('beef', ['steak', 'bavette', 'surlonge', 'contre filet']),
+  ('chicken', ['pilon', 'haut de cuisse', 'hauts de cuisse']),
   // Carbs
   ('sweet potato', ['sweet potato', 'patate douce', 'patates douces']),
   ('noodles', ['noodle', 'nouille', 'vermicelle', 'ramen', 'udon', 'soba']),
@@ -69,23 +92,8 @@ const List<(String, List<String>)> _kinds = [
   ('barley', ['barley', 'orge']),
   ('bread', ['bread', 'pain ', 'pains', 'baguette', 'naan', 'pita ', 'bagel', 'brioche', 'bun ', 'buns']),
   ('tortilla', ['tortilla', 'wrap']),
-  // Proteins - by animal (or plant protein), whatever the cut.
-  ('chicken', ['chicken', 'poulet', 'volaille', 'pilon', 'haut de cuisse', 'hauts de cuisse']),
-  ('turkey', ['turkey', 'dinde']),
-  ('pork', ['pork', 'porc', 'jambon', 'ham ', 'bacon', 'lardon', 'cotes levees', 'cote levee']),
-  ('beef', ['beef', 'boeuf', 'steak', 'bavette', 'surlonge', 'contre filet']),
-  ('veal', ['veal', 'veau']),
-  ('lamb', ['lamb', 'agneau']),
-  ('salmon', ['salmon', 'saumon']),
-  ('tuna', ['tuna', 'thon']),
-  ('cod', ['cod ', 'morue', 'cabillaud']),
-  ('tilapia', ['tilapia']),
-  ('trout', ['trout', 'truite']),
-  ('shrimp', ['shrimp', 'crevette', 'prawn']),
-  ('tofu', ['tofu']),
+  // After the carbs, so "egg noodles" stays noodles.
   ('egg', ['egg ', 'eggs', 'oeuf']),
-  ('chickpeas', ['chickpea', 'pois chiche']),
-  ('lentils', ['lentil', 'lentille']),
   // Vegetables
   ('broccoli', ['broccoli', 'brocoli']),
   ('cauliflower', ['cauliflower', 'chou fleur', 'choux fleurs']),

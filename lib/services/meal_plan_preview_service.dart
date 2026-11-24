@@ -7,6 +7,7 @@ import '../models/deal_item.dart';
 import '../models/meal_history.dart';
 import '../models/meal_plan_config.dart';
 import '../models/meal_plan_preview.dart';
+import '../utils/deal_matching.dart';
 import '../utils/error_formatting.dart';
 import 'ai_call_activity.dart';
 import 'ai_call_log_repository.dart';
@@ -148,7 +149,7 @@ class MealPlanPreviewService {
         apiKey: apiKey,
         model: effectiveModel,
         body: _buildReplacementBody(slot, replacing, role, items, alreadyUsedAnchors, dietaryNotes, request),
-        parse: (decoded) => _parseReplacement(decoded, role),
+        parse: (decoded) => _checkReplacement(_parseReplacement(decoded, role), items, alreadyUsedAnchors, replacing),
       );
     } finally {
       AiCallActivity.finish(activityId);
@@ -420,6 +421,38 @@ class MealPlanPreviewService {
         },
       },
     };
+  }
+
+  /// Holds the AI's answer to the same rules the pickers apply, since the
+  /// model doesn't always follow its instructions: a deal it names must be a
+  /// real one (matched loosely, then recorded under the flyer's own name and
+  /// store; an unknown "deal" is treated as not on sale), and it may not be
+  /// an excluded item, the ingredient being replaced, or one another meal
+  /// uses - those throw, so the user sees why nothing changed.
+  AnchorItem _checkReplacement(
+    AnchorItem suggestion,
+    List<DealItem> items,
+    List<AnchorItem> alreadyUsedAnchors,
+    AnchorItem? replacing,
+  ) {
+    var result = suggestion;
+    if (!suggestion.isPantry) {
+      final deal = findDeal(suggestion.name, suggestion.store, items);
+      if (deal != null && deal.preference == DealPreference.excluded) {
+        throw Exception('the AI suggested ${deal.name}, which you excluded. Try again.');
+      }
+      result = deal == null
+          ? AnchorItem.pantry(suggestion.name, role: suggestion.role ?? AnchorRole.carb)
+          : AnchorItem(name: deal.name, store: deal.storeName, role: suggestion.role);
+    }
+    final key = result.name.trim().toLowerCase();
+    if (replacing != null && replacing.name.trim().toLowerCase() == key) {
+      throw Exception('the AI suggested ${result.name} again. Try again.');
+    }
+    if (alreadyUsedAnchors.any((anchor) => anchor.name.trim().toLowerCase() == key)) {
+      throw Exception('the AI suggested ${result.name}, which another meal already uses. Try again.');
+    }
+    return result;
   }
 
   AnchorItem _parseReplacement(Map<String, dynamic> decoded, AnchorRole role) {
